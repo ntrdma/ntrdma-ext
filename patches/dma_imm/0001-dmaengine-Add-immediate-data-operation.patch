@@ -1,0 +1,45 @@
+From: Dave Jiang <dave.jiang@intel.com>
+Date: Mon, 27 Jul 2015 05:51:31 -0400
+Subject: [PATCH 1/2] dmaengine: Add immediate data operation
+
+Adding support for immediate data DMA operation such as function pointers
+and max limit for immediate data size.
+
+Signed-off-by: Dave Jiang <dave.jiang@intel.com>
+---
+ include/linux/dmaengine.h | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/include/linux/dmaengine.h b/include/linux/dmaengine.h
+index 7ea9184eaa13..b297cade9abf 100644
+--- a/include/linux/dmaengine.h
++++ b/include/linux/dmaengine.h
+@@ -645,6 +645,7 @@ enum dmaengine_alignment {
+  *	The function takes a buffer of size buf_len. The callback function will
+  *	be called after period_len bytes have been transferred.
+  * @device_prep_interleaved_dma: Transfer expression in a generic way.
++ * @device_prep_dma_imm: prepares a DMA of immediate data operation
+  * @device_config: Pushes a new configuration to a channel, return 0 or an error
+  *	code
+  * @device_pause: Pauses any transfer happening on a channel. Returns
+@@ -672,6 +673,7 @@ struct dma_device {
+ 	enum dmaengine_alignment xor_align;
+ 	enum dmaengine_alignment pq_align;
+ 	enum dmaengine_alignment fill_align;
++	u8 imm_max_size;
+ 	#define DMA_HAS_PQ_CONTINUE (1 << 15)
+ 
+ 	int dev_id;
+@@ -727,6 +729,9 @@ struct dma_device {
+ 	struct dma_async_tx_descriptor *(*device_prep_interleaved_dma)(
+ 		struct dma_chan *chan, struct dma_interleaved_template *xt,
+ 		unsigned long flags);
++	struct dma_async_tx_descriptor *(*device_prep_dma_imm)(
++		struct dma_chan *chan, dma_addr_t dst, void *src,
++		size_t len, unsigned long flags);
+ 
+ 	int (*device_config)(struct dma_chan *chan,
+ 			     struct dma_slave_config *config);
+-- 
+2.5.0.rc1
+
