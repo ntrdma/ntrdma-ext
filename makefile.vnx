@@ -1,0 +1,92 @@
+
+# WSPACE: specify the root of the workspace
+WSPACE			= $(shell readlink -f $(PWD)/../../../../../..)
+# KSRC: specify the location of kernel sources
+#KSRC			= $(WSPACE)/kernel/BUILD/kernel-default-3.0.101/linux-3.0
+KSRC			= $(WSPACE)/safe/obj/KHDATAPATH_DEBUG_64/rpm_install/usr/src/linux-headers
+# OFEDSRC: specify the location of ofed sources
+#OFEDSRC		= $(WSPACE)/rpms/src/ofa_kernel/ofa_kernel-2.1
+#OFEDSRC			= $(WSPACE)/safe/obj/KHDATAPATH_DEBUG_64/rpm_install/usr/src/openib
+# V: specify the kernel makefile verbosity
+V				= 0
+
+# LINUXCONFIG: override the kernel configuration to build extra modules.
+#
+# The CONFIG_ variables listed here are given in the make command line to
+# override the definition of the same CONFIG_ variables specified in the top
+# level Linux .config file.
+#
+# Note that these definitons only affect what is built by make.  These
+# variables do not override what is specified in config.h or kconfig.h to
+# affect the preprocessor.  To override variables that affect the preprocessor,
+# specify an alternate config.h or kconfig.h and add it to the include path
+# specified by LINUXINCLUDE.
+
+CONFIG_DMADEVICES	= m
+#CONFIG_INTEL_IOATDMA	= m
+CONFIG_NTBDEVICES	= m
+#CONFIG_INTEL_NTB	= m
+#CONFIG_PLX_NTB	 	= m
+#CONFIG_GQP		= m
+#CONFIG_GQP_NETDEV	= m
+CONFIG_NTRDMA		= m
+#CONFIG_NTRDMA_GQP	= y
+
+LINUXCONFIG		= \
+	CONFIG_DMADEVICES=$(CONFIG_DMADEVICES) \
+	CONFIG_INTEL_IOATDMA=$(CONFIG_INTEL_IOATDMA) \
+	CONFIG_NTBDEVICES=$(CONFIG_NTBDEVICES) \
+	CONFIG_INTEL_NTB=$(CONFIG_INTEL_NTB) \
+	CONFIG_PLX_NTB=$(CONFIG_PLX_NTB) \
+	CONFIG_GQP=$(CONFIG_GQP) \
+	CONFIG_GQP_NETDEV=$(CONFIG_GQP_NETDEV) \
+	CONFIG_NTRDMA=$(CONFIG_NTRDMA) \
+	CONFIG_NTRDMA_GQP=$(CONFIG_NTRDMA_GQP)
+
+# LINUXINCLUDE: override the include search path for building the kernel.
+#
+# See top level Linux Makefile in KSRC for the definition of LINUXINCLUDE for
+# that version of kernel sources.  Copy that definition here, and modify as
+# necessary to override the include search path.  The LINUXINCLUDE variable
+# defined here is given in the make command line to override the definition of
+# the same variable specified in the top level Linux Makefile.
+
+# LINUXINCLUDE for linux-3.0
+LINUXINCLUDE_3_0	= \
+	-I$(PWD)/../../interface \
+	-I$$(srctree)/arch/$$(SRCARCH)/include \
+	-Iarch/$$(SRCARCH)/include/generated \
+	$(if $(KBUILD_SRC), -I$(srctree)/include) \
+	-I$(PWD)/include -I$(OFEDSRC)/include -Iinclude \
+	-I$(OFEDSRC)/include/uapi \
+	-include include/generated/autoconf.h \
+	-include $(OFEDSRC)/include/linux/autoconf.h \
+	-include $(PWD)/config.h
+
+# LINUXINCLUDE for linux-3.17
+LINUXINCLUDE_3_17	= \
+	$$(srctree)/arch/$$(SRCARCH)/include \
+        -Iarch/$$(SRCARCH)/include/generated \
+	$$(if $$(KBUILD_SRC), -I$$(srctree)/include) \
+	-I$(PWD)/include -I$(OFEDSRC)/include -Iinclude \
+	-I$$(srctree)/arch/$$(SRCARCH)/include/uapi \
+	-Iarch/$$(SRCARCH)/include/generated/uapi \
+	-I$$(srctree)/include/uapi \
+	-Iinclude/generated/uapi \
+	-I$(OFEDSRC)/include/uapi \
+	-include $$(srctree)/include/linux/kconfig.h \
+	-include $(PWD)/config.h
+
+LINUXINCLUDE		= $(LINUXINCLUDE_3_0)
+
+all: modules
+
+modules:
+	make -C $(KSRC) SUBDIRS=$(PWD) V=$(V) \
+		LINUXINCLUDE='$(LINUXINCLUDE)' \
+		$(LINUXCONFIG) \
+		modules
+
+clean:
+	make -C $(KSRC) SUBDIRS=$(PWD) V=$(V) clean
+
