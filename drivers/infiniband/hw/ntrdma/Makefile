@@ -1,1 +1,17 @@
+obj-$(CONFIG_NTRDMA) += ntrdma.o
 
+ntrdma-y += ntrdma_cmd.o
+ntrdma-y += ntrdma_cq.o
+ntrdma-y += ntrdma_debugfs.o
+ntrdma-y += ntrdma_dev.o
+ntrdma-y += ntrdma_eth.o
+ntrdma-y += ntrdma_hello.o
+ntrdma-y += ntrdma_ib.o
+ntrdma-y += ntrdma_main.o
+ntrdma-y += ntrdma_mr.o
+ntrdma-y += ntrdma_pd.o
+ntrdma-y += ntrdma_qp.o
+ntrdma-y += ntrdma_res.o
+ntrdma-y += ntrdma_util.o
+ntrdma-y += ntrdma_vbell.o
+ntrdma-y += ntrdma_zip.o
