@@ -1,0 +1,39 @@
+From 95663e638c0b57b3a32be76ce38c5bc21a900a2f Mon Sep 17 00:00:00 2001
+Message-Id: <95663e638c0b57b3a32be76ce38c5bc21a900a2f.1442936761.git.Allen.Hubbe@emc.com>
+From: Allen Hubbe <Allen.Hubbe@emc.com>
+Date: Tue, 19 May 2015 17:16:31 -0400
+Subject: [PATCH] ntb_hw_intel: add no_msix parameter
+
+Signed-off-by: Allen Hubbe <Allen.Hubbe@emc.com>
+---
+ drivers/ntb/hw/intel/ntb_hw_intel.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/ntb/hw/intel/ntb_hw_intel.c b/drivers/ntb/hw/intel/ntb_hw_intel.c
+index 87751cfd6f4f..f217f0bfb5fd 100644
+--- a/drivers/ntb/hw/intel/ntb_hw_intel.c
++++ b/drivers/ntb/hw/intel/ntb_hw_intel.c
+@@ -91,6 +91,10 @@ static const struct ntb_dev_ops intel_ntb_ops;
+ static const struct file_operations intel_ntb_debugfs_info;
+ static struct dentry *debugfs_dir;
+ 
++static int no_msix;
++module_param(no_msix, int, 0644);
++MODULE_PARM_DESC(no_msix, "Do not enable msix interrupts.");
++
+ static int b2b_mw_idx = -1;
+ module_param(b2b_mw_idx, int, 0644);
+ MODULE_PARM_DESC(b2b_mw_idx, "Use this mw idx to access the peer ntb.  A "
+@@ -435,6 +439,9 @@ static int ndev_init_isr(struct intel_ntb_dev *ndev,
+ 
+ 	/* Try to set up msix irq */
+ 
++	if (no_msix)
++		goto err_msix_vec_alloc;
++
+ 	ndev->vec = kzalloc_node(msix_max * sizeof(*ndev->vec),
+ 				 GFP_KERNEL, node);
+ 	if (!ndev->vec)
+-- 
+2.5.0.rc1
+
