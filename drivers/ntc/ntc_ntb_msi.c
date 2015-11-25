@@ -980,8 +980,18 @@ static void ntc_ntb_req_cancel(struct ntc_dev *ntc, void *req)
 static int ntc_ntb_req_submit(struct ntc_dev *ntc, void *req)
 {
 	struct dma_chan *chan = req;
+	struct dma_async_tx_descriptor *tx;
+	dma_cookie_t cookie;
 
 	dev_vdbg(&ntc->dev, "submit request\n");
+
+	tx = chan->device->device_prep_dma_interrupt(chan, 0);
+	if (!tx)
+		return -ENOMEM;
+
+	cookie = dmaengine_submit(tx);
+	if (dma_submit_error(cookie))
+		return -EIO;
 
 	dma_async_issue_pending(chan);
 
