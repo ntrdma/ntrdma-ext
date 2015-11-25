@@ -59,9 +59,6 @@ MODULE_DESCRIPTION(DRIVER_DESCRIPTION);
 static int ntc_ntb_info_size = 0x1000;
 /* TODO: module param named info_size */
 
-static int ntc_ntb_req_int = 0x1000;
-/* TODO: module param named req_int */
-
 /* Protocol version for backwards compatibility */
 #define NTC_NTB_VERSION_NONE		0
 #define NTC_NTB_VERSION_MAX		2
@@ -189,10 +186,6 @@ struct ntc_ntb_dev {
 
 	struct ntc_ntb_hello_map	hello_odd;
 	struct ntc_ntb_hello_map	hello_even;
-
-	/* request interrupt interval */
-	int				req_int;
-	spinlock_t			req_lock;
 };
 
 #define ntc_ntb_down_cast(__ntc) \
@@ -997,21 +990,10 @@ static int ntc_ntb_req_submit(struct ntc_dev *ntc, void *req)
 
 static int ntc_ntb_req_prep_flags(struct ntc_dev *ntc, bool fence)
 {
-	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
-	unsigned long irqflags;
 	int flags = NTC_NTB_DMA_PREP_FLAGS;
 
 	if (fence)
 		flags |= DMA_PREP_FENCE;
-
-	spin_lock_irqsave(&dev->req_lock, irqflags);
-	if (dev->req_int) {
-		--dev->req_int;
-	} else {
-		dev->req_int = ntc_ntb_req_int;
-		flags |= DMA_PREP_INTERRUPT;
-	}
-	spin_unlock_irqrestore(&dev->req_lock, irqflags);
 
 	return flags;
 }
