@@ -78,9 +78,7 @@ static void *ntc_virt_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
 	if (!can_do_mlock())
 		return ERR_PTR(-EPERM);
 
-	npages = (PAGE_ALIGN(uaddr + size) - PAGE_ALIGN(uaddr)) >> PAGE_SHIFT;
-	if (!npages)
-		return ERR_PTR(-EINVAL);
+	npages = 1 + ((uaddr + size) >> PAGE_SHIFT) - (uaddr >> PAGE_SHIFT);
 
 	readonly = !(access &
 		     (IB_ACCESS_LOCAL_WRITE   | IB_ACCESS_REMOTE_WRITE |
