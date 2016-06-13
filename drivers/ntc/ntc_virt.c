@@ -98,6 +98,7 @@ static void *ntc_virt_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
 
 	if ((locked > lock_limit) && !capable(CAP_IPC_LOCK)) {
 		rc = -ENOMEM;
+		up_write(&current->mm->mmap_sem);
 		goto err_pages;
 	}
 
