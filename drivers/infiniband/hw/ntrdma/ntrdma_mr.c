@@ -85,6 +85,9 @@ int ntrdma_mr_init(struct ntrdma_mr *mr,
 		goto err;
 	}
 
+	if (sg_count)
+		WARN_ON((mr->sg_list[0].addr ^ addr) & (PAGE_SIZE - 1));
+
 	rc = ntrdma_res_init(&mr->res, dev, &dev->mr_vec,
 			     ntrdma_mr_enable, ntrdma_mr_disable, NULL);
 	if (rc)
