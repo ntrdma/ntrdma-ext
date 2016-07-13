@@ -93,11 +93,18 @@ static int ntc_phys_umem_sgl(struct ntc_dev *ntc, void *umem,
 	struct scatterlist *sg, *next;
 	int i, dma_count = 0;
 	dma_addr_t dma_addr;
-	size_t dma_len;
+	size_t dma_off, dma_len, sgl_len;
+
+	dma_off = ib_umem_offset(ibumem);
+	sgl_len = ibumem->length;
 
 	for_each_sg(ibumem->sg_head.sgl, sg, ibumem->sg_head.nents, i) {
-		dma_addr = sg_dma_address(sg);
-		dma_len = sg_dma_len(sg);
+		if (!sgl_len)
+			break;
+
+		dma_addr = sg_dma_address(sg) + dma_off;
+		dma_len = sg_dma_len(sg) - dma_off;
+		dma_off = 0;
 
 		for (;;) {
 			next = sg_next(sg);
@@ -110,13 +117,20 @@ static int ntc_phys_umem_sgl(struct ntc_dev *ntc, void *umem,
 			++i;
 		}
 
+		if (dma_len > sgl_len)
+			dma_len = sgl_len;
+
 		if (sgl && dma_count < count) {
 			sgl[dma_count].addr = dma_addr;
 			sgl[dma_count].len = dma_len;
 		}
 
 		++dma_count;
+
+		sgl_len -= dma_len;
 	}
+
+	WARN_ON(sgl_len);
 
 	return dma_count;
 }
