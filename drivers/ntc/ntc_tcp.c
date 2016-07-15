@@ -303,6 +303,8 @@ static int ntc_tcp_recv(struct socket *sock, void *buf, size_t len)
 		len -= rc;
 	}
 
+	wmb(); /* write data in the order it is copied out of the channel */
+
 	return 0;
 }
 

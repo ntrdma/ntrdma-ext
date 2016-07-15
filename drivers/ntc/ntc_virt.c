@@ -50,7 +50,7 @@ static u64 ntc_virt_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
 static void ntc_virt_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
 			       enum dma_data_direction dir)
 {
-	/* nothing to do */
+	rmb(); /* read data in the order it is received out of the channel */
 }
 
 struct ntc_vmem {
@@ -160,11 +160,18 @@ static int ntc_virt_umem_count(struct ntc_dev *ntc, void *umem)
 	return 1;
 }
 
+static void ntc_virt_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
+			      enum dma_data_direction dir)
+{
+	rmb(); /* read data in the order it is received out of the channel */
+}
+
 struct ntc_map_ops ntc_virt_map_ops = {
 	.buf_alloc			= ntc_virt_buf_alloc,
 	.buf_free			= ntc_virt_buf_free,
 	.buf_map			= ntc_virt_buf_map,
 	.buf_unmap			= ntc_virt_buf_unmap,
+	.buf_sync_cpu			= ntc_virt_sync_cpu,
 	.umem_get			= ntc_virt_umem_get,
 	.umem_put			= ntc_virt_umem_put,
 	.umem_sgl			= ntc_virt_umem_sgl,
