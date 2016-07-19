@@ -1482,6 +1482,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					   *rqp->recv_prod_buf, rqp->recv_cons);
 #ifdef CONFIG_NTRDMA_RETRY_RECV
 				--pos;
+				tasklet_schedule(&qp->send_work);
 #else
 				if (!wqe->op_status)
 					wqe->op_status = NTRDMA_WC_ERR_RECV_MISSING;
