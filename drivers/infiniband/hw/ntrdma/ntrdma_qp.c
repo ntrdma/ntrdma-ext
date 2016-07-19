@@ -1036,6 +1036,7 @@ static void ntrdma_qp_recv_cons_get(struct ntrdma_qp *qp,
 static void ntrdma_qp_recv_cons_put(struct ntrdma_qp *qp,
 				    u32 pos, u32 base)
 {
+	wmb(); /* write recv completions before index */
 	qp->recv_cons = ntrdma_ring_update(pos, base, qp->recv_cap);
 }
 
@@ -1056,6 +1057,7 @@ static void ntrdma_qp_recv_cmpl_get(struct ntrdma_qp *qp,
 {
 	ntrdma_ring_consume(qp->recv_abort ? qp->recv_post : qp->recv_cons,
 			    qp->recv_cmpl, qp->recv_cap, pos, end, base);
+	rmb(); /* read index before recv completions */
 }
 
 static void ntrdma_qp_recv_cmpl_put(struct ntrdma_qp *qp,
