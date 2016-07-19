@@ -1712,11 +1712,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				rqp->recv_error = true;
 				break;
 			}
-
-			if (recv_pos == recv_end) {
-				ntrdma_qp_recv_cons_put(qp, recv_pos, recv_base);
-				ntrdma_qp_recv_cons_get(qp, &recv_pos, &recv_end, &recv_base);
-			}
 		} else {
 			recv_wqe = NULL;
 			recv_cqe = NULL;
@@ -1771,6 +1766,12 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			}
 
 			ntrdma_send_done(cqe, wqe, rdma_len);
+		}
+
+		if (recv_pos == recv_end) {
+			ntrdma_qp_recv_cons_put(qp, recv_pos, recv_base);
+			ntrdma_qp_recv_cons_get(qp, &recv_pos,
+						&recv_end, &recv_base);
 		}
 
 		if (pos == end) {
