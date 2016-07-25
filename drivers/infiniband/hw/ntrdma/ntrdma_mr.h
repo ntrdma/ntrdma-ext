@@ -132,14 +132,14 @@ int ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 		    struct ntrdma_dev *dev,
 		    u32 pd_key, u32 access,
 		    u64 addr, u64 len,
-		    u32 sg_count);
+		    u32 sg_count, u32 key);
 
 void ntrdma_rmr_deinit(struct ntrdma_rmr *rmr);
 
-static inline int ntrdma_rmr_add(struct ntrdma_rmr *rmr, u32 key)
+static inline int ntrdma_rmr_add(struct ntrdma_rmr *rmr)
 {
 	ntrdma_debugfs_rmr_add(rmr);
-	return ntrdma_rres_add(&rmr->rres, key);
+	return ntrdma_rres_add(&rmr->rres);
 }
 
 static inline void ntrdma_rmr_del(struct ntrdma_rmr *rmr)

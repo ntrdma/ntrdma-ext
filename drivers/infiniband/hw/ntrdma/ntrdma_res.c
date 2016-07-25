@@ -330,7 +330,8 @@ void ntrdma_res_del(struct ntrdma_res *res)
 
 int ntrdma_rres_init(struct ntrdma_rres *rres,
 		     struct ntrdma_dev *dev, struct ntrdma_vec *vec,
-		     void (*free)(struct ntrdma_rres *rres))
+		     void (*free)(struct ntrdma_rres *rres),
+		     u32 key)
 {
 	int rc;
 
@@ -340,7 +341,7 @@ int ntrdma_rres_init(struct ntrdma_rres *rres,
 
 	rres->vec = vec;
 	rres->free = free;
-	rres->key = 0;
+	rres->key = key;
 
 	return 0;
 }
@@ -350,7 +351,7 @@ void ntrdma_rres_deinit(struct ntrdma_rres *rres)
 	ntrdma_obj_deinit(&rres->obj);
 }
 
-int ntrdma_rres_add(struct ntrdma_rres *rres, u32 key)
+int ntrdma_rres_add(struct ntrdma_rres *rres)
 {
 	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
 	int rc;
@@ -359,14 +360,13 @@ int ntrdma_rres_add(struct ntrdma_rres *rres, u32 key)
 	{
 		ntrdma_rres_get(rres);
 
-		rc = ntrdma_vec_ensure_key(rres->vec, key, dev->node);
+		rc = ntrdma_vec_ensure_key(rres->vec, rres->key, dev->node);
 		if (rc)
 			goto err_key;
 
 		ntrdma_vec_lock(rres->vec);
 		{
-			rres->key = key;
-			ntrdma_vec_set(rres->vec, key, rres);
+			ntrdma_vec_set(rres->vec, rres->key, rres);
 		}
 		ntrdma_vec_unlock(rres->vec);
 

@@ -662,11 +662,12 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 }
 
 int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
-		    struct ntrdma_rqp_init_attr *attr)
+		    struct ntrdma_rqp_init_attr *attr, u32 key)
 {
 	int rc;
 
-	rc = ntrdma_rres_init(&rqp->rres, dev, &dev->rqp_vec, ntrdma_rqp_free);
+	rc = ntrdma_rres_init(&rqp->rres, dev, &dev->rqp_vec,
+			      ntrdma_rqp_free, key);
 	if (rc)
 		goto err_rres;
 

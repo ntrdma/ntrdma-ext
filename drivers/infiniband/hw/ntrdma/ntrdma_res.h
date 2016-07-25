@@ -152,11 +152,12 @@ struct ntrdma_rres {
 int ntrdma_rres_init(struct ntrdma_rres *rres,
 		     struct ntrdma_dev *dev,
 		     struct ntrdma_vec *vec,
-		     void (*free)(struct ntrdma_rres *rres));
+		     void (*free)(struct ntrdma_rres *rres),
+		     u32 key);
 
 void ntrdma_rres_deinit(struct ntrdma_rres *rres);
 
-int ntrdma_rres_add(struct ntrdma_rres *rres, u32 key);
+int ntrdma_rres_add(struct ntrdma_rres *rres);
 void ntrdma_rres_del(struct ntrdma_rres *rres);
 
 static inline void ntrdma_rres_get(struct ntrdma_rres *rres)

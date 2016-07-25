@@ -296,7 +296,7 @@ int ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 		    struct ntrdma_dev *dev,
 		    u32 pd_key, u32 access,
 		    u64 addr, u64 len,
-		    u32 sg_count)
+		    u32 sg_count, u32 key)
 {
 	rmr->pd_key = pd_key;
 	rmr->access = access;
@@ -309,7 +309,7 @@ int ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 	memset(rmr->sg_list, 0, sg_count * sizeof(*rmr->sg_list));
 
 	return ntrdma_rres_init(&rmr->rres, dev, &dev->rmr_vec,
-				ntrdma_rmr_free);
+				ntrdma_rmr_free, key);
 }
 
 void ntrdma_rmr_deinit(struct ntrdma_rmr *rmr)

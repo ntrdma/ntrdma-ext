@@ -556,7 +556,8 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	}
 
 	rc = ntrdma_rmr_init(rmr, dev, cmd->pd_key, cmd->access,
-			     cmd->mr_addr, cmd->mr_len, cmd->sg_cap);
+			     cmd->mr_addr, cmd->mr_len, cmd->sg_cap,
+			     cmd->mr_key);
 	if (rc)
 		goto err_init;
 
@@ -570,7 +571,7 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 			ntc_peer_addr(dev->ntc,
 				      rmr->sg_list[i].addr);
 
-	rc = ntrdma_rmr_add(rmr, cmd->mr_key);
+	rc = ntrdma_rmr_add(rmr);
 	if (rc)
 		goto err_add;
 
@@ -691,7 +692,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 		ntc_peer_addr(dev->ntc, cmd->send_cons_addr);
 	attr.peer_cmpl_vbell_idx = cmd->cmpl_vbell_idx;
 
-	rc = ntrdma_rqp_init(rqp, dev, &attr);
+	rc = ntrdma_rqp_init(rqp, dev, &attr, cmd->qp_key);
 	if (rc)
 		goto err_init;
 
@@ -703,7 +704,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 		rqp->send_cap * rqp->send_wqe_size;
 	rsp->send_vbell_idx = rqp->send_vbell_idx;
 
-	rc = ntrdma_rqp_add(rqp, cmd->qp_key);
+	rc = ntrdma_rqp_add(rqp);
 	if (rc)
 		goto err_add;
 

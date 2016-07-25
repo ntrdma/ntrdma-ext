@@ -319,14 +319,14 @@ struct ntrdma_rqp_init_attr {
 };
 
 int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
-		    struct ntrdma_rqp_init_attr *attr);
+		    struct ntrdma_rqp_init_attr *attr, u32 key);
 
 void ntrdma_rqp_deinit(struct ntrdma_rqp *rqp);
 
-static inline int ntrdma_rqp_add(struct ntrdma_rqp *rqp, int key)
+static inline int ntrdma_rqp_add(struct ntrdma_rqp *rqp)
 {
 	ntrdma_debugfs_rqp_add(rqp);
-	return ntrdma_rres_add(&rqp->rres, key);
+	return ntrdma_rres_add(&rqp->rres);
 }
 
 void ntrdma_rqp_del(struct ntrdma_rqp *rqp);
