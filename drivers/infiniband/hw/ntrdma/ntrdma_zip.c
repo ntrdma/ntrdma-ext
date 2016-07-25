@@ -54,16 +54,18 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 
 	for (;;) {
 		/* Advance the source work request entry */
-		while (src_off >= src_sg_list[src_i].len) {
+		while (src_off == src_sg_list[src_i].len) {
 			if (mr) {
 				/* FIXME: dma callback for put mr */
 				ntrdma_mr_put(mr);
 				mr = NULL;
 			}
 
+			src_off = 0;
+
 			if (++src_i == src_sg_count) {
 				if (!rdma_read) {
-					/* finished with dst work request */
+					/* finished with src work request */
 					*rdma_len = total_len;
 					rc = 0;
 					goto out;
@@ -73,12 +75,14 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 		}
 
 		/* Advance the destination work request entry */
-		while (dst_off >= dst_sg_list[dst_i].len) {
+		while (dst_off == dst_sg_list[dst_i].len) {
 			if (rmr) {
 				/* FIXME: dma callback for put rmr */
 				ntrdma_rmr_put(rmr);
 				rmr = NULL;
 			}
+
+			dst_off = 0;
 
 			if (++dst_i == dst_sg_count) {
 				if (rdma_read) {
@@ -219,11 +223,13 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 
 	for (;;) {
 		/* Advance the work request entry */
-		while (sg_off >= dst_sg_list[sg_i].len) {
+		while (sg_off == dst_sg_list[sg_i].len) {
 			if (mr) {
 				ntrdma_mr_put(mr);
 				mr = NULL;
 			}
+
+			sg_off = 0;
 
 			if (++sg_i == dst_sg_count) {
 				/* finished with sg list */
