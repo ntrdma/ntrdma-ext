@@ -640,27 +640,27 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		wqe->op_code = NTRDMA_WR_SEND_RDMA;
 		wqe->op_status = 0;
 		wqe->recv_key = ~(u32)0;
-		wqe->rdma_key = ibwr->wr.rdma.rkey;
+		wqe->rdma_key = rdma_wr(ibwr)->rkey;
 		wqe->rdma_len = 0;
-		wqe->rdma_addr = ibwr->wr.rdma.remote_addr;
+		wqe->rdma_addr = rdma_wr(ibwr)->remote_addr;
 		wqe->imm_data = ibwr->ex.imm_data;
 		break;
 	case IB_WR_RDMA_WRITE:
 		wqe->op_code = NTRDMA_WR_RDMA_WRITE;
 		wqe->op_status = 0;
 		wqe->recv_key = ~(u32)0;
-		wqe->rdma_key = ibwr->wr.rdma.rkey;
+		wqe->rdma_key = rdma_wr(ibwr)->rkey;
 		wqe->rdma_len = 0;
-		wqe->rdma_addr = ibwr->wr.rdma.remote_addr;
+		wqe->rdma_addr = rdma_wr(ibwr)->remote_addr;
 		wqe->imm_data = 0;
 		break;
 	case IB_WR_RDMA_READ:
 		wqe->op_code = NTRDMA_WR_RDMA_READ;
 		wqe->op_status = 0;
 		wqe->recv_key = ~(u32)0;
-		wqe->rdma_key = ibwr->wr.rdma.rkey;
+		wqe->rdma_key = rdma_wr(ibwr)->rkey;
 		wqe->rdma_len = 0;
-		wqe->rdma_addr = ibwr->wr.rdma.remote_addr;
+		wqe->rdma_addr = rdma_wr(ibwr)->remote_addr;
 		wqe->imm_data = 0;
 		break;
 	default:
