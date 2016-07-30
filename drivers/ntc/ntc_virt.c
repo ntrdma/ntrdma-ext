@@ -102,8 +102,8 @@ static void *ntc_virt_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
 		goto err_pages;
 	}
 
-	rc = get_user_pages(current, current->mm, uaddr & PAGE_MASK,
-			     npages, 1, readonly, vmem->pages, NULL);
+	rc = get_user_pages(uaddr & PAGE_MASK, npages,
+			    1, readonly, vmem->pages, NULL);
 	up_write(&current->mm->mmap_sem);
 	if (rc < 0)
 		goto err_pages;
