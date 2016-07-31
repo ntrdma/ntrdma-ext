@@ -316,7 +316,7 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev)
 
 	dev_vdbg(&dev->ntc.dev, "ping val %x\n", ping_val);
 
-	wmb();
+	wmb(); /* fence anything prior to writing the message */
 
 	if (ping_flags & NTC_NTB_PING_PONG_MEM)
 		iowrite32(ping_val, &dev->info_self_on_peer->ping);
@@ -426,7 +426,7 @@ static int ntc_ntb_ping_start(struct ntc_ntb_dev *dev)
 	msg = dev->poll_msg;
 	spin_unlock_irqrestore(&dev->ping_lock, irqflags);
 
-	rmb();
+	rmb(); /* fence anything after reading the message */
 
 	return msg;
 }
@@ -539,7 +539,8 @@ static inline void ntc_ntb_init_info(struct ntc_ntb_dev *dev)
 	version = ntc_ntb_version(NTC_NTB_VERSION_MAX, NTC_NTB_VERSION_MIN);
 	peer_version = ntb_spad_read(dev->ntb, NTC_NTB_SPAD_VERSION);
 
-	dev_dbg(&dev->ntc.dev, "version %x peer_version %x\n", version, peer_version);
+	dev_dbg(&dev->ntc.dev, "version %x peer_version %x\n",
+		version, peer_version);
 
 	dev->version = ntc_ntb_version_choose(version, peer_version);
 	if (dev->version == NTC_NTB_VERSION_NONE)
@@ -715,7 +716,7 @@ static inline void ntc_ntb_hello(struct ntc_ntb_dev *dev)
 	if (next_size < 0)
 		goto err_hello;
 
-	dev_dbg(&dev->ntc.dev, "successfull hello callback\n");
+	dev_dbg(&dev->ntc.dev, "successful hello callback\n");
 
 	/* copy the temporary output buffer to the peer */
 	if (out_size) {
@@ -1009,8 +1010,8 @@ static int ntc_ntb_req_prep_flags(struct ntc_dev *ntc, bool fence)
 }
 
 static int ntc_ntb_req_memcpy(struct ntc_dev *ntc, void *req,
-		       u64 dst, u64 src, u64 len, bool fence,
-		       void (*cb)(void *cb_ctx), void *cb_ctx)
+			      u64 dst, u64 src, u64 len, bool fence,
+			      void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct dma_chan *chan = req;
 	struct dma_async_tx_descriptor *tx;
@@ -1132,8 +1133,8 @@ err_imm:
 }
 
 static int ntc_ntb_req_imm32(struct ntc_dev *ntc, void *req,
-		      u64 dst, u32 val, bool fence,
-		      void (*cb)(void *cb_ctx), void *cb_ctx)
+			     u64 dst, u32 val, bool fence,
+			     void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	dev_vdbg(&ntc->dev, "request imm32 dst %llx val %x\n",
 		 dst, val);
@@ -1144,8 +1145,8 @@ static int ntc_ntb_req_imm32(struct ntc_dev *ntc, void *req,
 }
 
 static int ntc_ntb_req_imm64(struct ntc_dev *ntc, void *req,
-		      u64 dst, u64 val, bool fence,
-		      void (*cb)(void *cb_ctx), void *cb_ctx)
+			     u64 dst, u64 val, bool fence,
+			     void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	dev_vdbg(&ntc->dev, "request imm64 dst %llx val %llx\n",
 		 dst, val);
@@ -1156,7 +1157,7 @@ static int ntc_ntb_req_imm64(struct ntc_dev *ntc, void *req,
 }
 
 static int ntc_ntb_req_signal(struct ntc_dev *ntc, void *req,
-		       void (*cb)(void *cb_ctx), void *cb_ctx)
+			      void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
 
@@ -1342,7 +1343,7 @@ static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 
 static inline struct pci_bus *ntc_ntb_ascend_bus(struct pci_bus *bus)
 {
-	while(bus->parent)
+	while (bus->parent)
 		bus = bus->parent;
 
 	return bus;
@@ -1391,7 +1392,7 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	dma_cap_set(DMA_MEMCPY, mask);
 
 	dma = dma_request_channel(mask, ntc_ntb_filter_bus,
-				       ntc_ntb_ascend_bus(ntb->pdev->bus));
+				  ntc_ntb_ascend_bus(ntb->pdev->bus));
 	if (!dma) {
 		rc = -ENODEV;
 		goto err_dma;

@@ -125,7 +125,7 @@ int ntc_set_ctx(struct ntc_dev *ntc, void *ctx,
 	dev_vdbg(&ntc->dev, "set ctx\n");
 
 	dev_set_drvdata(&ntc->dev, ctx);
-	wmb();
+	wmb(); /* if ctx_ops is set, drvdata must be set */
 	ntc->ctx_ops = ctx_ops;
 
 	return 0;
@@ -137,14 +137,14 @@ void ntc_clear_ctx(struct ntc_dev *ntc)
 	dev_vdbg(&ntc->dev, "clear ctx\n");
 
 	ntc->ctx_ops = NULL;
-	wmb();
+	wmb(); /* if ctx_ops is set, drvdata must be set */
 	dev_set_drvdata(&ntc->dev, NULL);
 }
 EXPORT_SYMBOL(ntc_clear_ctx);
 
 ssize_t ntc_ctx_hello(struct ntc_dev *ntc, int phase,
-		  void *in_buf, size_t in_size,
-		  void *out_buf, size_t out_size)
+		      void *in_buf, size_t in_size,
+		      void *out_buf, size_t out_size)
 {
 	const struct ntc_ctx_ops *ctx_ops;
 	void *ctx;
@@ -152,7 +152,7 @@ ssize_t ntc_ctx_hello(struct ntc_dev *ntc, int phase,
 	dev_dbg(&ntc->dev, "hello phase %d\n", phase);
 
 	ctx = ntc_get_ctx(ntc);
-	rmb();
+	rmb(); /* if ctx_ops is set, drvdata must be set */
 	ctx_ops = ntc->ctx_ops;
 
 	if (ctx_ops && ctx_ops->hello)
@@ -175,7 +175,7 @@ void ntc_ctx_enable(struct ntc_dev *ntc)
 	dev_dbg(&ntc->dev, "enable\n");
 
 	ctx = ntc_get_ctx(ntc);
-	rmb();
+	rmb(); /* if ctx_ops is set, drvdata must be set */
 	ctx_ops = ntc->ctx_ops;
 
 	if (ctx_ops)
@@ -191,7 +191,7 @@ void ntc_ctx_disable(struct ntc_dev *ntc)
 	dev_dbg(&ntc->dev, "disable\n");
 
 	ctx = ntc_get_ctx(ntc);
-	rmb();
+	rmb(); /* if ctx_ops is set, drvdata must be set */
 	ctx_ops = ntc->ctx_ops;
 
 	if (ctx_ops)
@@ -207,7 +207,7 @@ void ntc_ctx_quiesce(struct ntc_dev *ntc)
 	dev_dbg(&ntc->dev, "quiesce\n");
 
 	ctx = ntc_get_ctx(ntc);
-	rmb();
+	rmb(); /* if ctx_ops is set, drvdata must be set */
 	ctx_ops = ntc->ctx_ops;
 
 	if (ctx_ops && ctx_ops->quiesce)
@@ -223,7 +223,7 @@ void ntc_ctx_reset(struct ntc_dev *ntc)
 	dev_dbg(&ntc->dev, "reset\n");
 
 	ctx = ntc_get_ctx(ntc);
-	rmb();
+	rmb(); /* if ctx_ops is set, drvdata must be set */
 	ctx_ops = ntc->ctx_ops;
 
 	if (ctx_ops && ctx_ops->reset)
@@ -239,7 +239,7 @@ void ntc_ctx_signal(struct ntc_dev *ntc)
 	dev_vdbg(&ntc->dev, "signal\n");
 
 	ctx = ntc_get_ctx(ntc);
-	rmb();
+	rmb(); /* if ctx_ops is set, drvdata must be set */
 	ctx_ops = ntc->ctx_ops;
 
 	if (ctx_ops && ctx_ops->signal)

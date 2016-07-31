@@ -290,7 +290,7 @@ static int ntc_tcp_recv(struct socket *sock, void *buf, size_t len)
 	if (!sock)
 		return -EIO;
 
-	while(len > 0) {
+	while (len > 0) {
 		memset(&msg, 0, sizeof(msg));
 		iov.iov_base = buf;
 		iov.iov_len = len;
@@ -435,7 +435,9 @@ static int ntc_tcp_hello(struct ntc_tcp_dev *dev, struct socket *sock)
 			phase, in_size);
 
 		in_size = msg.data_size;
-		in_buf = krealloc(in_buf, in_size, GFP_KERNEL);
+
+		kfree(in_buf);
+		in_buf = kmalloc(in_size, GFP_KERNEL);
 		if (in_size && !in_buf) {
 			rc = -ENOMEM;
 			break;
@@ -445,7 +447,9 @@ static int ntc_tcp_hello(struct ntc_tcp_dev *dev, struct socket *sock)
 			phase, in_size);
 
 		out_size = msg.next_size;
-		out_buf = krealloc(out_buf, out_size, GFP_KERNEL);
+
+		kfree(out_buf);
+		out_buf = kmalloc(out_size, GFP_KERNEL);
 		if (out_size && !out_buf) {
 			rc = -ENOMEM;
 			break;
@@ -543,7 +547,6 @@ static int ntc_tcp_server(void *ctx)
 		goto err_bind;
 
 	while (!kthread_should_stop()) {
-
 		if (!reps) /* TODO: delme */
 			break;
 		--reps;
@@ -592,7 +595,6 @@ static int ntc_tcp_client(void *ctx)
 	pr_info("client %pISpc\n", &dev->saddr);
 
 	while (!kthread_should_stop()) {
-
 		pr_info("client %pISpc create\n", &dev->saddr);
 		rc = sock_create_kern(&init_net, dev->saddr.sa_family,
 				      SOCK_STREAM, IPPROTO_TCP, &sock);
