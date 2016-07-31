@@ -1063,17 +1063,17 @@ static int ntc_ntb_req_imm(struct ntc_dev *ntc, void *req,
 	struct ntc_ntb_imm *imm;
 	int rc;
 
-#ifdef CONFIG_NTC_NTB_DMA_REQ_IMM
 	struct dma_chan *chan = req;
 	struct dma_async_tx_descriptor *tx;
 	dma_cookie_t cookie;
 	int flags;
 
-	if (chan->device->device_prep_dma_imm) {
+	if (chan->device->device_prep_dma_imm_data && len == 8) {
 		flags = ntc_ntb_req_prep_flags(ntc, fence);
 
-		tx = chan->device->device_prep_dma_imm(chan, dst, ptr,
-						       len, flags);
+		tx = chan->device->device_prep_dma_imm_data(chan, dst,
+							    *(u64 *)ptr,
+							    flags);
 		if (!tx)
 			return -ENOMEM;
 
@@ -1086,7 +1086,6 @@ static int ntc_ntb_req_imm(struct ntc_dev *ntc, void *req,
 
 		return 0;
 	}
-#endif
 
 	imm = kmalloc_node(sizeof(*imm), GFP_ATOMIC,
 			   dev_to_node(&ntc->dev));
