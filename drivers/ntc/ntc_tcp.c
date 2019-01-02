@@ -38,6 +38,7 @@
 #include <linux/inet.h>
 #include <linux/kthread.h>
 #include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <net/net_namespace.h>
 #include <linux/tcp.h>
 
