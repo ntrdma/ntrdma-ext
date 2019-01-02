@@ -1,11 +1,10 @@
 #include <linux/init.h>
 #include <linux/module.h>
 
-#include <linux/sched.h>
 #include <linux/slab.h>
-#include <linux/vmalloc.h>
 
 #include <rdma/ib_verbs.h>
+#include <rdma/ib_umem.h>
 
 #include <linux/ntc.h>
 
@@ -53,111 +52,75 @@ static void ntc_virt_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
 	rmb(); /* read data in the order it is received out of the channel */
 }
 
-struct ntc_vmem {
-	void *buf;
-	size_t size;
-	void *kvaddr;
-	unsigned long npages;
-	struct page *pages[];
-};
-
 static void *ntc_virt_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
 			       unsigned long uaddr, size_t size,
 			       int access, int dmasync)
 {
-	struct ntc_vmem *vmem;
-	unsigned long npages, locked, lock_limit;
-	int readonly, rc, i;
+	access |= IB_ACCESS_SOFTWARE;
 
-	if (!size)
-		return ERR_PTR(-EINVAL);
-
-	if (uaddr + size < uaddr || PAGE_ALIGN(uaddr + size) < uaddr + size)
-		return ERR_PTR(-EINVAL);
-
-	if (!can_do_mlock())
-		return ERR_PTR(-EPERM);
-
-	npages = 1 + ((uaddr + size) >> PAGE_SHIFT) - (uaddr >> PAGE_SHIFT);
-
-	readonly = !(access &
-		     (IB_ACCESS_LOCAL_WRITE   | IB_ACCESS_REMOTE_WRITE |
-		      IB_ACCESS_REMOTE_ATOMIC | IB_ACCESS_MW_BIND));
-
-	vmem = kmalloc_node(sizeof(*vmem) + npages * sizeof(*vmem->pages),
-			    GFP_KERNEL, dev_to_node(&ntc->dev));
-	if (!vmem)
-		return ERR_PTR(-ENOMEM);
-
-	vmem->npages = npages;
-
-	down_write(&current->mm->mmap_sem);
-
-	locked     = npages + current->mm->pinned_vm;
-	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
-
-	if ((locked > lock_limit) && !capable(CAP_IPC_LOCK)) {
-		rc = -ENOMEM;
-		up_write(&current->mm->mmap_sem);
-		goto err_pages;
-	}
-
-	rc = get_user_pages(uaddr & PAGE_MASK, npages,
-			    1, readonly, vmem->pages, NULL);
-	up_write(&current->mm->mmap_sem);
-	if (rc < 0)
-		goto err_pages;
-
-	vmem->kvaddr = vmap(vmem->pages, npages, VM_MAP, PAGE_KERNEL);
-	if (!vmem->kvaddr) {
-		rc = -ENOMEM;
-		goto err_vmap;
-	}
-
-	vmem->buf = vmem->kvaddr + (uaddr & ~PAGE_MASK);
-	vmem->size = size;
-
-	return vmem;
-
-err_vmap:
-	for (i = 0; i < npages; ++i)
-		put_page(vmem->pages[i]);
-err_pages:
-	kfree(vmem);
-	return ERR_PTR(rc);
+	return ib_umem_get(uctx, uaddr, size, access, dmasync);
 }
 
 static void ntc_virt_umem_put(struct ntc_dev *ntc, void *umem)
 {
-	struct ntc_vmem *vmem = umem;
-	int i, npages = vmem->npages;
-
-	vunmap(vmem->kvaddr);
-	for (i = 0; i < npages; ++i)
-		put_page(vmem->pages[i]);
-	kfree(vmem);
+	ib_umem_release(umem);
 }
 
 static int ntc_virt_umem_sgl(struct ntc_dev *ntc, void *umem,
 			     struct ntc_sge *sgl, int count)
 {
-	struct ntc_vmem *vmem = umem;
+	struct ib_umem *ibumem = umem;
+	struct scatterlist *sg, *next;
+	void *virt_addr, *next_addr;
+	size_t virt_len;
+	int i, virt_count = 0;
 
-	if (count >= 1) {
-		/* virtual pointer and size must fit in the sg fields */
-		BUILD_BUG_ON(sizeof(u64) < sizeof(vmem->buf));
-		BUILD_BUG_ON(sizeof(u64) < sizeof(vmem->size));
+	BUILD_BUG_ON(sizeof(u64) < sizeof(virt_addr));
+	BUILD_BUG_ON(sizeof(u64) < sizeof(virt_len));
 
-		sgl[0].addr = (u64)vmem->buf;
-		sgl[0].len = (u64)vmem->size;
+	for_each_sg(ibumem->sg_head.sgl, sg, ibumem->sg_head.nents, i) {
+		/* virt_addr is start addr of the contiguous range */
+		virt_addr = page_address(sg_page(sg));
+		/* virt_len accumulates the length of the contiguous range */
+		virt_len = PAGE_SIZE;
+
+		if (!virt_addr)
+			return -ENOMEM;
+
+		for (; i + 1 < ibumem->sg_head.nents; ++i) {
+			next = sg_next(sg);
+			if (!next)
+				break;
+			next_addr = page_address(sg_page(next));
+			if (next_addr != virt_addr + virt_len)
+				break;
+			virt_len += PAGE_SIZE;
+			sg = next;
+		}
+
+		if (sgl && virt_count < count) {
+			sgl[virt_count].addr = (u64)virt_addr;
+			sgl[virt_count].len = virt_len;
+		}
+
+		++virt_count;
 	}
 
-	return 1;
-}
+	if (virt_count && sgl && count > 0) {
+		/* virt_len is start offset in the first page */
+		virt_len = ib_umem_offset(ibumem);
+		sgl[0].addr += virt_len;
+		sgl[0].len -= virt_len;
 
-static int ntc_virt_umem_count(struct ntc_dev *ntc, void *umem)
-{
-	return 1;
+		if (virt_count <= count) {
+			/* virt_len is offset from the end of the last page */
+			virt_len = (virt_len + ibumem->length) & ~PAGE_MASK;
+			virt_len = (PAGE_SIZE - virt_len) & ~PAGE_MASK;
+			sgl[virt_count - 1].len -= virt_len;
+		}
+	}
+
+	return virt_count;
 }
 
 static void ntc_virt_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
@@ -175,6 +138,5 @@ struct ntc_map_ops ntc_virt_map_ops = {
 	.umem_get			= ntc_virt_umem_get,
 	.umem_put			= ntc_virt_umem_put,
 	.umem_sgl			= ntc_virt_umem_sgl,
-	.umem_count			= ntc_virt_umem_count,
 };
 EXPORT_SYMBOL(ntc_virt_map_ops);
