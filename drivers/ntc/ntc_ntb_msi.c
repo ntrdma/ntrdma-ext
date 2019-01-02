@@ -33,6 +33,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 
+#include <linux/debugfs.h>
 #include <linux/dmaengine.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
@@ -40,6 +41,7 @@
 #include <linux/ntb.h>
 #include <linux/pci.h>
 #include <linux/timer.h>
+#include <linux/msi.h>
 
 #include <linux/ntc.h>
 
@@ -47,7 +49,7 @@
 #define DRIVER_DESCRIPTION		"NTC Non Transparent Bridge"
 
 #define DRIVER_LICENSE			"Dual BSD/GPL"
-#define DRIVER_VERSION			"0.2"
+#define DRIVER_VERSION			"0.3"
 #define DRIVER_RELDATE			"5 October 2015"
 #define DRIVER_AUTHOR			"Allen Hubbe <Allen.Hubbe@emc.com>"
 
@@ -56,8 +58,14 @@ MODULE_VERSION(DRIVER_VERSION);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESCRIPTION);
 
+static struct dentry *ntc_dbgfs;
+
 static int ntc_ntb_info_size = 0x1000;
 /* TODO: module param named info_size */
+
+static bool use_msi;
+module_param(use_msi, bool, 0444);
+MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 
 /* Protocol version for backwards compatibility */
 #define NTC_NTB_VERSION_NONE		0
@@ -91,6 +99,8 @@ static int ntc_ntb_info_size = 0x1000;
 #define NTC_NTB_PING_POLL_PERIOD	msecs_to_jiffies(257)
 #define NTC_NTB_PING_MISS_THRESHOLD	10
 
+#define NTC_NTB_DB_BIT			1
+
 #ifndef iowrite64
 #ifdef writeq
 #define iowrite64 writeq
@@ -120,19 +130,16 @@ struct ntc_ntb_hello_info {
 };
 
 struct ntc_ntb_info {
+	u32				version;
 	u32				magic;
 	u32				ping;
-
-	struct ntc_ntb_hello_info	hello_odd;
-	struct ntc_ntb_hello_info	hello_even;
-
-	u32				hello_even_size;
-	u32				hello_even_addr_lower;
-	u32				hello_even_addr_upper;
 
 	u32				msi_data;
 	u32				msi_addr_lower;
 	u32				msi_addr_upper;
+
+	struct ntc_ntb_hello_info	hello_odd;
+	struct ntc_ntb_hello_info	hello_even;
 };
 
 struct ntc_ntb_hello_map {
@@ -151,10 +158,15 @@ struct ntc_ntb_dev {
 	/* local ntb window offset to peer dram */
 	u64				peer_dram_base;
 
+	/*Peer mw base for initialization*/
+	u64                             peer_info_base;
+
 	/* local buffer for remote driver to write info */
+	void                            *info_peer_on_self_unaligned;
 	struct ntc_ntb_info		*info_peer_on_self;
 	size_t				info_peer_on_self_size;
 	dma_addr_t			info_peer_on_self_dma;
+	size_t                          info_peer_on_self_off;
 
 	/* remote buffer for local driver to write info */
 	struct ntc_ntb_info __iomem	*info_self_on_peer;
@@ -163,8 +175,8 @@ struct ntc_ntb_dev {
 	int				version;
 
 	/* direct interrupt message */
-	u64				peer_msi_addr;
-	u32				peer_msi_data;
+	u64				peer_irq_addr;
+	u32				peer_irq_data;
 
 	/* link state heartbeat */
 	bool				ping_run;
@@ -186,6 +198,8 @@ struct ntc_ntb_dev {
 
 	struct ntc_ntb_hello_map	hello_odd;
 	struct ntc_ntb_hello_map	hello_even;
+
+	struct dentry *dbgfs;
 };
 
 #define ntc_ntb_down_cast(__ntc) \
@@ -209,22 +223,42 @@ struct ntc_ntb_dev {
 static void ntc_ntb_read_msi_config(struct ntc_ntb_dev *dev,
 				    u64 *addr, u32 *val)
 {
-	u32 addr_lo, addr_hi, data;
+	u32 addr_lo, addr_hi = 0, data;
+	struct pci_dev *pdev = dev->ntb->pdev;
 
 	/* FIXME: add support for 64-bit MSI header, and MSI-X.  Until it is
 	 * fixed here, we need to disable MSI-X in the NTB HW driver.
 	 */
 
-	pci_read_config_dword(dev->ntb->pdev,
-			      PCI_MSI_ADDRESS_LO + dev->ntb->pdev->msi_cap,
-			      &addr_lo);
+	if (pdev->msi_enabled) {
+		pci_read_config_dword(pdev,
+				      PCI_MSI_ADDRESS_LO + pdev->msi_cap,
+				      &addr_lo);
 
-	/* FIXME: msi header layout differs for 32/64 bit addr width. */
-	addr_hi = 0;
+		/*
+		 * FIXME: msi header layout differs for 32/64
+		 * bit addr width.
+		 */
+		pci_read_config_dword(pdev,
+				      pdev->msi_cap + PCI_MSI_DATA_32,
+				      &data);
+	} else if (pdev->msix_enabled) {
+		struct msi_desc *entry;
 
-	pci_read_config_dword(dev->ntb->pdev,
-			      dev->ntb->pdev->msi_cap + PCI_MSI_DATA_32,
-			      &data);
+		list_for_each_entry(entry, &pdev->dev.msi_list, list) {
+			addr_hi = ioread32(entry->mask_base +
+					   PCI_MSIX_ENTRY_UPPER_ADDR);
+			addr_lo = ioread32(entry->mask_base +
+					   PCI_MSIX_ENTRY_LOWER_ADDR);
+			data = ioread32(entry->mask_base +
+					PCI_MSIX_ENTRY_DATA);
+			break;
+		}
+	} else {
+		*addr = 0;
+		*val = 0;
+		return;
+	}
 
 	*addr = (u64)addr_lo | (u64)addr_hi << 32;
 	*val = data;
@@ -311,6 +345,7 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev)
 
 	ping_flags = ntc_ntb_ping_flags(dev->ping_msg);
 	poison_flags = dev->ping_flags & ~ping_flags;
+	(void)poison_flags; /* TODO: cleanup unused */
 
 	ping_val = ntc_ntb_ping_val(dev->ping_msg, ++dev->ping_seq);
 
@@ -318,17 +353,7 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev)
 
 	wmb(); /* fence anything prior to writing the message */
 
-	if (ping_flags & NTC_NTB_PING_PONG_MEM)
-		iowrite32(ping_val, &dev->info_self_on_peer->ping);
-
-	if (ping_flags & NTC_NTB_PING_PONG_SPAD)
-		ntb_peer_spad_write(dev->ntb, NTC_NTB_SPAD_PING, ping_val);
-
-	if (poison_flags & NTC_NTB_PING_PONG_MEM)
-		iowrite32(0, &dev->info_self_on_peer->ping);
-
-	if (poison_flags & NTC_NTB_PING_PONG_SPAD)
-		ntb_peer_spad_write(dev->ntb, NTC_NTB_SPAD_PING, 0);
+	iowrite32(ping_val, &dev->info_self_on_peer->ping);
 
 	dev->ping_flags = ping_flags;
 }
@@ -353,11 +378,9 @@ static bool ntc_ntb_ping_poll(struct ntc_ntb_dev *dev)
 	mod_timer(&dev->ping_poll, jiffies + NTC_NTB_PING_POLL_PERIOD);
 
 	ping_flags = dev->ping_flags;
+	(void)ping_flags; /* TODO: cleanup unused */
 
-	if (ping_flags & NTC_NTB_PING_POLL_MEM)
-		poll_val = dev->info_peer_on_self->ping;
-	else
-		poll_val = ntb_spad_read(dev->ntb, NTC_NTB_SPAD_PING);
+	poll_val = dev->info_peer_on_self->ping;
 
 	dev_vdbg(&dev->ntc.dev, "poll val %x\n", poll_val);
 
@@ -519,25 +542,23 @@ static inline void ntc_ntb_init_spad(struct ntc_ntb_dev *dev)
 	dev_dbg(&dev->ntc.dev, "link init spad\n");
 
 	version = ntc_ntb_version(NTC_NTB_VERSION_MAX, NTC_NTB_VERSION_MIN);
-	ntb_peer_spad_write(dev->ntb, NTC_NTB_SPAD_VERSION, version);
 
-	ntb_peer_spad_write(dev->ntb, NTC_NTB_SPAD_ADDR_LOWER,
-			    lower_32_bits(dev->info_peer_on_self_dma));
-	ntb_peer_spad_write(dev->ntb, NTC_NTB_SPAD_ADDR_UPPER,
-			    upper_32_bits(dev->info_peer_on_self_dma));
+	iowrite32(version, &dev->info_self_on_peer->version);
 
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_INIT_SPAD);
 }
 
 static inline void ntc_ntb_init_info(struct ntc_ntb_dev *dev)
 {
-	u32 version, peer_version, msi_data;
-	u64 peer_addr, msi_addr;
+	u32 version, peer_version;
+	u64 msi_addr;
+	u32 msi_data;
 
 	dev_dbg(&dev->ntc.dev, "link init info\n");
 
 	version = ntc_ntb_version(NTC_NTB_VERSION_MAX, NTC_NTB_VERSION_MIN);
-	peer_version = ntb_spad_read(dev->ntb, NTC_NTB_SPAD_VERSION);
+
+	peer_version = dev->info_peer_on_self->version;
 
 	dev_dbg(&dev->ntc.dev, "version %x peer_version %x\n",
 		version, peer_version);
@@ -547,15 +568,6 @@ static inline void ntc_ntb_init_info(struct ntc_ntb_dev *dev)
 		goto err;
 
 	dev_dbg(&dev->ntc.dev, "ok version\n");
-
-	peer_addr = ((u64)ntb_spad_read(dev->ntb, NTC_NTB_SPAD_ADDR_LOWER)) |
-		(((u64)ntb_spad_read(dev->ntb, NTC_NTB_SPAD_ADDR_UPPER)) << 32);
-	dev->info_self_on_peer = ioremap(dev->peer_dram_base + peer_addr,
-					 sizeof(*dev->info_self_on_peer));
-	if (!dev->info_self_on_peer)
-		goto err;
-
-	dev_dbg(&dev->ntc.dev, "ok self on peer\n");
 
 	iowrite32(ntc_ntb_version_magic(dev->version),
 		  &dev->info_self_on_peer->magic);
@@ -584,14 +596,32 @@ err:
 
 static inline void ntc_ntb_ping_ready(struct ntc_ntb_dev *dev)
 {
+	int rc;
+	resource_size_t size;
+
+	if (use_msi) {
+		dev->peer_irq_data = dev->info_peer_on_self->msi_data;
+		dev->peer_irq_addr = dev->peer_dram_base +
+			(((u64)dev->info_peer_on_self->msi_addr_lower) |
+			 (((u64)dev->info_peer_on_self->msi_addr_upper) << 32));
+	} else {
+		dev->peer_irq_data = NTC_NTB_DB_BIT;
+		rc = ntb_peer_db_addr(dev->ntb,
+				      (phys_addr_t *)&dev->peer_irq_addr,
+				      &size);
+		if ((rc < 0) || (size != sizeof(u64))) {
+			dev_err(&dev->ntc.dev, "Peer DB addr invalid\n");
+			return;
+		}
+
+		dev_dbg(&dev->ntc.dev, "Peer DB addr: %#llx\n",
+			dev->peer_irq_addr);
+
+		ntb_db_clear(dev->ntb, NTC_NTB_DB_BIT);
+		ntb_db_clear_mask(dev->ntb, NTC_NTB_DB_BIT);
+	}
+
 	dev_dbg(&dev->ntc.dev, "link ping ready\n");
-
-	dev->peer_msi_data = dev->info_peer_on_self->msi_data;
-
-	dev->peer_msi_addr = dev->peer_dram_base +
-		(((u64)dev->info_peer_on_self->msi_addr_lower) |
-		 (((u64)dev->info_peer_on_self->msi_addr_upper) << 32));
-
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_PING_READY);
 }
 
@@ -1163,9 +1193,25 @@ static int ntc_ntb_req_signal(struct ntc_dev *ntc, void *req,
 	dev_vdbg(&ntc->dev, "request signal to peer\n");
 
 	return ntc_ntb_req_imm32(ntc, req,
-				 dev->peer_msi_addr,
-				 dev->peer_msi_data,
+				 dev->peer_irq_addr,
+				 dev->peer_irq_data,
 				 false, cb, cb_ctx);
+}
+
+static int ntc_ntb_clear_signal(struct ntc_dev *ntc)
+{
+	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+
+	if (use_msi)
+		return 0;
+
+	if (ntb_db_read(dev->ntb) & dev->peer_irq_data) {
+		ntb_db_clear(dev->ntb, dev->peer_irq_data);
+		ntb_db_read(dev->ntb);
+		return 1;
+	}
+
+	return 0;
 }
 
 static struct ntc_dev_ops ntc_ntb_dev_ops = {
@@ -1181,6 +1227,7 @@ static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.req_imm32			= ntc_ntb_req_imm32,
 	.req_imm64			= ntc_ntb_req_imm64,
 	.req_signal			= ntc_ntb_req_signal,
+	.clear_signal			= ntc_ntb_clear_signal,
 };
 
 static void ntc_ntb_link_event(void *ctx)
@@ -1224,6 +1271,8 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	/* we'll be using the last memory window if it exists */
 	mw_idx = ntb_mw_count(dev->ntb);
 	if (mw_idx <= 0) {
+		pr_debug("no mw for new device %s\n",
+			 dev_name(&dev->ntb->dev));
 		rc = -EINVAL;
 		goto err_mw;
 	}
@@ -1236,40 +1285,89 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	/* this is the window we'll translate to local dram */
 	ntb_mw_get_range(dev->ntb, mw_idx, &mw_base, &mw_size, NULL, NULL);
 
-	/* FIXME: ensure window is large enough */
-	if (mw_size < 1) {
+	/*
+	 * FIXME: ensure window is large enough.
+	 * Fail under 8G here, but mw should be >= dram.
+	 */
+	if (mw_size < 0x200000000ul) {
+		pr_debug("invalid mw size for new device %s\n",
+			 dev_name(&dev->ntb->dev));
 		rc = -EINVAL;
 		goto err_mw;
 	}
 
 	/* FIXME: zero is not a portable address for local dram */
 	rc = ntb_mw_set_trans(dev->ntb, mw_idx, 0, mw_size);
-	if (rc)
+	if (rc) {
+		pr_debug("failed to translate mw for new device %s\n",
+			 dev_name(&dev->ntb->dev));
 		goto err_mw;
+	}
 
 	dev->peer_dram_base = mw_base;
 
 	/* a local buffer for peer driver to write */
-	dev->info_peer_on_self_size = ntc_ntb_info_size;
-	dev->info_peer_on_self =
-		dma_alloc_coherent(ntc_ntb_dma_dev(dev),
-				   dev->info_peer_on_self_size,
-				   &dev->info_peer_on_self_dma,
-				   GFP_KERNEL);
-	if (!dev->info_peer_on_self) {
+	ntb_mw_get_range(dev->ntb, mw_idx - 1, &mw_base, &mw_size, NULL, NULL);
+
+	if (mw_size < ntc_ntb_info_size) {
+		pr_debug("invalid alignement of peer info for new device %s\n",
+			 dev_name(&dev->ntb->dev));
 		rc = -ENOMEM;
 		goto err_info;
 	}
 
-	/* haven't negotiated the remote buffer */
-	dev->info_self_on_peer = NULL;
+	dev->peer_info_base = mw_base;
+	dev->info_peer_on_self_size = mw_size;
+
+	dev->info_peer_on_self_unaligned =
+		dma_alloc_coherent(ntc_ntb_dma_dev(dev),
+				   dev->info_peer_on_self_size * 2,
+				   &dev->info_peer_on_self_dma,
+				   GFP_KERNEL);
+	if (!dev->info_peer_on_self_unaligned) {
+		pr_debug("failed to allocate peer info for new device %s\n",
+			 dev_name(&dev->ntb->dev));
+		rc = -ENOMEM;
+		goto err_info;
+	}
+
+	/* get the offset to the aligned memory */
+	dev->info_peer_on_self_off =
+		PTR_ALIGN(dev->info_peer_on_self_unaligned,
+			  dev->info_peer_on_self_size) -
+		dev->info_peer_on_self_unaligned;
+
+	/* get the type-cast pointer to the aligned memory */
+	dev->info_peer_on_self =
+		dev->info_peer_on_self_unaligned +
+		dev->info_peer_on_self_off;
+
+	dev->info_self_on_peer = ioremap(dev->peer_info_base,
+					 sizeof(*dev->info_self_on_peer));
+	if (!dev->info_self_on_peer) {
+		pr_debug("failed to remap info on peer for new device %s\n",
+			 dev_name(&dev->ntb->dev));
+		rc = -EIO;
+		goto err_map;
+	}
+
+	/* set the ntb translation to the aligned dma memory */
+	rc = ntb_mw_set_trans(dev->ntb, mw_idx - 1,
+			      dev->info_peer_on_self_dma
+			      + dev->info_peer_on_self_off,
+			      dev->info_peer_on_self_size);
+	if (rc) {
+		pr_debug("failed to translate info mw for new device %s rc %d\n",
+			 dev_name(&dev->ntb->dev), rc);
+		goto err_ctx;
+	}
 
 	/* haven't negotiated the version */
 	dev->version = 0;
 
 	/* haven't negotiated the msi pair */
-	dev->peer_msi_addr = 0;
-	dev->peer_msi_data = 0;
+	dev->peer_irq_addr = 0;
+	dev->peer_irq_data = 0;
 
 	/* init the link state heartbeat */
 	dev->ping_run = false;
@@ -1302,15 +1400,20 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	/* ready for context events */
 	rc = ntb_set_ctx(dev->ntb, dev,
 			 &ntc_ntb_ctx_ops);
-	if (rc)
+	if (rc) {
+		pr_debug("failed to set ctx for new device %s\n",
+			 dev_name(&dev->ntb->dev));
 		goto err_ctx;
+	}
 
 	return 0;
 
 err_ctx:
+	iounmap(dev->info_self_on_peer);
+err_map:
 	dma_free_coherent(ntc_ntb_dma_dev(dev),
-			  dev->info_peer_on_self_size,
-			  dev->info_peer_on_self,
+			  dev->info_peer_on_self_size * 2,
+			  dev->info_peer_on_self_unaligned,
 			  dev->info_peer_on_self_dma);
 err_info:
 	ntb_mw_clear_trans(dev->ntb, mw_idx);
@@ -1334,40 +1437,124 @@ static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 
 	cancel_work_sync(&dev->link_work);
 
+	iounmap(dev->info_self_on_peer);
+
 	dma_free_coherent(ntc_ntb_dma_dev(dev),
-			  dev->info_peer_on_self_size,
-			  dev->info_peer_on_self,
+			  dev->info_peer_on_self_size * 2,
+			  dev->info_peer_on_self_unaligned,
 			  dev->info_peer_on_self_dma);
-}
-
-static inline struct pci_bus *ntc_ntb_ascend_bus(struct pci_bus *bus)
-{
-	while (bus->parent)
-		bus = bus->parent;
-
-	return bus;
 }
 
 static bool ntc_ntb_filter_bus(struct dma_chan *chan,
 			       void *filter_param)
 {
-	struct pci_dev *pdev;
+	int node = *(int *)filter_param;
 
-	pdev = to_pci_dev(chan->dev->device.parent);
-
-	return ntc_ntb_ascend_bus(pdev->bus) == filter_param;
+	return node == dev_to_node(&chan->dev->device);
 }
 
 static void ntc_ntb_release(struct device *device)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_of_dev(device);
 
-	pr_devel("release %s\n", dev_name(&dev->ntc.dev));
+	pr_debug("release %s\n", dev_name(&dev->ntc.dev));
 
 	ntc_ntb_dev_deinit(dev);
 	put_device(&dev->ntb->dev);
 	dma_release_channel(dev->dma);
 	kfree(dev);
+}
+
+static int ntc_debugfs_read(struct seq_file *s, void *v)
+{
+	struct ntc_ntb_dev *dev = s->private;
+
+	seq_printf(s, "peer_dram_base %#llx\n",
+		   dev->peer_dram_base);
+	seq_printf(s, "info_peer_on_self_size %#zx\n",
+		   dev->info_peer_on_self_size);
+	seq_printf(s, "info_peer_on_self_dma %#llx\n",
+		   dev->info_peer_on_self_dma);
+	seq_puts(s, "info_peer_on_self:\n");
+	seq_printf(s, "  magic %#x\n",
+		   dev->info_peer_on_self->magic);
+	seq_printf(s, "  ping %#x\n",
+		   dev->info_peer_on_self->ping);
+	seq_printf(s, "  msi_data %#x\n",
+		   dev->info_peer_on_self->msi_data);
+	seq_printf(s, "  msi_addr_lower %#x\n",
+		   dev->info_peer_on_self->msi_addr_lower);
+	seq_printf(s, "  msi_addr_upper %#x\n",
+		   dev->info_peer_on_self->msi_addr_upper);
+	seq_puts(s, "  hello_odd:\n");
+	seq_printf(s, "    size %#x\n",
+		   dev->info_peer_on_self->hello_odd.size);
+	seq_printf(s, "    addr_upper %#x\n",
+		   dev->info_peer_on_self->hello_odd.addr_upper);
+	seq_printf(s, "    addr_lower %#x\n",
+		   dev->info_peer_on_self->hello_odd.addr_lower);
+	seq_puts(s, "  hello_even:\n");
+	seq_printf(s, "    size %#x\n",
+		   dev->info_peer_on_self->hello_even.size);
+	seq_printf(s, "    addr_upper %#x\n",
+		   dev->info_peer_on_self->hello_even.addr_upper);
+	seq_printf(s, "    addr_lower %#x\n",
+		   dev->info_peer_on_self->hello_even.addr_lower);
+	seq_printf(s, "version %d\n",
+		   dev->version);
+	seq_printf(s, "peer_irq_addr %#llx\n",
+		   dev->peer_irq_addr);
+	seq_printf(s, "peer_irq_data %#x\n",
+		   dev->peer_irq_data);
+	seq_printf(s, "ping_run %d\n",
+		   dev->ping_run);
+	seq_printf(s, "ping_miss %d\n",
+		   dev->ping_miss);
+	seq_printf(s, "ping_flags %#x\n",
+		   dev->ping_flags);
+	seq_printf(s, "ping_seq %#hx\n",
+		   dev->ping_seq);
+	seq_printf(s, "ping_msg %#hx\n",
+		   dev->ping_msg);
+	seq_printf(s, "poll_val %#x\n",
+		   dev->poll_val);
+	seq_printf(s, "poll_msg %#hx\n",
+		   dev->poll_msg);
+	seq_printf(s, "link_is_up %d\n",
+		   dev->link_is_up);
+	seq_printf(s, "link_state %d\n",
+		   dev->link_state);
+
+	return 0;
+}
+
+static int ntc_debugfs_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ntc_debugfs_read, inode->i_private);
+}
+
+static const struct file_operations ntc_debugfs_fops = {
+	.owner = THIS_MODULE,
+	.open = ntc_debugfs_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static void ntc_setup_debugfs(struct ntc_ntb_dev *dev)
+{
+	if (!ntc_dbgfs) {
+		dev->dbgfs = NULL;
+		return;
+	}
+
+	dev->dbgfs = debugfs_create_dir(dev_name(&dev->ntb->dev),
+					ntc_dbgfs);
+	if (!dev->dbgfs)
+		return;
+
+	debugfs_create_file("info", S_IRUSR, dev->dbgfs,
+			    dev, &ntc_debugfs_fops);
 }
 
 static int ntc_ntb_probe(struct ntb_client *self,
@@ -1376,9 +1563,9 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	struct ntc_ntb_dev *dev;
 	struct dma_chan *dma;
 	dma_cap_mask_t mask;
-	int rc;
+	int node, rc;
 
-	pr_devel("probe ntb %s\n", dev_name(&ntb->dev));
+	pr_debug("probe ntb %s\n", dev_name(&ntb->dev));
 
 	dev = kzalloc_node(sizeof(*dev), GFP_KERNEL,
 			   dev_to_node(&ntb->dev));
@@ -1390,14 +1577,14 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	dma_cap_zero(mask);
 	dma_cap_set(DMA_MEMCPY, mask);
 
-	dma = dma_request_channel(mask, ntc_ntb_filter_bus,
-				  ntc_ntb_ascend_bus(ntb->pdev->bus));
+	node = dev_to_node(&ntb->dev);
+	dma = dma_request_channel(mask, ntc_ntb_filter_bus, &node);
 	if (!dma) {
+		pr_debug("no dma for new device %s\n",
+			 dev_name(&ntb->dev));
 		rc = -ENODEV;
 		goto err_dma;
 	}
-
-	pr_devel("probe dma %s\n", dev_name(&dma->dev->device));
 
 	dev->dma = dma;
 
@@ -1408,9 +1595,9 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	if (rc)
 		goto err_init;
 
-	pr_devel("initialized %s\n", dev_name(&dev->ntc.dev));
-
 	dev->ntc.dev.release = ntc_ntb_release;
+
+	ntc_setup_debugfs(dev);
 
 	return ntc_register_device(&dev->ntc);
 
@@ -1429,6 +1616,8 @@ static void ntc_ntb_remove(struct ntb_client *self, struct ntb_dev *ntb)
 
 	dev_vdbg(&dev->ntc.dev, "remove\n");
 
+	debugfs_remove_recursive(dev->dbgfs);
+
 	ntc_unregister_device(&dev->ntc);
 }
 
@@ -1443,6 +1632,8 @@ static int __init ntc_init(void)
 {
 	pr_info("%s: %s %s\n", DRIVER_NAME,
 		DRIVER_DESCRIPTION, DRIVER_VERSION);
+	if (debugfs_initialized())
+		ntc_dbgfs = debugfs_create_dir(KBUILD_MODNAME, NULL);
 	ntb_register_client(&ntc_ntb_client);
 	return 0;
 }
@@ -1451,5 +1642,6 @@ module_init(ntc_init);
 static void __exit ntc_exit(void)
 {
 	ntb_unregister_client(&ntc_ntb_client);
+	debugfs_remove_recursive(ntc_dbgfs);
 }
 module_exit(ntc_exit);

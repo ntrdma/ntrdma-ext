@@ -39,6 +39,7 @@
 #include <linux/kthread.h>
 #include <linux/sched.h>
 #include <net/net_namespace.h>
+#include <linux/tcp.h>
 
 #include <linux/ntc.h>
 
@@ -115,6 +116,11 @@ static int ntc_tcp_count;
 module_param_array_named(config, ntc_tcp_config,
 			 charp, &ntc_tcp_count, 0440);
 MODULE_PARM_DESC(config, "[s|c]:<ip>:<port>[,...]");
+
+static int ntc_tcp_nodelay = 1;
+
+module_param_named(nodelay, ntc_tcp_nodelay, int, 0440);
+MODULE_PARM_DESC(nodelay, "0|1");
 
 static void ntc_tcp_release(struct device *__dev)
 {
@@ -525,6 +531,7 @@ static int ntc_tcp_server(void *ctx)
 	struct ntc_tcp_dev *dev = ctx;
 	struct socket *listen_sock, *sock;
 	int rc;
+	int flag = 1;
 
 	int reps = 3; /* TODO: delme */
 
@@ -535,6 +542,13 @@ static int ntc_tcp_server(void *ctx)
 			      SOCK_STREAM, IPPROTO_TCP, &listen_sock);
 	if (rc)
 		goto err_sock;
+
+	if (ntc_tcp_nodelay) {
+		rc = kernel_setsockopt(listen_sock, IPPROTO_TCP, TCP_NODELAY,
+				       (char *)&flag, sizeof(flag));
+		if (rc)
+			goto err_sock;
+	}
 
 	pr_info("server %pISpc bind\n", &dev->saddr);
 	rc = kernel_bind(listen_sock, &dev->saddr, sizeof(dev->saddr));
@@ -559,6 +573,13 @@ static int ntc_tcp_server(void *ctx)
 		}
 		if (rc)
 			goto err_bind;
+
+		if (ntc_tcp_nodelay) {
+			rc = kernel_setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
+					       (char *)&flag, sizeof(flag));
+			if (rc)
+				goto err_bind;
+		}
 
 		pr_info("server %pISpc process\n", &dev->saddr);
 		rc = ntc_tcp_process(dev, sock);
@@ -591,6 +612,7 @@ static int ntc_tcp_client(void *ctx)
 	struct ntc_tcp_dev *dev = ctx;
 	struct socket *sock;
 	int rc = 0;
+	int flag = 1;
 
 	pr_info("client %pISpc\n", &dev->saddr);
 
@@ -601,9 +623,17 @@ static int ntc_tcp_client(void *ctx)
 		if (rc)
 			goto err_sock;
 
+		if (ntc_tcp_nodelay) {
+			rc = kernel_setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
+					       (char *)&flag, sizeof(flag));
+			if (rc)
+				goto err_sock;
+		}
+
 		pr_info("client %pISpc connect\n", &dev->saddr);
 		rc = kernel_connect(sock, &dev->saddr,
 				    sizeof(dev->saddr), 0);
+
 		while (rc == -ECONNREFUSED && !kthread_should_stop()) {
 			schedule_timeout_interruptible(NTC_TCP_CONNECT_DELAY);
 			rc = kernel_connect(sock, &dev->saddr,

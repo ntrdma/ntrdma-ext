@@ -96,6 +96,8 @@ void ntrdma_cq_del(struct ntrdma_cq *cq)
 	}
 	spin_unlock_bh(&cq->arm_lock);
 
+	tasklet_kill(&cq->cue_work);
+
 	mutex_lock(&dev->res_lock);
 	{
 		list_del(&cq->obj.dev_entry);

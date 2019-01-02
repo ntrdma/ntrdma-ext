@@ -91,34 +91,29 @@ static int ntc_phys_umem_sgl(struct ntc_dev *ntc, void *umem,
 {
 	struct ib_umem *ibumem = umem;
 	struct scatterlist *sg, *next;
+	dma_addr_t dma_addr, next_addr;
+	size_t dma_len;
 	int i, dma_count = 0;
-	dma_addr_t dma_addr;
-	size_t dma_off, dma_len, sgl_len;
 
-	dma_off = ib_umem_offset(ibumem);
-	sgl_len = ibumem->length;
+	BUILD_BUG_ON(sizeof(u64) < sizeof(dma_addr));
+	BUILD_BUG_ON(sizeof(u64) < sizeof(dma_len));
 
 	for_each_sg(ibumem->sg_head.sgl, sg, ibumem->sg_head.nents, i) {
-		if (!sgl_len)
-			break;
+		/* dma_addr is start addr of the contiguous range */
+		dma_addr = sg_dma_address(sg);
+		/* dma_len accumulates the length of the contiguous range */
+		dma_len = sg_dma_len(sg);
 
-		dma_addr = sg_dma_address(sg) + dma_off;
-		dma_len = sg_dma_len(sg) - dma_off;
-		dma_off = 0;
-
-		for (;;) {
+		for (; i + 1 < ibumem->sg_head.nents; ++i) {
 			next = sg_next(sg);
 			if (!next)
 				break;
-			if (sg_dma_address(next) != dma_addr + dma_len)
+			next_addr = sg_dma_address(next);
+			if (next_addr != dma_addr + dma_len)
 				break;
 			dma_len += sg_dma_len(next);
 			sg = next;
-			++i;
 		}
-
-		if (dma_len > sgl_len)
-			dma_len = sgl_len;
 
 		if (sgl && dma_count < count) {
 			sgl[dma_count].addr = dma_addr;
@@ -126,11 +121,21 @@ static int ntc_phys_umem_sgl(struct ntc_dev *ntc, void *umem,
 		}
 
 		++dma_count;
-
-		sgl_len -= dma_len;
 	}
 
-	WARN_ON(sgl_len);
+	if (dma_count && sgl && count > 0) {
+		/* dma_len is start offset in the first page */
+		dma_len = ib_umem_offset(ibumem);
+		sgl[0].addr += dma_len;
+		sgl[0].len -= dma_len;
+
+		if (dma_count <= count) {
+			/* dma_len is offset from the end of the last page */
+			dma_len = (dma_len + ibumem->length) & ~PAGE_MASK;
+			dma_len = (PAGE_SIZE - dma_len) & ~PAGE_MASK;
+			sgl[dma_count - 1].len -= dma_len;
+		}
+	}
 
 	return dma_count;
 }

@@ -102,7 +102,8 @@ static int ntrdma_query_gid(struct ib_device *ibdev,
 
 /* not implemented / not required? */
 static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
-				      struct ib_ah_attr *ibattr)
+				      struct ib_ah_attr *ibattr,
+				      struct ib_udata *udata)
 {
 	pr_debug("not implemented, returning %d\n", -ENOSYS);
 	return ERR_PTR(-ENOSYS);

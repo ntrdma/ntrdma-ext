@@ -71,6 +71,7 @@ static inline int ntc_driver_ops_is_valid(const struct ntc_driver_ops *ops)
  * @quiesce:		See ntc_ctx_quiesce().
  * @reset:		See ntc_ctx_reset().
  * @signal:		See ntc_ctx_signal().
+ * @clear_signal:	See ntc_ctx_clear_signal().
  */
 struct ntc_ctx_ops {
 	ssize_t (*hello)(void *ctx, int phase,
@@ -110,6 +111,7 @@ static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
  * @req_imm32:		See ntc_req_imm32().
  * @req_imm64:		See ntc_req_imm64().
  * @req_signal:		See ntc_req_signal().
+ * @clear_signal:	See ntc_clear_signal().
  */
 struct ntc_dev_ops {
 	struct device *(*map_dev)(struct ntc_dev *ntc);
@@ -135,6 +137,7 @@ struct ntc_dev_ops {
 			 void (*cb)(void *cb_ctx), void *cb_ctx);
 	int (*req_signal)(struct ntc_dev *ntc, void *req,
 			  void (*cb)(void *cb_ctx), void *cb_ctx);
+	int (*clear_signal)(struct ntc_dev *ntc);
 };
 
 static inline int ntc_dev_ops_is_valid(const struct ntc_dev_ops *ops)
@@ -156,6 +159,7 @@ static inline int ntc_dev_ops_is_valid(const struct ntc_dev_ops *ops)
 		ops->req_imm32				&&
 		ops->req_imm64				&&
 		ops->req_signal				&&
+		/* ops->clear_signal			&& */
 		1;
 }
 
@@ -423,12 +427,12 @@ void ntc_ctx_quiesce(struct ntc_dev *ntc);
  * Call the upper layer to deallocate data structures that the peer may have
  * been writing.  When calling this function, the channel must guarantee to the
  * upper layer that the peer is no longer using any of the locally channel
- * mapped buffers.  Either the channel has obtained acknowledgement from the
+ * mapped buffers.  Either the channel has obtained acknowledgment from the
  * peer for a protocol reset, or the channel can prevent misbehavior from a
  * peer in an unknown state.
  *
  * It is important that the upper layer does not immediately deallocate
- * structres on a link event, because while the channel link may report to be
+ * structures on a link event, because while the channel link may report to be
  * down, a hardware link may still be active.  Immediately deallocating data
  * buffers could result in memory corruption, as it may be used by the peer
  * after it is freed locally.  A coordinated protocol reset is therefore
@@ -591,7 +595,7 @@ static inline void ntc_req_cancel(struct ntc_dev *ntc, void *req)
  * interface to use the varying underlying channel implementations most
  * efficiently.
  *
- * Return: Zero on sucess, othewise an error number.
+ * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_submit(struct ntc_dev *ntc, void *req)
 {
@@ -627,10 +631,10 @@ static inline int ntc_req_submit(struct ntc_dev *ntc, void *req)
  * callback context as its only parameter.  The callback does not indicate
  * success or failure of the memory copy operation, only that the operation has
  * completed.  To determine success or failure of the operation, upper layer
- * drivers may implement an acknowledgement protocol, but that is out of the
+ * drivers may implement an acknowledgment protocol, but that is out of the
  * scope of this interface.
  *
- * Return: Zero on sucess, othewise an error number.
+ * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_memcpy(struct ntc_dev *ntc, void *req,
 				 u64 dst, u64 src, u64 len, bool fence,
@@ -662,7 +666,7 @@ static inline int ntc_req_memcpy(struct ntc_dev *ntc, void *req,
  *
  * Please see ntc_req_memcpy() for a complete description of other parameters.
  *
- * Return: Zero on sucess, othewise an error number.
+ * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_imm32(struct ntc_dev *ntc, void *req,
 				u64 dst, u32 val, bool fence,
@@ -694,7 +698,7 @@ static inline int ntc_req_imm32(struct ntc_dev *ntc, void *req,
  *
  * Please see ntc_req_memcpy() for a complete description of other parameters.
  *
- * Return: Zero on sucess, othewise an error number.
+ * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_imm64(struct ntc_dev *ntc, void *req,
 				u64 dst, u64 val, bool fence,
@@ -718,7 +722,7 @@ static inline int ntc_req_imm64(struct ntc_dev *ntc, void *req,
  * The channel implementation may coalesce interrupts to the peer driver,
  * therefore the upper layer must not rely on a one-to-one correspondence of
  * signals requested, and signal events received.  The only guarantee is that
- * at least one signal event will be recieved after the last signal requested.
+ * at least one signal event will be received after the last signal requested.
  *
  * The upper layer should attempt to minimize the frequency of signal requests.
  * Signal requests may be implemented as small operations processed as dma
@@ -729,7 +733,7 @@ static inline int ntc_req_imm64(struct ntc_dev *ntc, void *req,
  *
  * Please see ntc_req_memcpy() for a complete description of other parameters.
  *
- * Return: Zero on sucess, othewise an error number.
+ * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_signal(struct ntc_dev *ntc, void *req,
 				 void (*cb)(void *cb_ctx), void *cb_ctx)
@@ -791,7 +795,7 @@ static inline void ntc_buf_free(struct ntc_dev *ntc, u64 size,
  * Data movement and access must be properly synchronized, to be portable.  See
  * ntc_buf_sync_cpu() and ntc_buf_sync_dev().
  *
- * This function is modeled based on dma_map_single(), however the channel may
+ * This function is modelled based on dma_map_single(), however the channel may
  * provide a mapping that is different from dma in its implementation.
  *
  * Return: The channel-mapped buffer address, or Zero.
@@ -879,7 +883,7 @@ static inline void ntc_buf_sync_dev(struct ntc_dev *ntc, u64 addr, u64 size,
  * Data movement and access must be properly synchronized, to be portable.  See
  * ntc_buf_sync_cpu() and ntc_buf_sync_dev().
  *
- * This function is modeled based on ib_umem_get(), however the channel may
+ * This function is modelled based on ib_umem_get(), however the channel may
  * provide a mapping that is different from ib_umem in its implementation.
  *
  * Return: An object repreenting the memory mapping, or an error pointer.
@@ -945,4 +949,19 @@ static inline int ntc_umem_count(struct ntc_dev *ntc, void *umem)
 	return ntc->map_ops->umem_count(ntc, umem);
 }
 
+/**
+ * ntc_clear_signal() - clear the signal asserting event
+ * @ntc:	Device context.
+ *
+ * Clear the signal that's asserted for events (interrupts perhaps).
+ *
+ * Return: 1 for events waiting or 0 for no events.
+ */
+static inline int ntc_clear_signal(struct ntc_dev *ntc)
+{
+	if (!ntc->dev_ops->clear_signal)
+		return 0;
+
+	return ntc->dev_ops->clear_signal(ntc);
+}
 #endif
