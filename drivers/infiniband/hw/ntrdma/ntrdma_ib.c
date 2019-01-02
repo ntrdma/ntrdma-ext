@@ -102,7 +102,7 @@ static int ntrdma_query_gid(struct ib_device *ibdev,
 
 /* not implemented / not required? */
 static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
-				      struct ib_ah_attr *ibattr,
+				      struct rdma_ah_attr *ah_attr,
 				      struct ib_udata *udata)
 {
 	pr_debug("not implemented, returning %d\n", -ENOSYS);
@@ -952,7 +952,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	/* TODO: maybe this should be the number of virtual doorbells */
 	ibdev->num_comp_vectors		= 1;
 
-	ibdev->dma_device = ntc_map_dev(dev->ntc);
+	ibdev->dev.parent = ntc_map_dev(dev->ntc);
 
 	ibdev->uverbs_abi_ver		= 1;
 	ibdev->phys_port_cnt		= 1;

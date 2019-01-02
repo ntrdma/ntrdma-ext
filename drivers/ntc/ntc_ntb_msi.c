@@ -609,7 +609,7 @@ static inline void ntc_ntb_ping_ready(struct ntc_ntb_dev *dev)
 		rc = ntb_peer_db_addr(dev->ntb,
 				      (phys_addr_t *)&dev->peer_irq_addr,
 				      &size);
-		if ((rc < 0) || (size != sizeof(u64))) {
+		if ((rc < 0) || (size != sizeof(u32))) {
 			dev_err(&dev->ntc.dev, "Peer DB addr invalid\n");
 			return;
 		}
@@ -1269,7 +1269,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	ntb_spad_is_unsafe(dev->ntb);
 
 	/* we'll be using the last memory window if it exists */
-	mw_idx = ntb_mw_count(dev->ntb);
+	mw_idx = ntb_mw_count(dev->ntb, 0);
 	if (mw_idx <= 0) {
 		pr_debug("no mw for new device %s\n",
 			 dev_name(&dev->ntb->dev));
@@ -1280,10 +1280,10 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* clear any garbage translations */
 	for (i = 0; i < mw_idx; ++i)
-		ntb_mw_clear_trans(dev->ntb, i);
+		ntb_mw_clear_trans(dev->ntb, 0, i);
 
 	/* this is the window we'll translate to local dram */
-	ntb_mw_get_range(dev->ntb, mw_idx, &mw_base, &mw_size, NULL, NULL);
+	ntb_peer_mw_get_addr(dev->ntb, mw_idx, &mw_base, &mw_size);
 
 	/*
 	 * FIXME: ensure window is large enough.
@@ -1297,7 +1297,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	}
 
 	/* FIXME: zero is not a portable address for local dram */
-	rc = ntb_mw_set_trans(dev->ntb, mw_idx, 0, mw_size);
+	rc = ntb_mw_set_trans(dev->ntb, 0, mw_idx, 0, mw_size);
 	if (rc) {
 		pr_debug("failed to translate mw for new device %s\n",
 			 dev_name(&dev->ntb->dev));
@@ -1307,7 +1307,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->peer_dram_base = mw_base;
 
 	/* a local buffer for peer driver to write */
-	ntb_mw_get_range(dev->ntb, mw_idx - 1, &mw_base, &mw_size, NULL, NULL);
+	ntb_peer_mw_get_addr(dev->ntb, mw_idx - 1, &mw_base, &mw_size);
 
 	if (mw_size < ntc_ntb_info_size) {
 		pr_debug("invalid alignement of peer info for new device %s\n",
@@ -1352,7 +1352,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	}
 
 	/* set the ntb translation to the aligned dma memory */
-	rc = ntb_mw_set_trans(dev->ntb, mw_idx - 1,
+	rc = ntb_mw_set_trans(dev->ntb, 0, mw_idx - 1,
 			      dev->info_peer_on_self_dma
 			      + dev->info_peer_on_self_off,
 			      dev->info_peer_on_self_size);
@@ -1416,7 +1416,7 @@ err_map:
 			  dev->info_peer_on_self_unaligned,
 			  dev->info_peer_on_self_dma);
 err_info:
-	ntb_mw_clear_trans(dev->ntb, mw_idx);
+	ntb_mw_clear_trans(dev->ntb, 0, mw_idx);
 err_mw:
 	return rc;
 }
@@ -1429,9 +1429,9 @@ static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 
 	ntb_link_disable(dev->ntb);
 
-	mw_idx = ntb_mw_count(dev->ntb);
+	mw_idx = ntb_mw_count(dev->ntb, 0);
 	for (i = 0; i < mw_idx; ++i)
-		ntb_mw_clear_trans(dev->ntb, i);
+		ntb_mw_clear_trans(dev->ntb, 0, i);
 
 	ntc_ntb_ping_stop(dev);
 

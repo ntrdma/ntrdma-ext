@@ -1,5 +1,6 @@
-
+ifndef KSRC
 KSRC		= /lib/modules/$(shell uname -r)/build
+endif
 V		= 0
 
 # Build the ntrdma kernel module
