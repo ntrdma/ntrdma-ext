@@ -1582,7 +1582,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* update the vbell and signal the peer */
 	ntrdma_dev_vbell_peer(dev, req,
 			      qp->peer_send_vbell_idx);
-	ntc_req_signal(dev->ntc, req, NULL, NULL);
+	ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC);
 
 	/* submit the request */
 	ntc_req_submit(dev->ntc, req);
@@ -1821,7 +1821,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	/* update the vbell and signal the peer */
 	ntrdma_dev_vbell_peer(dev, req,
 			      rqp->peer_cmpl_vbell_idx);
-	ntc_req_signal(dev->ntc, req, NULL, NULL);
+	ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC);
 
 	/* submit the request */
 	ntc_req_submit(dev->ntc, req);

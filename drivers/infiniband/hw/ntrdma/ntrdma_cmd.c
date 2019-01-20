@@ -496,7 +496,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			ntrdma_dev_vbell_peer(dev, req,
 					      dev->peer_cmd_recv_vbell_idx);
-			ntc_req_signal(dev->ntc, req, NULL, NULL);
+			ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC);
 			ntc_req_submit(dev->ntc, req);
 		} else {
 			ntc_req_cancel(dev->ntc, req);
@@ -917,7 +917,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 			ntrdma_dev_vbell_peer(dev, req,
 					      dev->peer_cmd_send_vbell_idx);
-			ntc_req_signal(dev->ntc, req, NULL, NULL);
+			ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC);
 
 			ntc_req_submit(dev->ntc, req);
 			schedule_work(&dev->cmd_recv_work);

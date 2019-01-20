@@ -66,7 +66,7 @@ int ntrdma_dev_vbell_enable(struct ntrdma_dev *dev,
 
 void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev);
 
-void ntrdma_dev_vbell_event(struct ntrdma_dev *dev);
+void ntrdma_dev_vbell_event(struct ntrdma_dev *dev, int vec);
 
 void ntrdma_dev_vbell_del(struct ntrdma_dev *dev,
 			  struct ntrdma_vbell *vbell,

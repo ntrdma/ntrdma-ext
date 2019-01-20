@@ -99,8 +99,6 @@ MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 #define NTC_NTB_PING_POLL_PERIOD	msecs_to_jiffies(257)
 #define NTC_NTB_PING_MISS_THRESHOLD	10
 
-#define NTC_NTB_DB_BIT			1
-
 #ifndef iowrite64
 #ifdef writeq
 #define iowrite64 writeq
@@ -134,9 +132,10 @@ struct ntc_ntb_info {
 	u32				magic;
 	u32				ping;
 
-	u32				msi_data;
-	u32				msi_addr_lower;
-	u32				msi_addr_upper;
+	u32				msi_data[NTB_MAX_IRQS];
+	u32				msi_addr_lower[NTB_MAX_IRQS];
+	u32				msi_addr_upper[NTB_MAX_IRQS];
+	int				msi_irqs_num;
 
 	struct ntc_ntb_hello_info	hello_odd;
 	struct ntc_ntb_hello_info	hello_even;
@@ -175,8 +174,9 @@ struct ntc_ntb_dev {
 	int				version;
 
 	/* direct interrupt message */
-	u64				peer_irq_addr;
-	u32				peer_irq_data;
+	u64				peer_irq_addr[NTB_MAX_IRQS];
+	u32				peer_irq_data[NTB_MAX_IRQS];
+	int				peer_irq_num;
 
 	/* link state heartbeat */
 	bool				ping_run;
@@ -220,11 +220,15 @@ struct ntc_ntb_dev {
 #define ntc_ntb_dma_dev(__dev) \
 	(&(__dev)->ntb->pdev->dev)
 
-static void ntc_ntb_read_msi_config(struct ntc_ntb_dev *dev,
+static int ntc_ntb_read_msi_config(struct ntc_ntb_dev *dev,
 				    u64 *addr, u32 *val)
 {
 	u32 addr_lo, addr_hi = 0, data;
 	struct pci_dev *pdev = dev->ntb->pdev;
+	void __iomem *base;
+
+	if (!use_msi)
+		return 0;
 
 	/* FIXME: add support for 64-bit MSI header, and MSI-X.  Until it is
 	 * fixed here, we need to disable MSI-X in the NTB HW driver.
@@ -242,28 +246,38 @@ static void ntc_ntb_read_msi_config(struct ntc_ntb_dev *dev,
 		pci_read_config_dword(pdev,
 				      pdev->msi_cap + PCI_MSI_DATA_32,
 				      &data);
+		addr[0] = (u64)addr_lo | (u64)addr_hi << 32;
+		val[0] = data;
+
+		dev_dbg(&dev->ntc.dev, "msi addr %#llx data %#x\n", *addr, *val);
+
+		return 1;
 	} else if (pdev->msix_enabled) {
 		struct msi_desc *entry;
+		int msi_idx = 0;
 
 		list_for_each_entry(entry, &pdev->dev.msi_list, list) {
-			addr_hi = ioread32(entry->mask_base +
-					   PCI_MSIX_ENTRY_UPPER_ADDR);
-			addr_lo = ioread32(entry->mask_base +
-					   PCI_MSIX_ENTRY_LOWER_ADDR);
-			data = ioread32(entry->mask_base +
-					PCI_MSIX_ENTRY_DATA);
-			break;
+			base = entry->mask_base +
+				entry->msi_attrib.entry_nr * PCI_MSIX_ENTRY_SIZE;
+
+			addr_hi = readl(base + PCI_MSIX_ENTRY_UPPER_ADDR);
+			addr_lo = readl(base + PCI_MSIX_ENTRY_LOWER_ADDR);
+			data = readl(base + PCI_MSIX_ENTRY_DATA);
+			
+			addr[msi_idx] = (u64)addr_lo | (u64)addr_hi << 32;
+			val[msi_idx] = data;
+
+			dev_dbg(&dev->ntc.dev, "msix addr hi %x addr low %x data %x\n", addr_hi ,addr_lo, data);
+
+			msi_idx++;
 		}
-	} else {
-		*addr = 0;
-		*val = 0;
-		return;
+
+		return msi_idx;
 	}
 
-	*addr = (u64)addr_lo | (u64)addr_hi << 32;
-	*val = data;
+	return 0;
 
-	dev_dbg(&dev->ntc.dev, "msi addr %#llx data %#x\n", *addr, *val);
+
 }
 
 static inline u32 ntc_ntb_version(int version, int version_min)
@@ -551,8 +565,9 @@ static inline void ntc_ntb_init_spad(struct ntc_ntb_dev *dev)
 static inline void ntc_ntb_init_info(struct ntc_ntb_dev *dev)
 {
 	u32 version, peer_version;
-	u64 msi_addr;
-	u32 msi_data;
+	u64 msi_addr[NTB_MAX_IRQS];
+	u32 msi_data[NTB_MAX_IRQS];
+	int msi_idx;
 
 	dev_dbg(&dev->ntc.dev, "link init info\n");
 
@@ -580,12 +595,16 @@ static inline void ntc_ntb_init_info(struct ntc_ntb_dev *dev)
 	iowrite32(0, &dev->info_self_on_peer->hello_even.addr_lower);
 	iowrite32(0, &dev->info_self_on_peer->hello_even.addr_upper);
 
-	ntc_ntb_read_msi_config(dev, &msi_addr, &msi_data);
-	iowrite32(msi_data, &dev->info_self_on_peer->msi_data);
-	iowrite32(lower_32_bits(msi_addr),
-		  &dev->info_self_on_peer->msi_addr_lower);
-	iowrite32(upper_32_bits(msi_addr),
-		  &dev->info_self_on_peer->msi_addr_upper);
+	dev->info_self_on_peer->msi_irqs_num =
+			ntc_ntb_read_msi_config(dev, msi_addr, msi_data);
+
+	for (msi_idx = 0; msi_idx < dev->info_self_on_peer->msi_irqs_num; msi_idx++) {
+		iowrite32(msi_data[msi_idx], &dev->info_self_on_peer->msi_data[msi_idx]);
+		iowrite32(lower_32_bits(msi_addr[msi_idx]),
+				&dev->info_self_on_peer->msi_addr_lower[msi_idx]);
+		iowrite32(upper_32_bits(msi_addr[msi_idx]),
+				&dev->info_self_on_peer->msi_addr_upper[msi_idx]);
+	}
 
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_INIT_INFO);
 	return;
@@ -597,28 +616,60 @@ err:
 static inline void ntc_ntb_ping_ready(struct ntc_ntb_dev *dev)
 {
 	int rc;
+	int msi_idx;
 	resource_size_t size;
 
-	if (use_msi) {
-		dev->peer_irq_data = dev->info_peer_on_self->msi_data;
-		dev->peer_irq_addr = dev->peer_dram_base +
-			(((u64)dev->info_peer_on_self->msi_addr_lower) |
-			 (((u64)dev->info_peer_on_self->msi_addr_upper) << 32));
+	if (use_msi && dev->info_peer_on_self->msi_irqs_num) {
+		for (msi_idx = 0; msi_idx < dev->info_peer_on_self->msi_irqs_num; msi_idx++) {
+			dev->peer_irq_data[msi_idx] = dev->info_peer_on_self->msi_data[msi_idx];
+			dev->peer_irq_addr[msi_idx] = dev->peer_dram_base +
+				(((u64)dev->info_peer_on_self->msi_addr_lower[msi_idx]) |
+				 (((u64)dev->info_peer_on_self->msi_addr_upper[msi_idx]) << 32));
+		}
 	} else {
-		dev->peer_irq_data = NTC_NTB_DB_BIT;
+		u64 peer_irq_addr_base;
+		u64 peer_db_mask;
+		int db_idx;
+		int max_irqs;
+		u64 db_bits;
+
+		dev->peer_irq_num = 0;
+
+		max_irqs = ntb_db_vector_count(dev->ntb);
+
+		if (max_irqs <= 0 || max_irqs> NTB_MAX_IRQS) {
+			dev_err(&dev->ntc.dev, "ntb_db_vector_count return %d which is not supported\n",
+					dev->info_peer_on_self->msi_irqs_num);
+			return;
+		}
+
 		rc = ntb_peer_db_addr(dev->ntb,
-				      (phys_addr_t *)&dev->peer_irq_addr,
-				      &size);
+				(phys_addr_t *)&peer_irq_addr_base,
+				&size);
 		if ((rc < 0) || (size != sizeof(u32))) {
 			dev_err(&dev->ntc.dev, "Peer DB addr invalid\n");
 			return;
 		}
 
-		dev_dbg(&dev->ntc.dev, "Peer DB addr: %#llx\n",
-			dev->peer_irq_addr);
+		db_bits = ntb_db_valid_mask(dev->ntb);
+		for (db_idx = 0; db_idx < max_irqs && db_bits; db_idx++) {
+			/*FIXME This is not generic implementation,
+			 * Sky-lake implementation, see intel_ntb3_peer_db_set() */
+			int bit = __ffs(db_bits);
 
-		ntb_db_clear(dev->ntb, NTC_NTB_DB_BIT);
-		ntb_db_clear_mask(dev->ntb, NTC_NTB_DB_BIT);
+			dev->peer_irq_addr[db_idx] = peer_irq_addr_base + (bit * 4);
+			db_bits &= db_bits - 1;
+			dev->peer_irq_num++;
+			dev->peer_irq_data[db_idx] = 1;
+		}
+
+		peer_db_mask = ntb_db_valid_mask(dev->ntb);
+
+		dev_dbg(&dev->ntc.dev, "Peer DB addr: %#llx count %d mask %#llx\n",
+				peer_irq_addr_base, dev->peer_irq_num, peer_db_mask);
+
+		ntb_db_clear(dev->ntb, peer_db_mask);
+		ntb_db_clear_mask(dev->ntb, peer_db_mask);
 	}
 
 	dev_dbg(&dev->ntc.dev, "link ping ready\n");
@@ -1186,27 +1237,38 @@ static int ntc_ntb_req_imm64(struct ntc_dev *ntc, void *req,
 }
 
 static int ntc_ntb_req_signal(struct ntc_dev *ntc, void *req,
-			      void (*cb)(void *cb_ctx), void *cb_ctx)
+			      void (*cb)(void *cb_ctx), void *cb_ctx, int vec)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
 
 	dev_vdbg(&ntc->dev, "request signal to peer\n");
 
+	BUG_ON(vec > ARRAY_SIZE(dev->peer_irq_addr));
+
+	BUG_ON(dev->peer_irq_addr[vec] == (0ULL));
+
+	BUG_ON(dev->peer_irq_num < vec);
+
 	return ntc_ntb_req_imm32(ntc, req,
-				 dev->peer_irq_addr,
-				 dev->peer_irq_data,
+				 dev->peer_irq_addr[vec],
+				 dev->peer_irq_data[vec],
 				 false, cb, cb_ctx);
 }
 
-static int ntc_ntb_clear_signal(struct ntc_dev *ntc)
+static int ntc_ntb_clear_signal(struct ntc_dev *ntc, int vec)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+	int db_bit;
 
 	if (use_msi)
 		return 0;
 
-	if (ntb_db_read(dev->ntb) & dev->peer_irq_data) {
-		ntb_db_clear(dev->ntb, dev->peer_irq_data);
+	/* dev->peer_irq_num could be null if it is not set yet */
+
+	db_bit = BIT_ULL(vec % (dev->peer_irq_num?:1));
+
+	if (ntb_db_read(dev->ntb) & db_bit) {
+		ntb_db_clear(dev->ntb, db_bit);
 		ntb_db_read(dev->ntb);
 		return 1;
 	}
@@ -1216,8 +1278,8 @@ static int ntc_ntb_clear_signal(struct ntc_dev *ntc)
 
 static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.map_dev			= ntc_ntb_map_dev,
-	.link_disable			= ntc_ntb_link_disable,
-	.link_enable			= ntc_ntb_link_enable,
+	.link_disable		= ntc_ntb_link_disable,
+	.link_enable		= ntc_ntb_link_enable,
 	.link_reset			= ntc_ntb_link_reset,
 	.peer_addr			= ntc_ntb_peer_addr,
 	.req_create			= ntc_ntb_req_create,
@@ -1241,7 +1303,7 @@ static void ntc_ntb_db_event(void *ctx, int vec)
 {
 	struct ntc_ntb_dev *dev = ctx;
 
-	ntc_ctx_signal(&dev->ntc);
+	ntc_ctx_signal(&dev->ntc, vec);
 }
 
 static struct ntb_ctx_ops ntc_ntb_ctx_ops = {
@@ -1366,8 +1428,9 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->version = 0;
 
 	/* haven't negotiated the msi pair */
-	dev->peer_irq_addr = 0;
-	dev->peer_irq_data = 0;
+	dev->peer_irq_num = 0;
+	memset(dev->peer_irq_addr, 0, sizeof(dev->peer_irq_addr));
+	memset(dev->peer_irq_data, 0, sizeof(dev->peer_irq_data));
 
 	/* init the link state heartbeat */
 	dev->ping_run = false;
@@ -1468,6 +1531,7 @@ static void ntc_ntb_release(struct device *device)
 static int ntc_debugfs_read(struct seq_file *s, void *v)
 {
 	struct ntc_ntb_dev *dev = s->private;
+	int i;
 
 	seq_printf(s, "peer_dram_base %#llx\n",
 		   dev->peer_dram_base);
@@ -1480,12 +1544,16 @@ static int ntc_debugfs_read(struct seq_file *s, void *v)
 		   dev->info_peer_on_self->magic);
 	seq_printf(s, "  ping %#x\n",
 		   dev->info_peer_on_self->ping);
-	seq_printf(s, "  msi_data %#x\n",
-		   dev->info_peer_on_self->msi_data);
-	seq_printf(s, "  msi_addr_lower %#x\n",
-		   dev->info_peer_on_self->msi_addr_lower);
-	seq_printf(s, "  msi_addr_upper %#x\n",
-		   dev->info_peer_on_self->msi_addr_upper);
+	seq_printf(s, "  msi_irqs_num %d\n",
+			dev->info_peer_on_self->msi_irqs_num);
+	for (i = 0; i <  dev->info_peer_on_self->msi_irqs_num; i ++) {
+		seq_printf(s, "  msi_data %#x\n",
+			   dev->info_peer_on_self->msi_data[i]);
+		seq_printf(s, "  msi_addr_lower %#x\n",
+			   dev->info_peer_on_self->msi_addr_lower[i]);
+		seq_printf(s, "  msi_addr_upper %#x\n",
+		   dev->info_peer_on_self->msi_addr_upper[i]);
+	}
 	seq_puts(s, "  hello_odd:\n");
 	seq_printf(s, "    size %#x\n",
 		   dev->info_peer_on_self->hello_odd.size);
@@ -1502,10 +1570,14 @@ static int ntc_debugfs_read(struct seq_file *s, void *v)
 		   dev->info_peer_on_self->hello_even.addr_lower);
 	seq_printf(s, "version %d\n",
 		   dev->version);
-	seq_printf(s, "peer_irq_addr %#llx\n",
-		   dev->peer_irq_addr);
-	seq_printf(s, "peer_irq_data %#x\n",
-		   dev->peer_irq_data);
+	seq_printf(s, "peer_irq_num %d\n",
+			   dev->peer_irq_num);
+	for (i = 0; i <  dev->peer_irq_num; i++) {
+		seq_printf(s, "peer_irq_addr %#llx\n",
+				dev->peer_irq_addr[i]);
+		seq_printf(s, "peer_irq_data %#x\n",
+				dev->peer_irq_data[i]);
+	}
 	seq_printf(s, "ping_run %d\n",
 		   dev->ping_run);
 	seq_printf(s, "ping_miss %d\n",

@@ -360,7 +360,7 @@ static int ntc_tcp_recv_msg(struct ntc_tcp_dev *dev)
 		return -EIO;
 
 	if (!msg.len) {
-		ntc_ctx_signal(&dev->ntc);
+		ntc_ctx_signal(&dev->ntc, NTB_DEFAULT_VEC);
 		return 0;
 	}
 
@@ -805,7 +805,7 @@ static int ntc_tcp_req_imm64(struct ntc_dev *ntc, void *req,
 }
 
 static int ntc_tcp_req_signal(struct ntc_dev *ntc, void *req,
-			      void (*cb)(void *cb_ctx), void *cb_ctx)
+			      void (*cb)(void *cb_ctx), void *cb_ctx, int vec)
 {
 	struct list_head *op_list = req;
 	struct ntc_tcp_op *op;
