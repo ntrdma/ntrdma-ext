@@ -1276,6 +1276,13 @@ static int ntc_ntb_clear_signal(struct ntc_dev *ntc, int vec)
 	return 0;
 }
 
+int ntc_ntb_max_peer_irqs(struct ntc_dev *ntc)
+{
+	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+
+	return dev->peer_irq_num;
+}
+
 static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.map_dev			= ntc_ntb_map_dev,
 	.link_disable		= ntc_ntb_link_disable,
@@ -1289,7 +1296,8 @@ static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.req_imm32			= ntc_ntb_req_imm32,
 	.req_imm64			= ntc_ntb_req_imm64,
 	.req_signal			= ntc_ntb_req_signal,
-	.clear_signal			= ntc_ntb_clear_signal,
+	.clear_signal		= ntc_ntb_clear_signal,
+	.max_peer_irqs		= ntc_ntb_max_peer_irqs,
 };
 
 static void ntc_ntb_link_event(void *ctx)

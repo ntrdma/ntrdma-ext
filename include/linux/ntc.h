@@ -141,6 +141,7 @@ struct ntc_dev_ops {
 	int (*req_signal)(struct ntc_dev *ntc, void *req,
 			  void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
 	int (*clear_signal)(struct ntc_dev *ntc, int vec);
+	int (*max_peer_irqs)(struct ntc_dev *ntc);
 };
 
 static inline int ntc_dev_ops_is_valid(const struct ntc_dev_ops *ops)
@@ -259,6 +260,14 @@ struct ntc_dev {
 };
 
 #define ntc_of_dev(__dev) container_of(__dev, struct ntc_dev, dev)
+
+static inline int ntc_max_peer_irqs(struct ntc_dev *ntc)
+{
+	if (!ntc->dev_ops->max_peer_irqs)
+			return 1;
+
+	return ntc->dev_ops->max_peer_irqs(ntc);
+}
 
 /**
  * ntc_register_driver() - register a driver for interest in ntc devices
