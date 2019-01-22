@@ -472,7 +472,7 @@ more:
 			      true, NULL, NULL);
 
 		ntrdma_dev_vbell_peer(dev, req, eth->peer_vbell_idx);
-		ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC);
+		ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
 		ntc_req_submit(dev->ntc, req);
 	}
 	spin_unlock_bh(&eth->rx_prod_lock);
@@ -684,7 +684,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 			      true, NULL, NULL);
 
 		ntrdma_dev_vbell_peer(dev, req, eth->peer_vbell_idx);
-		ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC);
+		ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
 		ntc_req_submit(dev->ntc, req);
 
 		eth->req = NULL;

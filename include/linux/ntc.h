@@ -40,7 +40,6 @@
 #include <linux/rwlock.h>
 
 #define NTB_MAX_IRQS (64)
-#define NTB_DEFAULT_VEC 0
 
 struct ntc_driver;
 struct ntc_dev;
@@ -269,6 +268,17 @@ static inline int ntc_max_peer_irqs(struct ntc_dev *ntc)
 	return ntc->dev_ops->max_peer_irqs(ntc);
 }
 
+static inline int ntc_door_bell_arbitrator(struct ntc_dev *ntc)
+{
+	static int counter;
+	counter++;
+	/*FIXME actualy we want to use the number of peer CPUs but for now we assume its the same */
+	counter = counter % min(ntc_max_peer_irqs(ntc), (int)num_online_cpus());
+	return counter;
+
+}
+
+#define NTB_DEFAULT_VEC(__NTC) ntc_door_bell_arbitrator(__NTC)
 /**
  * ntc_register_driver() - register a driver for interest in ntc devices
  * @driver:	Client context.
@@ -976,4 +986,5 @@ static inline int ntc_clear_signal(struct ntc_dev *ntc, int vec)
 
 	return ntc->dev_ops->clear_signal(ntc, vec);
 }
+
 #endif

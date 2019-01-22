@@ -1263,6 +1263,8 @@ static int ntc_ntb_clear_signal(struct ntc_dev *ntc, int vec)
 	if (use_msi)
 		return 0;
 
+	if (unlikely(vec >= BITS_PER_LONG_LONG))
+		dev_WARN(&ntc->dev, "Invalid vec %d \n", vec);
 	/* dev->peer_irq_num could be null if it is not set yet */
 
 	db_bit = BIT_ULL(vec % (dev->peer_irq_num?:1));
