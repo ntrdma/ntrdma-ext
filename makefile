@@ -19,13 +19,13 @@ LINUXINCLUDE	= \
 	-Iarch/$$(SRCARCH)/include/generated/uapi \
 	-Iarch/$$(SRCARCH)/include/generated \
 	$$(if $$(KBUILD_SRC), -I$$(srctree)/include) \
-	-I$(PWD)/include -Iinclude \
+	-I$(CURDIR)/include -Iinclude \
 	-I$$(srctree)/arch/$$(SRCARCH)/include/uapi \
 	-Iarch/$$(SRCARCH)/include/generated/uapi \
 	-I$$(srctree)/include/uapi \
 	-Iinclude/generated/uapi \
 	-include $$(srctree)/include/linux/kconfig.h \
-	-include $(PWD)/config.h
+	-include $(CURDIR)/config.h
 
 MAKE_TARGETS	= all modules modules_install clean help
 MAKE_OPTIONS	= -C $(KSRC) M=$(CURDIR) V=$(V) $(LINUXCONFIG)
