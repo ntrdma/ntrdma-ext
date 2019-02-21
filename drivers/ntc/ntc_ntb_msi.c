@@ -364,9 +364,9 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev)
 	dev->ping_flags = ping_flags;
 }
 
-static void ntc_ntb_ping_pong_cb(unsigned long ptrhld)
+static void ntc_ntb_ping_pong_fn(struct timer_list *t)
 {
-	struct ntc_ntb_dev *dev = ntc_ntb_of_ptrhld(ptrhld);
+	struct ntc_ntb_dev *dev = from_timer(dev, t, ping_pong);
 	unsigned long irqflags;
 
 	spin_lock_irqsave(&dev->ping_lock, irqflags);
@@ -397,9 +397,9 @@ static bool ntc_ntb_ping_poll(struct ntc_ntb_dev *dev)
 	return false;
 }
 
-static void ntc_ntb_ping_poll_cb(unsigned long ptrhld)
+static void ntc_ntb_ping_poll_fn(struct timer_list *t)
 {
-	struct ntc_ntb_dev *dev = ntc_ntb_of_ptrhld(ptrhld);
+	struct ntc_ntb_dev *dev = from_timer(dev, t, ping_poll);
 	unsigned long irqflags;
 	int poll_msg;
 
@@ -1327,13 +1327,13 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->poll_val = 0;
 	dev->poll_msg = NTC_NTB_LINK_QUIESCE;
 
-	setup_timer(&dev->ping_pong,
-		    ntc_ntb_ping_pong_cb,
-		    ntc_ntb_to_ptrhld(dev));
+	timer_setup(&dev->ping_pong,
+		    ntc_ntb_ping_pong_fn,
+		    0);
 
-	setup_timer(&dev->ping_poll,
-		    ntc_ntb_ping_poll_cb,
-		    ntc_ntb_to_ptrhld(dev));
+	timer_setup(&dev->ping_poll,
+		    ntc_ntb_ping_poll_fn,
+		    0);
 
 	spin_lock_init(&dev->ping_lock);
 

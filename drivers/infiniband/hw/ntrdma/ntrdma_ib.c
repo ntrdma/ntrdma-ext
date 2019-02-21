@@ -103,6 +103,7 @@ static int ntrdma_query_gid(struct ib_device *ibdev,
 /* not implemented / not required? */
 static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
 				      struct rdma_ah_attr *ah_attr,
+				      u32 flags,
 				      struct ib_udata *udata)
 {
 	pr_debug("not implemented, returning %d\n", -ENOSYS);
@@ -110,7 +111,7 @@ static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
 }
 
 /* not implemented / not required? */
-static int ntrdma_destroy_ah(struct ib_ah *ibah)
+static int ntrdma_destroy_ah(struct ib_ah *ibah, u32 flags)
 {
 	pr_debug("not implemented, returning %d\n", -ENOSYS);
 	return -ENOSYS;
@@ -140,7 +141,7 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 	ibattr->max_qp_wr		= 0x100;
 	ibattr->max_cq			= 0x100;
 	ibattr->max_cqe			= 0x100;
-	ibattr->max_sge			= 0x100;
+	ibattr->max_recv_sge		= 0x100;
 	ibattr->max_sge_rd		= 0x100;
 	ibattr->page_size_cap		= PAGE_SIZE;
 
@@ -566,8 +567,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 		if (cur_state != qp->state ||
 		    ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED ||
 		    !ib_modify_qp_is_ok(cur_state, new_state,
-					IB_QPT_RC, ibqp_mask,
-					IB_LINK_LAYER_UNSPECIFIED)) {
+					IB_QPT_RC, ibqp_mask)) {
 			ntrdma_dbg(dev, "invalid modify\n");
 			rc = -EINVAL;
 			goto err_attr;
@@ -617,7 +617,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 
 static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 				 struct ntrdma_send_wqe *wqe,
-				 struct ib_send_wr *ibwr,
+				 const struct ib_send_wr *ibwr,
 				 int sg_cap)
 {
 	int i;
@@ -694,8 +694,8 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 }
 
 static int ntrdma_post_send(struct ib_qp *ibqp,
-			    struct ib_send_wr *ibwr,
-			    struct ib_send_wr **bad)
+			    const struct ib_send_wr *ibwr,
+			    const struct ib_send_wr **bad)
 {
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
@@ -753,7 +753,7 @@ out:
 }
 
 static int ntrdma_ib_recv_to_wqe(struct ntrdma_recv_wqe *wqe,
-				 struct ib_recv_wr *ibwr,
+				 const struct ib_recv_wr *ibwr,
 				 int sg_cap)
 {
 	int i;
@@ -776,8 +776,8 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_recv_wqe *wqe,
 }
 
 static int ntrdma_post_recv(struct ib_qp *ibqp,
-			    struct ib_recv_wr *ibwr,
-			    struct ib_recv_wr **bad)
+			    const struct ib_recv_wr *ibwr,
+			    const struct ib_recv_wr **bad)
 {
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
@@ -953,7 +953,6 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	struct ib_device *ibdev = &dev->ibdev;
 	int rc;
 
-	strlcpy(ibdev->name, "ntrdma_%d", IB_DEVICE_NAME_MAX);
 	ibdev->owner			= THIS_MODULE;
 	ibdev->node_type		= RDMA_NODE_IB_CA;
 	/* TODO: maybe this should be the number of virtual doorbells */
@@ -986,45 +985,45 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 		0ull;
 
 	/* not implemented / not required */
-	ibdev->get_port_immutable	= ntrdma_get_port_immutable;
-	ibdev->query_pkey		= ntrdma_query_pkey;
-	ibdev->query_gid		= ntrdma_query_gid;
-	ibdev->create_ah		= ntrdma_create_ah;
-	ibdev->destroy_ah		= ntrdma_destroy_ah;
-	ibdev->get_dma_mr		= ntrdma_get_dma_mr;
+	ibdev->ops.get_port_immutable	= ntrdma_get_port_immutable;
+	ibdev->ops.query_pkey		= ntrdma_query_pkey;
+	ibdev->ops.query_gid		= ntrdma_query_gid;
+	ibdev->ops.create_ah		= ntrdma_create_ah;
+	ibdev->ops.destroy_ah		= ntrdma_destroy_ah;
+	ibdev->ops.get_dma_mr		= ntrdma_get_dma_mr;
 
 	/* userspace context */
-	ibdev->alloc_ucontext		= ntrdma_alloc_ucontext;
-	ibdev->dealloc_ucontext		= ntrdma_dealloc_ucontext;
+	ibdev->ops.alloc_ucontext	= ntrdma_alloc_ucontext;
+	ibdev->ops.dealloc_ucontext	= ntrdma_dealloc_ucontext;
 
 	/* device and port queries */
-	ibdev->query_device		= ntrdma_query_device;
-	ibdev->query_port		= ntrdma_query_port;
+	ibdev->ops.query_device		= ntrdma_query_device;
+	ibdev->ops.query_port		= ntrdma_query_port;
 
 	/* completion queue */
-	ibdev->create_cq		= ntrdma_create_cq;
-	ibdev->destroy_cq		= ntrdma_destroy_cq;
-	ibdev->poll_cq			= ntrdma_poll_cq;
-	ibdev->req_notify_cq		= ntrdma_req_notify_cq;
+	ibdev->ops.create_cq		= ntrdma_create_cq;
+	ibdev->ops.destroy_cq		= ntrdma_destroy_cq;
+	ibdev->ops.poll_cq		= ntrdma_poll_cq;
+	ibdev->ops.req_notify_cq	= ntrdma_req_notify_cq;
 
 	/* protection domain */
-	ibdev->alloc_pd			= ntrdma_alloc_pd;
-	ibdev->dealloc_pd		= ntrdma_dealloc_pd;
+	ibdev->ops.alloc_pd		= ntrdma_alloc_pd;
+	ibdev->ops.dealloc_pd		= ntrdma_dealloc_pd;
 
 	/* memory region */
-	ibdev->reg_user_mr		= ntrdma_reg_user_mr;
-	ibdev->dereg_mr			= ntrdma_dereg_mr;
+	ibdev->ops.reg_user_mr		= ntrdma_reg_user_mr;
+	ibdev->ops.dereg_mr		= ntrdma_dereg_mr;
 
 	/* queue pair */
-	ibdev->create_qp		= ntrdma_create_qp;
-	ibdev->query_qp			= ntrdma_query_qp;
-	ibdev->modify_qp		= ntrdma_modify_qp;
-	ibdev->destroy_qp		= ntrdma_destroy_qp;
-	ibdev->post_send		= ntrdma_post_send;
-	ibdev->post_recv		= ntrdma_post_recv;
+	ibdev->ops.create_qp		= ntrdma_create_qp;
+	ibdev->ops.query_qp		= ntrdma_query_qp;
+	ibdev->ops.modify_qp		= ntrdma_modify_qp;
+	ibdev->ops.destroy_qp		= ntrdma_destroy_qp;
+	ibdev->ops.post_send		= ntrdma_post_send;
+	ibdev->ops.post_recv		= ntrdma_post_recv;
 
 
-	rc = ib_register_device(ibdev, NULL);
+	rc = ib_register_device(ibdev, "ntrdma_%d", NULL);
 	if (rc)
 		goto err_ib;
 
