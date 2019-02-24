@@ -39,6 +39,8 @@
 #include <linux/dma-direction.h>
 #include <linux/rwlock.h>
 
+#define NTB_MAX_IRQS (64)
+
 struct ntc_driver;
 struct ntc_dev;
 
@@ -81,7 +83,7 @@ struct ntc_ctx_ops {
 	void (*disable)(void *ctx);
 	void (*quiesce)(void *ctx);
 	void (*reset)(void *ctx);
-	void (*signal)(void *ctx);
+	void (*signal)(void *ctx, int vec);
 };
 
 static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
@@ -136,8 +138,9 @@ struct ntc_dev_ops {
 			 u64 dst, u64 val, bool fence,
 			 void (*cb)(void *cb_ctx), void *cb_ctx);
 	int (*req_signal)(struct ntc_dev *ntc, void *req,
-			  void (*cb)(void *cb_ctx), void *cb_ctx);
-	int (*clear_signal)(struct ntc_dev *ntc);
+			  void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
+	int (*clear_signal)(struct ntc_dev *ntc, int vec);
+	int (*max_peer_irqs)(struct ntc_dev *ntc);
 };
 
 static inline int ntc_dev_ops_is_valid(const struct ntc_dev_ops *ops)
@@ -257,6 +260,25 @@ struct ntc_dev {
 
 #define ntc_of_dev(__dev) container_of(__dev, struct ntc_dev, dev)
 
+static inline int ntc_max_peer_irqs(struct ntc_dev *ntc)
+{
+	if (!ntc->dev_ops->max_peer_irqs)
+			return 1;
+
+	return ntc->dev_ops->max_peer_irqs(ntc);
+}
+
+static inline int ntc_door_bell_arbitrator(struct ntc_dev *ntc)
+{
+	static int counter;
+	counter++;
+	/*FIXME actualy we want to use the number of peer CPUs but for now we assume its the same */
+	counter = counter % min(ntc_max_peer_irqs(ntc), (int)num_online_cpus());
+	return counter;
+
+}
+
+#define NTB_DEFAULT_VEC(__NTC) ntc_door_bell_arbitrator(__NTC)
 /**
  * ntc_register_driver() - register a driver for interest in ntc devices
  * @driver:	Client context.
@@ -447,7 +469,7 @@ void ntc_ctx_reset(struct ntc_dev *ntc);
  *
  * Notify the driver context of a signal event triggered by the peer.
  */
-void ntc_ctx_signal(struct ntc_dev *ntc);
+void ntc_ctx_signal(struct ntc_dev *ntc, int vec);
 
 /**
  * ntc_map_dev() - get the device to use for channel mapping
@@ -736,10 +758,10 @@ static inline int ntc_req_imm64(struct ntc_dev *ntc, void *req,
  * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_signal(struct ntc_dev *ntc, void *req,
-				 void (*cb)(void *cb_ctx), void *cb_ctx)
+				 void (*cb)(void *cb_ctx), void *cb_ctx, int vec)
 {
 	return ntc->dev_ops->req_signal(ntc, req,
-					cb, cb_ctx);
+					cb, cb_ctx, vec);
 }
 
 /**
@@ -957,11 +979,12 @@ static inline int ntc_umem_count(struct ntc_dev *ntc, void *umem)
  *
  * Return: 1 for events waiting or 0 for no events.
  */
-static inline int ntc_clear_signal(struct ntc_dev *ntc)
+static inline int ntc_clear_signal(struct ntc_dev *ntc, int vec)
 {
 	if (!ntc->dev_ops->clear_signal)
 		return 0;
 
-	return ntc->dev_ops->clear_signal(ntc);
+	return ntc->dev_ops->clear_signal(ntc, vec);
 }
+
 #endif

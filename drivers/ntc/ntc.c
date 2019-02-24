@@ -231,7 +231,7 @@ void ntc_ctx_reset(struct ntc_dev *ntc)
 }
 EXPORT_SYMBOL(ntc_ctx_reset);
 
-void ntc_ctx_signal(struct ntc_dev *ntc)
+void ntc_ctx_signal(struct ntc_dev *ntc, int vec)
 {
 	const struct ntc_ctx_ops *ctx_ops;
 	void *ctx;
@@ -243,7 +243,7 @@ void ntc_ctx_signal(struct ntc_dev *ntc)
 	ctx_ops = ntc->ctx_ops;
 
 	if (ctx_ops && ctx_ops->signal)
-		ctx_ops->signal(ctx);
+		ctx_ops->signal(ctx, vec);
 }
 EXPORT_SYMBOL(ntc_ctx_signal);
 

@@ -46,9 +46,14 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 	spin_lock_init(&dev->vbell_next_lock);
 	spin_lock_init(&dev->vbell_self_lock);
 	spin_lock_init(&dev->vbell_peer_lock);
-	tasklet_init(&dev->vbell_work,
-		     ntrdma_dev_vbell_work_cb,
-		     to_ptrhld(dev));
+
+	for (i = 0; i < NTB_MAX_IRQS; i++) {
+		dev->vbell_work_data[i].dev = dev;
+		dev->vbell_work_data[i].vec = i;
+		tasklet_init(&dev->vbell_work[i],
+				 ntrdma_dev_vbell_work_cb,
+				 to_ptrhld(&dev->vbell_work_data[i]));
+	}
 
 	dev->vbell_count = vbell_count;
 	dev->vbell_start = vbell_start;
@@ -213,7 +218,7 @@ void ntrdma_dev_vbell_reset(struct ntrdma_dev *dev)
 
 #endif
 
-static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev)
+static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 {
 	struct ntrdma_vbell_head *head;
 	u32 *buf;
@@ -234,22 +239,22 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev)
 	}
 	spin_unlock_bh(&dev->vbell_self_lock);
 
-	if (ntc_clear_signal(dev->ntc))
-		tasklet_schedule(&dev->vbell_work);
+	if (ntc_clear_signal(dev->ntc, vec))
+		tasklet_schedule(&dev->vbell_work[vec]);
 }
 
 static void ntrdma_dev_vbell_work_cb(unsigned long ptrhld)
 {
-	struct ntrdma_dev *dev = of_ptrhld(ptrhld);
+	struct vbell_work_data_s  *vbell_work_data = of_ptrhld(ptrhld);
 
-	ntrdma_dev_vbell_work(dev);
+	ntrdma_dev_vbell_work(vbell_work_data->dev, vbell_work_data->vec);
 }
 
-void ntrdma_dev_vbell_event(struct ntrdma_dev *dev)
+void ntrdma_dev_vbell_event(struct ntrdma_dev *dev, int vec)
 {
-	ntrdma_vdbg(dev, "vbell event\n");
+	ntrdma_vdbg(dev, "vbell event on vec %d\n", vec);
 
-	tasklet_schedule(&dev->vbell_work);
+	tasklet_schedule(&dev->vbell_work[vec]);
 }
 
 void ntrdma_dev_vbell_del(struct ntrdma_dev *dev,

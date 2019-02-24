@@ -48,6 +48,11 @@
 #include "ntrdma_util.h"
 #include "ntrdma_vbell.h"
 
+struct vbell_work_data_s {
+	struct ntrdma_dev *dev;
+	int vec;
+};
+
 /* RDMA over PCIe NTB device */
 struct ntrdma_dev {
 	/* NOTE: .ibdev MUST be the first thing in ntrdma_dev!
@@ -68,7 +73,8 @@ struct ntrdma_dev {
 
 	/* virtual doorbells synchronization */
 	int				vbell_enable;
-	struct tasklet_struct		vbell_work;
+	struct tasklet_struct		vbell_work[NTB_MAX_IRQS];
+	struct vbell_work_data_s	vbell_work_data[NTB_MAX_IRQS];
 	spinlock_t			vbell_next_lock;
 	spinlock_t			vbell_self_lock;
 	spinlock_t			vbell_peer_lock;
