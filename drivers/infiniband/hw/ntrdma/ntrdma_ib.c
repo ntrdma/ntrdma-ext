@@ -155,7 +155,7 @@ static int ntrdma_query_port(struct ib_device *ibdev,
 	 * integration with other technologies enabled by the ofed framework.
 	 */
 	memset(ibattr, 0, sizeof(*ibattr));
-	ibattr->state			= IB_PORT_DOWN;
+	ibattr->state			= IB_PORT_ACTIVE;
 	ibattr->max_mtu			= IB_MTU_256;
 	ibattr->active_mtu		= IB_MTU_256;
 
