@@ -888,6 +888,7 @@ static void ntrdma_send_done(struct ntrdma_cqe *cqe,
 	cqe->op_status = NTRDMA_WC_SUCCESS;
 	cqe->rdma_len = rdma_len;
 	cqe->imm_data = 0;
+	cqe->flags = wqe->flags;
 }
 
 static void ntrdma_recv_fail(struct ntrdma_cqe *recv_cqe,
@@ -1818,11 +1819,13 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		      rqp->send_cons,
 		      true, NULL, NULL);
 
-	/* update the vbell and signal the peer */
-	ntrdma_dev_vbell_peer(dev, req,
-			      rqp->peer_cmpl_vbell_idx);
-	ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
-
+	if (cqe->flags & IB_SEND_SIGNALED) {
+		/* update the vbell and signal the peer */
+		ntrdma_dev_vbell_peer(dev, req,
+					  rqp->peer_cmpl_vbell_idx);
+		ntc_req_signal(dev->ntc, req, NULL, NULL,
+			       NTB_DEFAULT_VEC(dev->ntc));
+	}
 	/* submit the request */
 	ntc_req_submit(dev->ntc, req);
 

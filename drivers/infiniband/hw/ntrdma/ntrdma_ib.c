@@ -325,12 +325,16 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 			/* current entry in the ring, or aborted into abort_cqe */
 			cqe = ntrdma_cq_cmpl_cqe(cq, &abort_cqe, pos);
 
-			/* transform the entry into the work completion */
-			rc = ntrdma_ib_wc_from_cqe(&ibwc[count], qp, cqe);
-			if (rc)
-				break;
+			if (!ntrdma_wr_code_push_data(cqe->op_code) || 
+					(cqe->flags & IB_SEND_SIGNALED)) {
+				/* transform the entry into the work completion */
+				rc = ntrdma_ib_wc_from_cqe(&ibwc[count], qp, cqe);
+				if (rc)
+					break;
 
-			++count;
+				++count;
+			}
+
 			++pos;
 
 			/* quit after the last completion */
@@ -617,6 +621,7 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 	int i;
 
 	wqe->ulp_handle = ibwr->wr_id;
+	wqe->flags = ibwr->send_flags;
 
 	switch (ibwr->opcode) {
 	case IB_WR_SEND:

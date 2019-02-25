@@ -69,6 +69,7 @@ struct ntrdma_send_wqe {
 	u64				rdma_addr;
 	u32				imm_data;
 	u32				sg_count;
+	int				flags;
 	struct ntrdma_wr_sge		sg_list[];
 };
 
@@ -86,6 +87,7 @@ struct ntrdma_cqe {
 	u16				op_status;
 	u32				rdma_len;
 	u32				imm_data;
+	int				flags;
 };
 
 static inline size_t ntrdma_wqe_sg_list_size(u32 sg_cap)
