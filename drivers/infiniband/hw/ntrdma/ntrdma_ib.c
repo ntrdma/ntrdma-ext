@@ -440,6 +440,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		goto err_qp;
 	}
 
+	memset(qp, 0, sizeof(*qp));
+
 	qp_attr.pd_key = pd->key;
 	qp_attr.recv_wqe_cap = ibqp_attr->cap.max_recv_wr;
 	qp_attr.recv_wqe_sg_cap = ibqp_attr->cap.max_recv_sge;
