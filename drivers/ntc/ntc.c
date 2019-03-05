@@ -142,7 +142,7 @@ void ntc_clear_ctx(struct ntc_dev *ntc)
 }
 EXPORT_SYMBOL(ntc_clear_ctx);
 
-ssize_t ntc_ctx_hello(struct ntc_dev *ntc, int phase,
+int ntc_ctx_hello(struct ntc_dev *ntc, int phase,
 		      void *in_buf, size_t in_size,
 		      void *out_buf, size_t out_size)
 {

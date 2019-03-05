@@ -41,6 +41,11 @@
 #define NTRDMA_V1_P2_MAGIC		0x1a1530f1
 #define NTRDMA_V1_P3_MAGIC		0xe09005ed
 
+enum status {
+	NOT_DONE = 0,
+	DONE
+};
+
 struct ntrdma_hello_phase1 {
 	/* protocol negotiation */
 	u32				version_min;
@@ -76,34 +81,22 @@ struct ntrdma_hello_phase3 {
 	struct ntrdma_eth_hello_prep	eth_prep;
 };
 
-ssize_t ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
+
+int ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
 				void *in_buf, size_t in_size,
 				void *out_buf, size_t out_size)
 {
-	if (in_size || out_size)
-		return -EINVAL;
-
-	return sizeof(struct ntrdma_hello_phase1);
-}
-
-ssize_t ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
-				void *in_buf, size_t in_size,
-				void *out_buf, size_t out_size)
-{
-	struct ntrdma_hello_phase1 *out;
-
-	if (in_size || out_size < sizeof(*out))
-		return -EINVAL;
-
-	out = out_buf;
+	struct ntrdma_hello_phase1 *out = out_buf;
+	if (sizeof(struct ntrdma_hello_phase1) > out_size)
+		return -EINVAL; 
 
 	out->version_min = NTRDMA_VER_MIN;
 	out->version_max = NTRDMA_VER_MAX;
 
-	return sizeof(struct ntrdma_hello_phase2);
+	return NOT_DONE;
 }
 
-ssize_t ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
+int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 				void *in_buf, size_t in_size,
 				void *out_buf, size_t out_size)
 {
@@ -137,12 +130,10 @@ ssize_t ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 	ntrdma_dev_cmd_hello_info(dev, &out->cmd_info);
 
 	/* ethernet rings */
-	ntrdma_dev_eth_hello_info(dev, &out->eth_info);
-
-	return sizeof(struct ntrdma_hello_phase3);
+	return ntrdma_dev_eth_hello_info(dev, &out->eth_info);
 }
 
-ssize_t ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
+int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 				void *in_buf, size_t in_size,
 				void *out_buf, size_t out_size)
 {
@@ -182,16 +173,16 @@ ssize_t ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 	if (rc)
 		return rc;
 
-	return 0;
+	return NOT_DONE;
 }
 
-ssize_t ntrdma_dev_hello_phase4(struct ntrdma_dev *dev,
+int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 				void *in_buf, size_t in_size,
 				void *out_buf, size_t out_size)
 {
 	struct ntrdma_hello_phase3 *in;
 
-	if (in_size < sizeof(*in) || out_size)
+	if (in_size < sizeof(*in))
 		return -EINVAL;
 
 	in = in_buf;
@@ -208,13 +199,29 @@ ssize_t ntrdma_dev_hello_phase4(struct ntrdma_dev *dev,
 	/* ethernet rings */
 	ntrdma_dev_eth_hello_done(dev, &in->eth_prep);
 
-	return 0;
+	return DONE;
 }
 
-ssize_t ntrdma_dev_hello(struct ntrdma_dev *dev, int phase,
-			 void *in_buf, size_t in_size,
-			 void *out_buf, size_t out_size)
+int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase)
 {
+	void *in_buf;
+	void *out_buf;
+	int in_size = dev->hello_local_buf_size/2;
+	int out_size = dev->hello_peer_buf_size/2;
+
+	/* note: using double-buffer here, dividing the local and peer buffers
+	 * for two buffers each:
+	 * "odd" phases will use the "even" part of input buffers & "odd" output
+	 * "even" phases will use the opposite of the above
+	 */
+	if (phase & 1) {
+		in_buf = dev->hello_local_buf;
+		out_buf = dev->hello_peer_buf + out_size;
+	} else {
+		in_buf = dev->hello_local_buf + in_size;
+		out_buf = dev->hello_peer_buf;
+	}
+
 	ntrdma_dbg(dev, "hello phase %d\n", phase);
 
 	switch (phase) {
@@ -229,9 +236,6 @@ ssize_t ntrdma_dev_hello(struct ntrdma_dev *dev, int phase,
 					       out_buf, out_size);
 	case 3:
 		return ntrdma_dev_hello_phase3(dev, in_buf, in_size,
-					       out_buf, out_size);
-	case 4:
-		return ntrdma_dev_hello_phase4(dev, in_buf, in_size,
 					       out_buf, out_size);
 	}
 	return -EINVAL;

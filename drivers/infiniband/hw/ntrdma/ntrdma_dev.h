@@ -149,6 +149,12 @@ struct ntrdma_dev {
 	u64				peer_cmd_recv_prod_addr;
 	u32				peer_cmd_recv_vbell_idx;
 
+	/* hello buffers */
+	u8 *hello_local_buf;
+	int hello_local_buf_size;
+	u8 *hello_peer_buf;
+	int hello_peer_buf_size;
+
 	/* rdma resource synchronization state */
 
 	int				res_enable;

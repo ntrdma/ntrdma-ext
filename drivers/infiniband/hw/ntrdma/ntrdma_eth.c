@@ -234,16 +234,21 @@ void ntrdma_dev_eth_deinit(struct ntrdma_dev *dev)
 	free_netdev(net);
 }
 
-void ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
+int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 			       struct ntrdma_eth_hello_info *info)
 {
 	struct ntrdma_eth *eth = dev->eth;
 
 	info->rx_cap = eth->rx_cap;
 	info->rx_idx = eth->rx_cmpl;
+	if (!eth->rx_cqe_buf_addr || !eth->rx_cons_buf_addr)
+		return -EINVAL;
+
 	info->rx_buf_addr = eth->rx_cqe_buf_addr;
 	info->rx_idx_addr = eth->rx_cons_buf_addr;
 	info->vbell_idx = eth->vbell_idx;
+
+	return 0;
 }
 
 int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,

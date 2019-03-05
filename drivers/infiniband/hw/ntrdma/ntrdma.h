@@ -91,6 +91,9 @@ int ntrdma_dev_init(struct ntrdma_dev *dev,
 		      struct ntc_dev *ntc);
 void ntrdma_dev_deinit(struct ntrdma_dev *dev);
 
+int ntrdma_dev_hello_init(struct ntrdma_dev *dev, struct ntc_dev *ntc);
+void ntrdma_dev_hello_deinit(struct ntrdma_dev *dev);
+
 int ntrdma_dev_ib_init(struct ntrdma_dev *dev);
 void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev);
 
@@ -98,9 +101,7 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 			  u32 vbell_idx, u32 rx_cap);
 void ntrdma_dev_eth_deinit(struct ntrdma_dev *dev);
 
-ssize_t ntrdma_dev_hello(struct ntrdma_dev *dev, int phase,
-			 void *in_buf, size_t in_size,
-			 void *out_buf, size_t out_size);
+int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase);
 
 int ntrdma_dev_res_init(struct ntrdma_dev *dev);
 void ntrdma_dev_res_deinit(struct ntrdma_dev *dev);
