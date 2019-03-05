@@ -76,7 +76,7 @@ static inline int ntc_driver_ops_is_valid(const struct ntc_driver_ops *ops)
  * @clear_signal:	See ntc_ctx_clear_signal().
  */
 struct ntc_ctx_ops {
-	ssize_t (*hello)(void *ctx, int phase,
+	int (*hello)(void *ctx, int phase,
 			 void *in_buf, size_t in_size,
 			 void *out_buf, size_t out_size);
 	void (*enable)(void *ctx);
@@ -141,6 +141,8 @@ struct ntc_dev_ops {
 			  void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
 	int (*clear_signal)(struct ntc_dev *ntc, int vec);
 	int (*max_peer_irqs)(struct ntc_dev *ntc);
+	void *(*local_hello_buf)(struct ntc_dev *ntc, int *size);
+	void *(*peer_hello_buf)(struct ntc_dev *ntc, int *size);
 };
 
 static inline int ntc_dev_ops_is_valid(const struct ntc_dev_ops *ops)
@@ -266,6 +268,16 @@ static inline int ntc_max_peer_irqs(struct ntc_dev *ntc)
 			return 1;
 
 	return ntc->dev_ops->max_peer_irqs(ntc);
+}
+
+static inline void *ntc_local_hello_buf(struct ntc_dev *ntc, int *size)
+{
+	return ntc->dev_ops->local_hello_buf(ntc, size);
+}
+
+static inline void *ntc_peer_hello_buf(struct ntc_dev *ntc, int *size)
+{
+	return ntc->dev_ops->peer_hello_buf(ntc, size);
 }
 
 static inline int ntc_door_bell_arbitrator(struct ntc_dev *ntc)
@@ -409,7 +421,7 @@ static inline void *ntc_get_ctx(struct ntc_dev *ntc)
  *
  * Return: Input buffer size for phase after next, zero, or an error number.
  */
-ssize_t ntc_ctx_hello(struct ntc_dev *ntc, int phase,
+int ntc_ctx_hello(struct ntc_dev *ntc, int phase,
 		      void *in_buf, size_t in_size,
 		      void *out_buf, size_t out_size);
 

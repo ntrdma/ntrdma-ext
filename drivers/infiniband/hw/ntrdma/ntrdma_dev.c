@@ -46,15 +46,13 @@
 #define NTRDMA_DEV_ETH_VBELL_IDX 2
 #define NTRDMA_DEV_ETH_RX_CAP 0x100
 
-static ssize_t ntrdma_ntc_hello(void *ctx, int phase,
+static int ntrdma_ntc_hello(void *ctx, int phase,
 				void *in_buf, size_t in_size,
 				void *out_buf, size_t out_size)
 {
 	struct ntrdma_dev *dev = ctx;
 
-	return ntrdma_dev_hello(dev, phase,
-				in_buf, in_size,
-				out_buf, out_size);
+	return ntrdma_dev_hello(dev, phase);
 }
 
 static void ntrdma_ntc_enable(void *ctx)
@@ -138,10 +136,16 @@ int ntrdma_dev_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 	if (rc)
 		goto err_ntc;
 
+	rc = ntrdma_dev_hello_init(dev, ntc);
+	if (rc)
+		goto err_hello;
+
 	ntrdma_debugfs_dev_add(dev);
 
 	return 0;
 
+err_hello:
+	ntrdma_dev_hello_deinit(dev);
 err_ntc:
 	ntrdma_dev_ib_deinit(dev);
 err_ib:
@@ -154,6 +158,27 @@ err_cmd:
 	ntrdma_dev_vbell_deinit(dev);
 err_vbell:
 	return rc;
+}
+
+int ntrdma_dev_hello_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
+{
+	dev->hello_local_buf = ntc_local_hello_buf(ntc, &dev->hello_local_buf_size);
+	dev->hello_peer_buf = ntc_peer_hello_buf(ntc, &dev->hello_peer_buf_size);
+
+	ntrdma_dbg(dev, "local %p size %d peer %p size %d\n",
+				dev->hello_local_buf, dev->hello_local_buf_size,
+				dev->hello_peer_buf, dev->hello_peer_buf_size);
+
+	return !(dev->hello_local_buf && dev->hello_peer_buf &&
+			dev->hello_local_buf_size > 0 && dev->hello_peer_buf_size > 0);
+}
+
+void ntrdma_dev_hello_deinit(struct ntrdma_dev *dev)
+{
+	dev->hello_local_buf = NULL;
+	dev->hello_peer_buf = NULL;
+	dev->hello_local_buf_size = 0;
+	dev->hello_peer_buf_size = 0;
 }
 
 void ntrdma_dev_deinit(struct ntrdma_dev *dev)

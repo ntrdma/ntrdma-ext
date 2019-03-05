@@ -70,7 +70,7 @@ struct ntrdma_eth_hello_prep {
 	u64				tx_idx_addr;
 };
 
-void ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
+int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 			       struct ntrdma_eth_hello_info *info);
 int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 			      struct ntrdma_eth_hello_info *peer_info,

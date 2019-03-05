@@ -81,12 +81,12 @@ MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 #define NTC_NTB_SPAD_ADDR_UPPER		3
 
 #define NTC_NTB_LINK_QUIESCE		0
-#define NTC_NTB_LINK_RESET_REQ		1
-#define NTC_NTB_LINK_RESET_ACK		2
-#define NTC_NTB_LINK_INIT_SPAD		3
-#define NTC_NTB_LINK_INIT_INFO		4
-#define NTC_NTB_LINK_PING_READY		5
-#define NTC_NTB_LINK_PING_COMMIT	6
+#define NTC_NTB_LINK_RESET		1
+#define NTC_NTB_LINK_START		2
+#define NTC_NTB_LINK_VER_SENT		3
+#define NTC_NTB_LINK_VER_CHOSEN		4
+#define NTC_NTB_LINK_DB_CONFIGURED	5
+#define NTC_NTB_LINK_COMMITTED		6
 #define NTC_NTB_LINK_HELLO		7
 
 #define NTC_NTB_DMA_PREP_FLAGS		0
@@ -98,6 +98,8 @@ MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 #define NTC_NTB_PING_PONG_PERIOD	msecs_to_jiffies(100)
 #define NTC_NTB_PING_POLL_PERIOD	msecs_to_jiffies(257)
 #define NTC_NTB_PING_MISS_THRESHOLD	10
+
+#define NTC_CTX_BUF_SIZE 1024
 
 #ifndef iowrite64
 #ifdef writeq
@@ -121,12 +123,6 @@ struct ntc_ntb_imm {
 	void				*cb_ctx;
 };
 
-struct ntc_ntb_hello_info {
-	u32				size;
-	u32				addr_lower;
-	u32				addr_upper;
-};
-
 struct ntc_ntb_info {
 	u32				version;
 	u32				magic;
@@ -137,14 +133,10 @@ struct ntc_ntb_info {
 	u32				msi_addr_upper[NTB_MAX_IRQS];
 	int				msi_irqs_num;
 
-	struct ntc_ntb_hello_info	hello_odd;
-	struct ntc_ntb_hello_info	hello_even;
-};
+	u32			done;
 
-struct ntc_ntb_hello_map {
-	void				*buf;
-	size_t				size;
-	dma_addr_t			dma;
+	/* ctx buf for use by the client */
+	u8	ctx_buf[NTC_CTX_BUF_SIZE];
 };
 
 struct ntc_ntb_dev {
@@ -195,9 +187,6 @@ struct ntc_ntb_dev {
 	int				link_state;
 	struct work_struct		link_work;
 	struct mutex			link_lock;
-
-	struct ntc_ntb_hello_map	hello_odd;
-	struct ntc_ntb_hello_map	hello_even;
 
 	struct dentry *dbgfs;
 };
@@ -325,14 +314,14 @@ static inline u32 ntc_ntb_version_check_magic(int version, u32 magic)
 
 static inline int ntc_ntb_ping_flags(int msg)
 {
-	if (msg >= NTC_NTB_LINK_PING_COMMIT)
+	if (msg >= NTC_NTB_LINK_COMMITTED)
 		return NTC_NTB_PING_PONG_MEM | NTC_NTB_PING_POLL_MEM;
 
-	if (msg >= NTC_NTB_LINK_PING_READY)
+	if (msg >= NTC_NTB_LINK_DB_CONFIGURED)
 		return NTC_NTB_PING_PONG_MEM | NTC_NTB_PING_PONG_SPAD |
 			NTC_NTB_PING_POLL_MEM;
 
-	if (msg >= NTC_NTB_LINK_INIT_INFO)
+	if (msg >= NTC_NTB_LINK_VER_CHOSEN)
 		return NTC_NTB_PING_PONG_MEM | NTC_NTB_PING_PONG_SPAD;
 
 	return NTC_NTB_PING_PONG_SPAD;
@@ -513,7 +502,7 @@ static inline void ntc_ntb_quiesce(struct ntc_ntb_dev *dev)
 
 	/* TODO: cancel and wait for any outstanding dma requests */
 
-	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_RESET_REQ);
+	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_RESET);
 }
 
 static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
@@ -522,54 +511,32 @@ static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 
 	ntc_ctx_reset(&dev->ntc);
 
-	if (dev->hello_odd.dma) {
-		dma_unmap_single(ntc_ntb_dma_dev(dev),
-				 dev->hello_odd.dma,
-				 dev->hello_odd.size,
-				 DMA_FROM_DEVICE);
-	}
-	kfree(dev->hello_odd.buf);
-	dev->hello_odd.buf = NULL;
-	dev->hello_odd.size = 0;
-	dev->hello_odd.dma = 0;
-
-	if (dev->hello_even.dma) {
-		dma_unmap_single(ntc_ntb_dma_dev(dev),
-				 dev->hello_even.dma,
-				 dev->hello_even.size,
-				 DMA_FROM_DEVICE);
-	}
-	kfree(dev->hello_even.buf);
-	dev->hello_even.buf = NULL;
-	dev->hello_even.size = 0;
-	dev->hello_even.dma = 0;
-
 	memset(dev->info_peer_on_self, 0, sizeof(*dev->info_peer_on_self));
 
-	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_RESET_ACK);
+	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_START);
 }
 
-static inline void ntc_ntb_init_spad(struct ntc_ntb_dev *dev)
+static inline void ntc_ntb_send_version(struct ntc_ntb_dev *dev)
 {
 	u32 version;
 
-	dev_dbg(&dev->ntc.dev, "link init spad\n");
+	dev_dbg(&dev->ntc.dev, "link send version\n");
 
 	version = ntc_ntb_version(NTC_NTB_VERSION_MAX, NTC_NTB_VERSION_MIN);
 
 	iowrite32(version, &dev->info_self_on_peer->version);
 
-	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_INIT_SPAD);
+	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_VER_SENT);
 }
 
-static inline void ntc_ntb_init_info(struct ntc_ntb_dev *dev)
+static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 {
 	u32 version, peer_version;
 	u64 msi_addr[NTB_MAX_IRQS];
 	u32 msi_data[NTB_MAX_IRQS];
 	int msi_idx;
 
-	dev_dbg(&dev->ntc.dev, "link init info\n");
+	dev_dbg(&dev->ntc.dev, "link choose version and send msi data\n");
 
 	version = ntc_ntb_version(NTC_NTB_VERSION_MAX, NTC_NTB_VERSION_MIN);
 
@@ -587,13 +554,7 @@ static inline void ntc_ntb_init_info(struct ntc_ntb_dev *dev)
 	iowrite32(ntc_ntb_version_magic(dev->version),
 		  &dev->info_self_on_peer->magic);
 
-	iowrite32(0, &dev->info_self_on_peer->hello_odd.size);
-	iowrite32(0, &dev->info_self_on_peer->hello_odd.addr_lower);
-	iowrite32(0, &dev->info_self_on_peer->hello_odd.addr_upper);
-
-	iowrite32(0, &dev->info_self_on_peer->hello_even.size);
-	iowrite32(0, &dev->info_self_on_peer->hello_even.addr_lower);
-	iowrite32(0, &dev->info_self_on_peer->hello_even.addr_upper);
+	iowrite32(0, &dev->info_self_on_peer->done);
 
 	dev->info_self_on_peer->msi_irqs_num =
 			ntc_ntb_read_msi_config(dev, msi_addr, msi_data);
@@ -606,14 +567,14 @@ static inline void ntc_ntb_init_info(struct ntc_ntb_dev *dev)
 				&dev->info_self_on_peer->msi_addr_upper[msi_idx]);
 	}
 
-	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_INIT_INFO);
+	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_VER_CHOSEN);
 	return;
 
 err:
 	ntc_ntb_error(dev);
 }
 
-static inline void ntc_ntb_ping_ready(struct ntc_ntb_dev *dev)
+static inline void ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 {
 	int rc;
 	int msi_idx;
@@ -672,181 +633,53 @@ static inline void ntc_ntb_ping_ready(struct ntc_ntb_dev *dev)
 		ntb_db_clear_mask(dev->ntb, peer_db_mask);
 	}
 
-	dev_dbg(&dev->ntc.dev, "link ping ready\n");
-	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_PING_READY);
+	dev_dbg(&dev->ntc.dev, "link signaling method configured\n");
+	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_DB_CONFIGURED);
 }
 
-static inline void ntc_ntb_ping_commit(struct ntc_ntb_dev *dev)
+static inline void ntc_ntb_link_commit(struct ntc_ntb_dev *dev)
 {
-	dev_dbg(&dev->ntc.dev, "link ping commit\n");
+	dev_dbg(&dev->ntc.dev, "link commit - verifying both sides sync\n");
 
-	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_PING_COMMIT);
-}
-
-static int ntc_ntb_prep_hello(struct ntc_ntb_dev *dev, size_t buf_size,
-			      struct ntc_ntb_hello_map *map,
-			      struct ntc_ntb_hello_info __iomem *info)
-{
-	int rc;
-
-	dev_dbg(&dev->ntc.dev, "link prep hello\n");
-
-	if (upper_32_bits(buf_size))
-		return -EINVAL;
-
-	map->size = buf_size;
-
-	map->buf = kmalloc_node(map->size, GFP_ATOMIC,
-				dev_to_node(&dev->ntc.dev));
-	if (!map->buf) {
-		rc = -ENOMEM;
-		goto err_buf;
-	}
-
-	map->dma = dma_map_single(ntc_ntb_dma_dev(dev),
-				  map->buf, map->size,
-				  DMA_FROM_DEVICE);
-	if (!map->dma) {
-		rc = -EIO;
-		goto err_dma;
-	}
-
-	iowrite32(lower_32_bits(map->size), &info->size);
-	iowrite32(lower_32_bits(map->dma), &info->addr_lower);
-	iowrite32(upper_32_bits(map->dma), &info->addr_upper);
-
-	return 0;
-
-err_dma:
-	kfree(map->buf);
-	map->buf = NULL;
-err_buf:
-	map->size = 0;
-	return rc;
+	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_COMMITTED);
 }
 
 static inline bool ntc_ntb_done_hello(struct ntc_ntb_dev *dev)
 {
 	/* no outstanding input or output buffers */
-	return !dev->hello_odd.size && !dev->hello_even.size &&
-		!dev->info_peer_on_self->hello_odd.size &&
-		!dev->info_peer_on_self->hello_even.size;
+	return (dev->info_peer_on_self->done == 1) && (dev->info_self_on_peer->done == 1);
 }
 
-static inline void ntc_ntb_hello(struct ntc_ntb_dev *dev)
+static inline int ntc_ntb_hello(struct ntc_ntb_dev *dev)
 {
-	struct ntc_ntb_hello_map *in;
-	struct ntc_ntb_hello_info __iomem *info_in;
-	struct ntc_ntb_hello_info *info_out;
-	size_t out_size;
-	void *out_buf;
-	u64 out_addr;
-	void __iomem *out_mmio;
-	ssize_t next_size;
-	int rc, phase;
-
-	phase = dev->link_state + 1 - NTC_NTB_LINK_HELLO;
+	int ret = 0;
+	int phase = dev->link_state + 1 - NTC_NTB_LINK_HELLO;
 
 	dev_dbg(&dev->ntc.dev, "link hello phase %d\n", phase);
 
 	if (phase < 0)
-		goto err_phase;
-
-	if (phase & 1) {
-		/* odd phases have even input buffers, odd output buffers */
-		in = &dev->hello_even;
-		info_in = &dev->info_self_on_peer->hello_even;
-		info_out = &dev->info_peer_on_self->hello_odd;
-	} else {
-		/* even phases have odd input buffers, even output buffers */
-		in = &dev->hello_odd;
-		info_in = &dev->info_self_on_peer->hello_odd;
-		info_out = &dev->info_peer_on_self->hello_even;
-	}
-
-	/* unmap the input buffer for this phase */
-	iowrite32(0, &info_in->size);
-	iowrite32(0, &info_in->addr_lower);
-	iowrite32(0, &info_in->addr_upper);
-
-	if (in->dma) {
-		dma_unmap_single(ntc_ntb_dma_dev(dev),
-				 in->size,
-				 in->dma,
-				 DMA_FROM_DEVICE);
-		in->dma = 0;
-	}
-
-	/* allocate a temporary output buffer for this phase */
-	out_size = info_out->size;
-	if (out_size) {
-		out_buf = kmalloc_node(out_size, GFP_KERNEL,
-				       dev_to_node(&dev->ntc.dev));
-		if (!out_buf)
-			goto err_out_buf;
-	} else {
-		out_buf = NULL;
-	}
+		return -EINVAL;
 
 	/* perform this phase of initialization */
-	next_size = ntc_ctx_hello(&dev->ntc, phase,
-				  in->buf, in->size,
-				  out_buf, out_size);
+	ret = ntc_ctx_hello(&dev->ntc, phase, 0, 0, 0, 0);
+	if (ret < 0)
+		return ret;
 
-	/* check if this phase was successful */
-	if (next_size < 0)
-		goto err_hello;
+	if (ret == 1)
+		iowrite32(1, &dev->info_self_on_peer->done);
 
-	dev_dbg(&dev->ntc.dev, "successful hello callback\n");
-
-	/* copy the temporary output buffer to the peer */
-	if (out_size) {
-		dev_dbg(&dev->ntc.dev, "going to copy output\n");
-
-		out_addr = ((u64)info_out->addr_lower) |
-			(((u64)info_out->addr_upper) << 32);
-
-		out_mmio = ioremap(dev->peer_dram_base + out_addr, out_size);
-		if (!out_mmio)
-			goto err_hello;
-		memcpy_toio(out_mmio, out_buf, out_size);
-		iounmap(out_mmio);
-
-		dev_dbg(&dev->ntc.dev, "successfully copied output\n");
-	}
-
-	/* free the input and output buffers of this phase */
-	kfree(out_buf);
-	kfree(in->buf);
-	in->buf = NULL;
-	in->size = 0;
-
-	/* prepare for the phase after next */
-	if (next_size) {
-		dev_dbg(&dev->ntc.dev, "prepare for next phase\n");
-		rc = ntc_ntb_prep_hello(dev, next_size, in, info_in);
-		if (rc)
-			goto err_phase;
-	}
+	dev_dbg(&dev->ntc.dev, "hello callback phase %d done %d\n", phase, ret);
 
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_HELLO + phase);
 
-	return;
-
-err_hello:
-	kfree(out_buf);
-err_out_buf:
-	kfree(in->buf);
-	in->buf = NULL;
-	in->size = 0;
-err_phase:
-	ntc_ntb_error(dev);
+	return 0;
 }
 
 static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 {
 	int link_event = ntc_ntb_link_get_event(dev);
 	bool link_up = false;
+	int err = 0;
 
 	dev_dbg(&dev->ntc.dev, "link work state %d event %d\n",
 		dev->link_state, link_event);
@@ -855,84 +688,86 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	case NTC_NTB_LINK_QUIESCE:
 		ntc_ntb_quiesce(dev);
 
-		if (dev->link_state != NTC_NTB_LINK_RESET_REQ)
+		if (dev->link_state != NTC_NTB_LINK_RESET)
 			goto out;
 
-	case NTC_NTB_LINK_RESET_REQ:
+	case NTC_NTB_LINK_RESET:
 		switch (link_event) {
 		default:
 			goto out;
-		case NTC_NTB_LINK_RESET_REQ:
-		case NTC_NTB_LINK_RESET_ACK:
+		case NTC_NTB_LINK_RESET:
+		case NTC_NTB_LINK_START:
 			ntc_ntb_reset(dev);
 		}
 
-		if (dev->link_state != NTC_NTB_LINK_RESET_ACK)
+		if (dev->link_state != NTC_NTB_LINK_START)
 			goto out;
 
-	case NTC_NTB_LINK_RESET_ACK:
+	case NTC_NTB_LINK_START:
 		switch (link_event) {
 		default:
 			goto out;
-		case NTC_NTB_LINK_RESET_ACK:
-		case NTC_NTB_LINK_INIT_SPAD:
-			ntc_ntb_init_spad(dev);
+		case NTC_NTB_LINK_START:
+		case NTC_NTB_LINK_VER_SENT:
+			ntc_ntb_send_version(dev);
 		}
 
-		if (dev->link_state != NTC_NTB_LINK_INIT_SPAD)
+		if (dev->link_state != NTC_NTB_LINK_VER_SENT)
 			goto out;
 
-	case NTC_NTB_LINK_INIT_SPAD:
+	case NTC_NTB_LINK_VER_SENT:
 		switch (link_event) {
 		default:
 			ntc_ntb_error(dev);
-		case NTC_NTB_LINK_RESET_ACK:
+		case NTC_NTB_LINK_START:
 			goto out;
-		case NTC_NTB_LINK_INIT_SPAD:
-		case NTC_NTB_LINK_INIT_INFO:
-			ntc_ntb_init_info(dev);
+		case NTC_NTB_LINK_VER_SENT:
+		case NTC_NTB_LINK_VER_CHOSEN:
+			ntc_ntb_choose_version(dev);
 		}
 
-		if (dev->link_state != NTC_NTB_LINK_INIT_INFO)
+		if (dev->link_state != NTC_NTB_LINK_VER_CHOSEN)
 			goto out;
 
-	case NTC_NTB_LINK_INIT_INFO:
+	case NTC_NTB_LINK_VER_CHOSEN:
 		switch (link_event) {
 		default:
 			ntc_ntb_error(dev);
-		case NTC_NTB_LINK_INIT_SPAD:
+		case NTC_NTB_LINK_VER_SENT:
 			goto out;
-		case NTC_NTB_LINK_INIT_INFO:
-		case NTC_NTB_LINK_PING_READY:
-			ntc_ntb_ping_ready(dev);
+		case NTC_NTB_LINK_VER_CHOSEN:
+		case NTC_NTB_LINK_DB_CONFIGURED:
+			ntc_ntb_db_config(dev);
 		}
 
-		if (dev->link_state != NTC_NTB_LINK_PING_READY)
+		if (dev->link_state != NTC_NTB_LINK_DB_CONFIGURED)
 			goto out;
 
-	case NTC_NTB_LINK_PING_READY:
+	case NTC_NTB_LINK_DB_CONFIGURED:
 		switch (link_event) {
 		default:
 			ntc_ntb_error(dev);
-		case NTC_NTB_LINK_INIT_INFO:
+		case NTC_NTB_LINK_VER_CHOSEN:
 			goto out;
-		case NTC_NTB_LINK_PING_READY:
-		case NTC_NTB_LINK_PING_COMMIT:
-			ntc_ntb_ping_commit(dev);
+		case NTC_NTB_LINK_DB_CONFIGURED:
+		case NTC_NTB_LINK_COMMITTED:
+			ntc_ntb_link_commit(dev);
 		}
 
-		if (dev->link_state != NTC_NTB_LINK_PING_COMMIT)
+		if (dev->link_state != NTC_NTB_LINK_COMMITTED)
 			goto out;
 
-	case NTC_NTB_LINK_PING_COMMIT:
+	case NTC_NTB_LINK_COMMITTED:
 		switch (link_event) {
 		default:
 			ntc_ntb_error(dev);
-		case NTC_NTB_LINK_PING_READY:
+		case NTC_NTB_LINK_DB_CONFIGURED:
 			goto out;
-		case NTC_NTB_LINK_PING_COMMIT:
+		case NTC_NTB_LINK_COMMITTED:
 		case NTC_NTB_LINK_HELLO:
-			ntc_ntb_hello(dev);
+			err = ntc_ntb_hello(dev);
+			if (err < 0) 
+				ntc_ntb_error(dev);
 		}
 
 		if (dev->link_state != NTC_NTB_LINK_HELLO)
@@ -951,11 +786,14 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 			case 0:
 			case 1:
 				dev_dbg(&dev->ntc.dev, "can advance hello\n");
-				ntc_ntb_hello(dev);
+				err = ntc_ntb_hello(dev);
+				if (err < 0) {
+					ntc_ntb_error(dev);
+				}
 			}
 		}
 
-		dev_dbg(&dev->ntc.dev, "done hello\n");
+		dev_dbg(&dev->ntc.dev, "done hello, event %d state %d \n", link_event, dev->link_state);
 
 		switch (link_event - dev->link_state) {
 		default:
@@ -1285,6 +1123,21 @@ int ntc_ntb_max_peer_irqs(struct ntc_dev *ntc)
 	return dev->peer_irq_num;
 }
 
+void *ntc_ntb_local_hello_buf(struct ntc_dev *ntc, int *size)
+{
+	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+	*size = NTC_CTX_BUF_SIZE;
+	return dev->info_peer_on_self->ctx_buf;
+}
+
+void *ntc_ntb_peer_hello_buf(struct ntc_dev *ntc, int *size)
+{
+	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+	*size = NTC_CTX_BUF_SIZE;
+	return dev->info_self_on_peer->ctx_buf;
+}
+
+
 static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.map_dev			= ntc_ntb_map_dev,
 	.link_disable		= ntc_ntb_link_disable,
@@ -1300,6 +1153,8 @@ static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.req_signal			= ntc_ntb_req_signal,
 	.clear_signal		= ntc_ntb_clear_signal,
 	.max_peer_irqs		= ntc_ntb_max_peer_irqs,
+	.local_hello_buf	= ntc_ntb_local_hello_buf,
+	.peer_hello_buf		= ntc_ntb_peer_hello_buf,
 };
 
 static void ntc_ntb_link_event(void *ctx)
@@ -1447,7 +1302,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->ping_miss = 0;
 	dev->ping_flags = 0;
 	dev->ping_seq = 0;
-	dev->ping_msg = NTC_NTB_LINK_RESET_ACK;
+	dev->ping_msg = NTC_NTB_LINK_START;
 	dev->poll_val = 0;
 	dev->poll_msg = NTC_NTB_LINK_QUIESCE;
 
@@ -1463,7 +1318,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* init the link state machine */
 	dev->link_is_up = false;
-	dev->link_state = NTC_NTB_LINK_RESET_ACK;
+	dev->link_state = NTC_NTB_LINK_START;
 
 	INIT_WORK(&dev->link_work,
 		  ntc_ntb_link_work_cb);
@@ -1564,20 +1419,9 @@ static int ntc_debugfs_read(struct seq_file *s, void *v)
 		seq_printf(s, "  msi_addr_upper %#x\n",
 		   dev->info_peer_on_self->msi_addr_upper[i]);
 	}
-	seq_puts(s, "  hello_odd:\n");
-	seq_printf(s, "    size %#x\n",
-		   dev->info_peer_on_self->hello_odd.size);
-	seq_printf(s, "    addr_upper %#x\n",
-		   dev->info_peer_on_self->hello_odd.addr_upper);
-	seq_printf(s, "    addr_lower %#x\n",
-		   dev->info_peer_on_self->hello_odd.addr_lower);
-	seq_puts(s, "  hello_even:\n");
-	seq_printf(s, "    size %#x\n",
-		   dev->info_peer_on_self->hello_even.size);
-	seq_printf(s, "    addr_upper %#x\n",
-		   dev->info_peer_on_self->hello_even.addr_upper);
-	seq_printf(s, "    addr_lower %#x\n",
-		   dev->info_peer_on_self->hello_even.addr_lower);
+	seq_puts(s, "  ctx level negotiation:\n");
+	seq_printf(s, "    done %#x\n",
+		   dev->info_peer_on_self->done);
 	seq_printf(s, "version %d\n",
 		   dev->version);
 	seq_printf(s, "peer_irq_num %d\n",
