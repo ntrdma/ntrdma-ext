@@ -194,6 +194,9 @@ struct ntrdma_dev {
 #define ntrdma_dbg(dev, args...) \
 	dev_dbg(&(dev)->ntc->dev, ## args)
 
+#define ntrdma_err(dev, args...) \
+	dev_err(&(dev)->ntc->dev, ## args)
+
 #define ntrdma_vdbg(dev, args...) \
 	dev_vdbg(&(dev)->ntc->dev, ## args)
 

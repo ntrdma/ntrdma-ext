@@ -46,6 +46,7 @@
 
 #define NTRDMA_RES_VBELL		1
 #define NTRDMA_RRES_VBELL		0
+#define MAX_CMDS 16
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev);
 static void ntrdma_cmd_send_work_cb(struct work_struct *ws);
@@ -128,6 +129,7 @@ int ntrdma_dev_cmd_init(struct ntrdma_dev *dev,
 					     dev->cmd_send_buf_size,
 					     DMA_TO_DEVICE);
 	if (!dev->cmd_send_buf_addr) {
+		ntrdma_err(dev, "dma mapping failed\n");
 		rc = -EIO;
 		goto err_send_buf_addr;
 	}
@@ -151,6 +153,7 @@ int ntrdma_dev_cmd_init(struct ntrdma_dev *dev,
 						 dev->cmd_send_rsp_buf_size,
 						 DMA_FROM_DEVICE);
 	if (!dev->cmd_send_rsp_buf_addr) {
+		ntrdma_err(dev, "dma mapping failed\n");
 		rc = -EIO;
 		goto err_send_rsp_buf_addr;
 	}
@@ -212,6 +215,13 @@ int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
 	dev->peer_cmd_send_vbell_idx = peer_info->send_vbell_idx;
 	dev->peer_cmd_recv_vbell_idx = peer_info->recv_vbell_idx;
 
+	if (peer_info->send_cap > MAX_CMDS || peer_info->send_idx > MAX_CMDS) {
+		ntrdma_err(dev, "peer info is suspected as garbage cap %d, idx %d\n",
+				peer_info->send_cap, peer_info->send_idx);
+		rc = -ENOMEM;
+		goto err_recv_buf;
+	}
+
 	/* allocate local recv ring for peer send */
 	dev->cmd_recv_cap = peer_info->send_cap;
 	dev->cmd_recv_cons = peer_info->send_idx;
@@ -235,6 +245,7 @@ int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
 					     dev->cmd_recv_buf_size,
 					     DMA_FROM_DEVICE);
 	if (!dev->cmd_recv_buf_addr) {
+		ntrdma_err(dev, "dma mapping failed\n");
 		rc = -EIO;
 		goto err_recv_buf_addr;
 	}
@@ -253,6 +264,7 @@ int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
 						 dev->cmd_recv_rsp_buf_size,
 						 DMA_TO_DEVICE);
 	if (!dev->cmd_recv_rsp_buf_addr) {
+		ntrdma_err(dev, "dma mapping failed\n");
 		rc = -EIO;
 		goto err_recv_rsp_buf_addr;
 	}

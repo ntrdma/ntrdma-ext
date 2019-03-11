@@ -101,6 +101,8 @@ MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 
 #define NTC_CTX_BUF_SIZE 1024
 
+#define INTEL_ALIGN 16
+
 #ifndef iowrite64
 #ifdef writeq
 #define iowrite64 writeq
@@ -131,7 +133,7 @@ struct ntc_ntb_info {
 	u32				msi_data[NTB_MAX_IRQS];
 	u32				msi_addr_lower[NTB_MAX_IRQS];
 	u32				msi_addr_upper[NTB_MAX_IRQS];
-	int				msi_irqs_num;
+	u32				msi_irqs_num;
 
 	u32			done;
 
@@ -148,6 +150,7 @@ struct ntc_ntb_dev {
 
 	/* local ntb window offset to peer dram */
 	u64				peer_dram_base;
+	size_t				peer_dram_size;
 
 	/*Peer mw base for initialization*/
 	u64                             peer_info_base;
@@ -414,7 +417,7 @@ static void ntc_ntb_ping_poll_cb(unsigned long ptrhld)
 		++dev->ping_miss;
 		dev_dbg(&dev->ntc.dev, "ping miss %d\n", dev->ping_miss);
 		if (dev->ping_miss == NTC_NTB_PING_MISS_THRESHOLD) {
-			dev_dbg(&dev->ntc.dev, "peer lost\n");
+			dev_err(&dev->ntc.dev, "peer lost - moving to quiesce state\n");
 			dev->poll_msg = NTC_NTB_LINK_QUIESCE;
 			schedule_work(&dev->link_work);
 		}
@@ -488,7 +491,7 @@ static inline int ntc_ntb_link_get_event(struct ntc_ntb_dev *dev)
 
 static inline void ntc_ntb_error(struct ntc_ntb_dev *dev)
 {
-	dev_dbg(&dev->ntc.dev, "link error\n");
+	dev_err(&dev->ntc.dev, "link error\n");
 
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_QUIESCE);
 	schedule_work(&dev->link_work);
@@ -535,6 +538,7 @@ static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 	u64 msi_addr[NTB_MAX_IRQS];
 	u32 msi_data[NTB_MAX_IRQS];
 	int msi_idx;
+	u32 msi_irqs_num;
 
 	dev_dbg(&dev->ntc.dev, "link choose version and send msi data\n");
 
@@ -556,10 +560,16 @@ static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 
 	iowrite32(0, &dev->info_self_on_peer->done);
 
-	dev->info_self_on_peer->msi_irqs_num =
-			ntc_ntb_read_msi_config(dev, msi_addr, msi_data);
+	msi_irqs_num = ntc_ntb_read_msi_config(dev, msi_addr, msi_data);
+	if (msi_irqs_num > NTB_MAX_IRQS) {
+		dev_err(&dev->ntc.dev, "msi_irqs_num %u is above max\n",
+				msi_irqs_num);
+		goto err;
+	}
 
-	for (msi_idx = 0; msi_idx < dev->info_self_on_peer->msi_irqs_num; msi_idx++) {
+	dev->info_self_on_peer->msi_irqs_num = msi_irqs_num;
+
+	for (msi_idx = 0; msi_idx < msi_irqs_num; msi_idx++) {
 		iowrite32(msi_data[msi_idx], &dev->info_self_on_peer->msi_data[msi_idx]);
 		iowrite32(lower_32_bits(msi_addr[msi_idx]),
 				&dev->info_self_on_peer->msi_addr_lower[msi_idx]);
@@ -580,8 +590,10 @@ static inline void ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 	int msi_idx;
 	resource_size_t size;
 
-	if (use_msi && dev->info_peer_on_self->msi_irqs_num) {
-		for (msi_idx = 0; msi_idx < dev->info_peer_on_self->msi_irqs_num; msi_idx++) {
+	u32 msi_irqs_num = dev->info_peer_on_self->msi_irqs_num;
+
+	if (use_msi && msi_irqs_num > 0 && msi_irqs_num < NTB_MAX_IRQS) {
+		for (msi_idx = 0; msi_idx < msi_irqs_num; msi_idx++) {
 			dev->peer_irq_data[msi_idx] = dev->info_peer_on_self->msi_data[msi_idx];
 			dev->peer_irq_addr[msi_idx] = dev->peer_dram_base +
 				(((u64)dev->info_peer_on_self->msi_addr_lower[msi_idx]) |
@@ -599,7 +611,7 @@ static inline void ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 		max_irqs = ntb_db_vector_count(dev->ntb);
 
 		if (max_irqs <= 0 || max_irqs> NTB_MAX_IRQS) {
-			dev_err(&dev->ntc.dev, "ntb_db_vector_count return %d which is not supported\n",
+			dev_err(&dev->ntc.dev, "max_irqs %d - not supported\n",
 					dev->info_peer_on_self->msi_irqs_num);
 			return;
 		}
@@ -607,7 +619,8 @@ static inline void ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 		rc = ntb_peer_db_addr(dev->ntb,
 				(phys_addr_t *)&peer_irq_addr_base,
 				&size);
-		if ((rc < 0) || (size != sizeof(u32))) {
+		if ((rc < 0) || (size != sizeof(u32)) ||
+				!IS_ALIGNED(peer_irq_addr_base, INTEL_ALIGN)) {
 			dev_err(&dev->ntc.dev, "Peer DB addr invalid\n");
 			return;
 		}
@@ -779,6 +792,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 			dev_dbg(&dev->ntc.dev, "not done hello\n");
 			switch (link_event - dev->link_state) {
 			default:
+				dev_err(&dev->ntc.dev, "peer state is not in sync\n");
 				ntc_ntb_error(dev);
 			case -1:
 				dev_dbg(&dev->ntc.dev, "peer is behind hello\n");
@@ -877,6 +891,12 @@ static int ntc_ntb_link_reset(struct ntc_dev *ntc)
 static u64 ntc_ntb_peer_addr(struct ntc_dev *ntc, u64 addr)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+
+	if (addr > dev->peer_dram_size || !IS_ALIGNED(addr, INTEL_ALIGN)) {
+		dev_err(&dev->ntc.dev, "dram_base 0x%llx + off 0x%llx\n",
+				dev->peer_dram_base, addr);
+		return 0;
+	}
 
 	return dev->peer_dram_base + addr;
 }
@@ -1232,6 +1252,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	}
 
 	dev->peer_dram_base = mw_base;
+	dev->peer_dram_size = mw_size;
 
 	/* a local buffer for peer driver to write */
 	ntb_peer_mw_get_addr(dev->ntb, mw_idx - 1, &mw_base, &mw_size);

@@ -34,6 +34,7 @@
 #include "ntrdma_eth.h"
 #include "ntrdma_hello.h"
 
+#define MAX_WQES 4096
 #define SKINFO_SIZE SKB_DATA_ALIGN(sizeof(struct skb_shared_info))
 
 static const struct net_device_ops ntrdma_eth_net_ops;
@@ -262,8 +263,25 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 		ntc_peer_addr(dev->ntc, peer_info->rx_buf_addr);
 	eth->peer_rx_cons_buf_addr =
 		ntc_peer_addr(dev->ntc, peer_info->rx_idx_addr);
+
+	if (peer_info->vbell_idx > MAX_VBELL_COUNT) {
+		ntrdma_err(dev, "peer info suspected as garbage vbell_idx %u\n",
+				peer_info->vbell_idx);
+		rc = -ENOMEM;
+		goto err_tx_wqe_buf;
+	}
+
 	eth->peer_vbell_idx = peer_info->vbell_idx;
 
+	/* added protection with a big enough size, since rx_cap and
+	 * rx_idx can hold ANY value, which would fail the kmalloc
+	 */
+	if (peer_info->rx_cap > MAX_WQES || peer_info->rx_idx > MAX_WQES) {
+		ntrdma_err(dev, "peer info is suspected as garbage cap %u idx %u\n",
+				peer_info->rx_cap, peer_info->rx_idx);
+		rc = -ENOMEM;
+		goto err_tx_wqe_buf;
+	}
 	eth->tx_cap = peer_info->rx_cap;
 	eth->tx_cons = peer_info->rx_idx;
 	eth->tx_cmpl = peer_info->rx_idx;
@@ -282,6 +300,7 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 					   eth->tx_wqe_buf_size,
 					   DMA_FROM_DEVICE);
 	if (!eth->tx_wqe_buf_addr) {
+		ntrdma_err(dev, "dma mapping failed\n");
 		rc = -EIO;
 		goto err_tx_wqe_addr;
 	}
@@ -300,6 +319,7 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 					   eth->tx_cqe_buf_size,
 					   DMA_TO_DEVICE);
 	if (!eth->tx_cqe_buf_addr) {
+		ntrdma_err(dev, "dma mapping failed\n");
 		rc = -EIO;
 		goto err_tx_cqe_addr;
 	}
