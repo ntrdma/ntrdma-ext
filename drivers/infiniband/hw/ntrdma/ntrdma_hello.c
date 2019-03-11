@@ -114,6 +114,8 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 		dev->version = min_t(u32, in->version_max, NTRDMA_VER_MAX);
 	} else {
 		dev->version = NTRDMA_VER_NONE;
+		ntrdma_err(dev, "version is not in range %d - %d\n",
+				in->version_min, in->version_max);
 		return -EINVAL;
 	}
 
@@ -156,23 +158,34 @@ int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 	out->version_magic = NTRDMA_V1_MAGIC;
 	out->phase_magic = NTRDMA_V1_P3_MAGIC;
 
+	ntrdma_dbg(dev, "vbell_count %d\n", in->vbell_count);
+	if (in->vbell_count > MAX_VBELL_COUNT) {
+		ntrdma_err(dev, "vbell_count %d\n", in->vbell_count);
+		return -EINVAL;
+	}
+
 	rc = ntrdma_dev_vbell_enable(dev,
 				     ntc_peer_addr(dev->ntc,
 						   in->vbell_addr),
 				     in->vbell_count);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "failed to enable vbell rc %d\n", rc);
 		return rc;
-
+	}
 	/* command rings */
 	rc = ntrdma_dev_cmd_hello_prep(dev, &in->cmd_info, &out->cmd_prep);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "failed to cmd prep rc %d\n", rc);
 		return rc;
+	}
+
 
 	/* ethernet rings */
 	rc = ntrdma_dev_eth_hello_prep(dev, &in->eth_info, &out->eth_prep);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "failed to eth prep rc %d\n", rc);
 		return rc;
-
+	}
 	return NOT_DONE;
 }
 
@@ -188,10 +201,12 @@ int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 	in = in_buf;
 
 	/* protocol validation */
-	if (in->version_magic != NTRDMA_V1_MAGIC)
+	if (in->version_magic != NTRDMA_V1_MAGIC ||
+			in->phase_magic != NTRDMA_V1_P3_MAGIC) {
+		ntrdma_err(dev, "couldn't verify magic %u phase magic %u\n",
+				in->version_magic, in->phase_magic);
 		return -EINVAL;
-	if (in->phase_magic != NTRDMA_V1_P3_MAGIC)
-		return -EINVAL;
+	}
 
 	/* command rings */
 	ntrdma_dev_cmd_hello_done(dev, &in->cmd_prep);
@@ -238,5 +253,7 @@ int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase)
 		return ntrdma_dev_hello_phase3(dev, in_buf, in_size,
 					       out_buf, out_size);
 	}
+
+	ntrdma_dbg(dev, " %s failed\n", __func__);
 	return -EINVAL;
 }
