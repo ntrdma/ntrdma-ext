@@ -264,7 +264,7 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 	eth->peer_rx_cons_buf_addr =
 		ntc_peer_addr(dev->ntc, peer_info->rx_idx_addr);
 
-	if (peer_info->vbell_idx > MAX_VBELL_COUNT) {
+	if (peer_info->vbell_idx > NTRDMA_DEV_VBELL_COUNT) {
 		ntrdma_err(dev, "peer info suspected as garbage vbell_idx %u\n",
 				peer_info->vbell_idx);
 		rc = -ENOMEM;
