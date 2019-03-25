@@ -789,11 +789,15 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	case NTC_NTB_LINK_HELLO:
 	default:
 		while (!ntc_ntb_done_hello(dev)) {
+			WARN(dev->link_state < NTC_NTB_LINK_HELLO,
+					"hello loop: state %d out of sync\n", dev->link_state);
 			dev_dbg(&dev->ntc.dev, "not done hello\n");
 			switch (link_event - dev->link_state) {
 			default:
-				dev_err(&dev->ntc.dev, "peer state is not in sync\n");
+				dev_err(&dev->ntc.dev, "peer state is not in sync %d %d\n",
+						link_event, dev->link_state);
 				ntc_ntb_error(dev);
+				return;
 			case -1:
 				dev_dbg(&dev->ntc.dev, "peer is behind hello\n");
 				goto out;
