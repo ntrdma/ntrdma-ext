@@ -159,7 +159,7 @@ int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 	out->phase_magic = NTRDMA_V1_P3_MAGIC;
 
 	ntrdma_dbg(dev, "vbell_count %d\n", in->vbell_count);
-	if (in->vbell_count > MAX_VBELL_COUNT) {
+	if (in->vbell_count > NTRDMA_DEV_VBELL_COUNT) {
 		ntrdma_err(dev, "vbell_count %d\n", in->vbell_count);
 		return -EINVAL;
 	}

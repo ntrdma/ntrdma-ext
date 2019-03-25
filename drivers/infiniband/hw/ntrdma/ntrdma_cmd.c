@@ -212,13 +212,23 @@ int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
 		ntc_peer_addr(dev->ntc, peer_info->send_rsp_buf_addr);
 	dev->peer_cmd_send_cons_addr =
 		ntc_peer_addr(dev->ntc, peer_info->send_cons_addr);
+
+	if (peer_info->send_vbell_idx > NTRDMA_DEV_VBELL_COUNT ||
+		peer_info->recv_vbell_idx > NTRDMA_DEV_VBELL_COUNT) {
+		ntrdma_err(dev, "peer info vbell corrupted? send vbell idx %u, recv vbell idx %u\n",
+						peer_info->send_vbell_idx, peer_info->recv_vbell_idx);
+		rc = -EIO;
+		goto err_recv_buf;
+	}
+
 	dev->peer_cmd_send_vbell_idx = peer_info->send_vbell_idx;
 	dev->peer_cmd_recv_vbell_idx = peer_info->recv_vbell_idx;
 
-	if (peer_info->send_cap > MAX_CMDS || peer_info->send_idx > MAX_CMDS) {
-		ntrdma_err(dev, "peer info is suspected as garbage cap %d, idx %d\n",
+	if (peer_info->send_cap > MAX_CMDS ||
+			peer_info->send_idx > peer_info->send_cap) {
+		ntrdma_err(dev, "peer info corrupted? cap %d, idx %d\n",
 				peer_info->send_cap, peer_info->send_idx);
-		rc = -ENOMEM;
+		rc = -EIO;
 		goto err_recv_buf;
 	}
 

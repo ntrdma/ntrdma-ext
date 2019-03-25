@@ -35,7 +35,6 @@
 
 #include "ntrdma.h"
 
-#define MAX_VBELL_COUNT 1024
 
 struct ntrdma_cmd_hello_info {
 	u64 send_rsp_buf_addr;

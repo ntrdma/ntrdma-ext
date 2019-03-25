@@ -48,6 +48,9 @@
 #include "ntrdma_util.h"
 #include "ntrdma_vbell.h"
 
+#define NTRDMA_DEV_VBELL_COUNT 0x400
+#define NTRDMA_DEV_VBELL_START 0x8
+
 struct vbell_work_data_s {
 	struct ntrdma_dev *dev;
 	int vec;
