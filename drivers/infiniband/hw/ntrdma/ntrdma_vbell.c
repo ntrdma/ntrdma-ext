@@ -258,7 +258,7 @@ void ntrdma_dev_vbell_event(struct ntrdma_dev *dev, int vec)
 }
 
 void ntrdma_dev_vbell_del(struct ntrdma_dev *dev,
-			  struct ntrdma_vbell *vbell, u32 idx)
+			  struct ntrdma_vbell *vbell)
 {
 	spin_lock_bh(&dev->vbell_self_lock);
 	{
