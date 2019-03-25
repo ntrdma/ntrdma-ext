@@ -557,6 +557,55 @@ static int ntrdma_cmd_recv_none(struct ntrdma_dev *dev, u32 cmd_op,
 	return 0;
 }
 
+#define MAX_SUM_ACCESS_FLAGS (1<<7) // enum ibv_access_flags (rdma-core)
+#define IB_MR_LIMIT_BYTES (1024*1024*1024)
+#define INTEL_ALIGN 16
+static int ntrdma_sanity_mr_create(struct ntrdma_dev *dev,
+				     struct ntrdma_cmd_mr_create *cmd)
+{
+	/* sanity checks for values received from peer */
+	if (cmd->sg_cap > (IB_MR_LIMIT_BYTES >> PAGE_SHIFT) ||
+		cmd->sg_count > NTRDMA_CMD_MR_CREATE_SG_CAP) {
+		ntrdma_err(dev, "sg_cap %u sg_count %u (corrupted?)\n",
+				cmd->sg_cap, cmd->sg_count);
+		return -EINVAL;
+	}
+
+	if (cmd->mr_len > IB_MR_LIMIT_BYTES) {
+		ntrdma_err(dev, "mr len %llu is beyond 1GB limit (corrupted?)\n",
+				cmd->mr_len);
+		return -EINVAL;
+	}
+
+	if (!IS_ALIGNED(cmd->mr_addr, INTEL_ALIGN)) {
+		ntrdma_err(dev, "mr addr 0x%llx is not aligned (corrupted?)\n",
+				cmd->mr_addr);
+		return -EINVAL;
+	}
+
+	if (cmd->access > MAX_SUM_ACCESS_FLAGS) {
+		ntrdma_err(dev, "mr access flags 0x%x may be corrupted?\n",
+				cmd->access);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int ntrdma_sanity_mr_append(struct ntrdma_dev *dev,
+				     struct ntrdma_cmd_mr_append *cmd)
+{
+	/* sanity checks for values received from peer */
+	if (cmd->sg_pos > (IB_MR_LIMIT_BYTES >> PAGE_SHIFT) ||
+		cmd->sg_count > NTRDMA_CMD_MR_APPEND_SG_CAP ||
+		cmd->sg_pos > cmd->sg_count) {
+		ntrdma_err(dev, "sg_cap %u sg_count %u (corrupted?)\n",
+				cmd->sg_pos, cmd->sg_count);
+		return -EINVAL;
+	}
+
+	return 0;
+}
 static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 				     struct ntrdma_cmd_mr_create *cmd,
 				     struct ntrdma_rsp_mr_status *rsp)
@@ -569,6 +618,12 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 
 	rsp->hdr.op = cmd->op;
 	rsp->mr_key = cmd->mr_key;
+
+	rc = ntrdma_sanity_mr_create(dev, cmd);
+	if (rc) {
+		ntrdma_err(dev, "sanity failed, rc %d\n", rc);
+		goto err_rmr;
+	}
 
 	rmr = kmalloc_node(sizeof(*rmr) + cmd->sg_cap * sizeof(*rmr->sg_list),
 			   GFP_KERNEL, dev->node);
@@ -594,8 +649,10 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 				      rmr->sg_list[i].addr);
 
 	rc = ntrdma_rmr_add(rmr);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "failed to add RMR %p rc %d\n", rmr, rc);
 		goto err_add;
+	}
 
 	rsp->hdr.status = 0;
 	return 0;
@@ -654,6 +711,12 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 	rsp->hdr.op = cmd->op;
 	rsp->mr_key = cmd->mr_key;
 
+	rc = ntrdma_sanity_mr_append(dev, cmd);
+	if (rc) {
+		ntrdma_err(dev, "sanity failed, rc %d\n", rc);
+		goto err_rmr;
+	}
+
 	rmr = ntrdma_dev_rmr_look(dev, cmd->mr_key);
 	if (!rmr) {
 		rc = -EINVAL;
@@ -682,6 +745,46 @@ err_rmr:
 	return rc;
 }
 
+
+#define MAX_WQE_SG_CAP 128
+#define MAX_WQE_CAP 4096
+#define QP_NUM_TYPES 3
+
+static int ntrdma_qp_create_sanity(struct ntrdma_dev *dev,
+				     struct ntrdma_cmd_qp_create *cmd)
+{
+	/* currently 3 types: IBV_QPT_ RC/UC/UD */
+	if (cmd->qp_type > QP_NUM_TYPES) {
+		ntrdma_err(dev, "qp type has wrong type?\n");
+		return -EINVAL;
+	}
+
+	if (cmd->send_wqe_cap > MAX_WQE_CAP ||
+		cmd->send_wqe_sg_cap > MAX_WQE_SG_CAP ||
+		cmd->send_ring_idx > cmd->send_wqe_cap) {
+		ntrdma_err(dev, "send wqe_cap %u, wqe_sg_cap %u, idx %u\n",
+				cmd->send_wqe_cap, cmd->send_wqe_sg_cap,
+				cmd->send_ring_idx);
+				return -EINVAL;
+	}
+
+	if (cmd->recv_wqe_cap > MAX_WQE_CAP ||
+		cmd->recv_wqe_sg_cap > MAX_WQE_SG_CAP ||
+		cmd->recv_ring_idx > cmd->send_wqe_cap) {
+		ntrdma_err(dev, "recv wqe_cap %u, wqe_sg_cap %u, idx %u\n",
+				cmd->recv_wqe_cap, cmd->recv_wqe_sg_cap,
+				cmd->recv_ring_idx);
+				return -EINVAL;
+	}
+
+	if (cmd->cmpl_vbell_idx > NTRDMA_DEV_VBELL_COUNT) {
+		ntrdma_err(dev, "cmpl_vbell_idx %u\n", cmd->cmpl_vbell_idx);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 				     struct ntrdma_cmd_qp_create *cmd,
 				     struct ntrdma_rsp_qp_create *rsp)
@@ -694,6 +797,12 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 
 	rsp->hdr.op = cmd->op;
 	rsp->qp_key = cmd->qp_key;
+
+	rc = ntrdma_qp_create_sanity(dev, cmd);
+	if (rc) {
+		ntrdma_err(dev, "sanity failed rc=%d\n", rc);
+		goto err_rqp;
+	}
 
 	rqp = kmalloc_node(sizeof(*rqp), GFP_KERNEL, dev->node);
 	if (!rqp) {
@@ -790,6 +899,14 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 
 	rsp->hdr.op = cmd->op;
 	rsp->qp_key = cmd->qp_key;
+
+	/* sanity check */
+	if (cmd->access > MAX_SUM_ACCESS_FLAGS ||
+			(cmd->state >= NTRDMA_QPS_ERROR &&
+					cmd->state <= NTRDMA_QPS_SEND_READY)) {
+		rc = -EINVAL;
+		goto err_rqp;
+	}
 
 	rqp = ntrdma_dev_rqp_look(dev, cmd->qp_key);
 	if (!rqp) {
