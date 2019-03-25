@@ -869,7 +869,12 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		goto err_mr;
 	}
 
-	mr = kmalloc_node(sizeof(*mr) + count * sizeof(*mr->sg_list),
+	/*
+	 * multiple count by 2 because we need save 2 SGLs,
+	 * one for IOAT and one for NTB.
+	 */
+
+	mr = kmalloc_node(sizeof(*mr) + 2 * count * sizeof(*mr->sg_list),
 			  GFP_KERNEL, dev->node);
 	if (!mr) {
 		rc = -ENOMEM;
@@ -893,9 +898,14 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	ntrdma_dbg(dev, "access %x\n", mr->access);
 	ntrdma_dbg(dev, "count %x\n", mr->sg_count);
 
-	for (i = 0; i < count; ++i)
-		ntrdma_dbg(dev, "sgl[%x] dma %llx len %llx\n",
-			   i, mr->sg_list[i].addr, mr->sg_list[i].len);
+	for (i = 0; i < count; ++i) {
+		ntrdma_dbg(dev, "local sgl[%x] dma %llx len %llx\n",
+			   i, mr->local_dma[i].addr,
+			   mr->local_dma[i].len);
+		ntrdma_dbg(dev, "remote sgl[%x] dma %llx len %llx\n",
+			   i, mr->remote_dma[i].addr,
+			   mr->remote_dma[i].len);
+	}
 
 	return &mr->ibmr;
 
@@ -965,7 +975,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	/* TODO: maybe this should be the number of virtual doorbells */
 	ibdev->num_comp_vectors		= 1;
 
-	ibdev->dev.parent = ntc_map_dev(dev->ntc);
+	ibdev->dev.parent = ntc_map_dev(dev->ntc, NTB_DEV_ACCESS);
 
 	ibdev->uverbs_abi_ver		= 1;
 	ibdev->phys_port_cnt		= 1;

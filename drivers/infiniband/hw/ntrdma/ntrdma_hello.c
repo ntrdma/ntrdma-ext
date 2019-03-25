@@ -194,6 +194,7 @@ int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 				void *out_buf, size_t out_size)
 {
 	struct ntrdma_hello_phase3 *in;
+	int rc;
 
 	if (in_size < sizeof(*in))
 		return -EINVAL;
@@ -209,10 +210,14 @@ int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 	}
 
 	/* command rings */
-	ntrdma_dev_cmd_hello_done(dev, &in->cmd_prep);
+	rc = ntrdma_dev_cmd_hello_done(dev, &in->cmd_prep);
+	if (unlikely(rc))
+		return rc;
 
 	/* ethernet rings */
-	ntrdma_dev_eth_hello_done(dev, &in->eth_prep);
+	rc = ntrdma_dev_eth_hello_done(dev, &in->eth_prep);
+	if (unlikely(rc))
+		return rc;
 
 	return DONE;
 }

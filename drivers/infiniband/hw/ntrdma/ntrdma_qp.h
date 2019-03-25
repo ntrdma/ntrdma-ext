@@ -85,28 +85,28 @@ struct ntrdma_qp {
 	/* Protectoin domain key */
 	u32				pd_key;
 	/* Queue pair access flags */
-	u32				access;
+	u32			access;
 
 	/* The current ib_qp_state of the queue pair */
-	int				state;
+	int			state;
 
 	/* The behavior within the queue pair state */
-	int				recv_error;
-	int				recv_abort;
-	int				send_error;
-	int				send_abort;
+	int			recv_error;
+	int			recv_abort;
+	int			send_error;
+	int			send_abort;
 
 	/* key of connected remote queue pair, or -1 if not connected */
-	u32				rqp_key;
+	u32			rqp_key;
 
 	/* rings are prepared for copying to the peer */
-	bool				ring_ready;
+	bool		ring_ready;
 
 	/* sizes and capacities of single work queue entries */
-	int				send_wqe_sg_cap;
-	int				recv_wqe_sg_cap;
-	size_t				send_wqe_size;
-	size_t				recv_wqe_size;
+	int			send_wqe_sg_cap;
+	int			recv_wqe_sg_cap;
+	size_t		send_wqe_size;
+	size_t		recv_wqe_size;
 
 	/* send ring indices */
 	u32				send_cap;
@@ -117,13 +117,13 @@ struct ntrdma_qp {
 	/* send ring buffers and consumer index */
 	u8				*send_wqe_buf;
 	u64				send_wqe_buf_addr;
-	size_t				send_wqe_buf_size;
+	size_t			send_wqe_buf_size;
 	u8				*send_cqe_buf;
 	u32				*send_cons_buf;
 	u64				send_cqe_buf_addr;
-	size_t				send_cqe_buf_size;
-	u64				peer_send_wqe_buf_addr;
-	u64				peer_send_prod_addr;
+	size_t			send_cqe_buf_size;
+	u64				peer_send_wqe_buf_dma_addr;
+	u64				peer_send_prod_dma_addr;
 	u32				peer_send_vbell_idx;
 
 	/* recv ring indices */
@@ -136,22 +136,22 @@ struct ntrdma_qp {
 	/* recv ring buffers */
 	u8				*recv_wqe_buf;
 	u64				recv_wqe_buf_addr;
-	size_t				recv_wqe_buf_size;
+	size_t			recv_wqe_buf_size;
 	u8				*recv_cqe_buf;
-	size_t				recv_cqe_buf_size;
-	u64				peer_recv_wqe_buf_addr;
-	u64				peer_recv_prod_addr;
+	size_t			recv_cqe_buf_size;
+	u64				peer_recv_wqe_buf_dma_addr;
+	u64				peer_recv_prod_dma_addr;
 
 	/* at most one poster, producer, or completer at a time */
-	struct mutex			send_post_lock;
-	spinlock_t			send_prod_lock;
-	struct mutex			send_cmpl_lock;
+	struct mutex	send_post_lock;
+	spinlock_t		send_prod_lock;
+	struct mutex	send_cmpl_lock;
 
 	/* at most one poster, producer, consumer, or completer at a time */
-	struct mutex			recv_post_lock;
-	spinlock_t			recv_prod_lock;
-	spinlock_t			recv_cons_lock;
-	struct mutex			recv_cmpl_lock;
+	struct mutex	recv_post_lock;
+	spinlock_t		recv_prod_lock;
+	spinlock_t		recv_cons_lock;
+	struct mutex	recv_cmpl_lock;
 
 	struct tasklet_struct		send_work;
 };
@@ -276,8 +276,8 @@ struct ntrdma_rqp {
 	u8				*send_cqe_buf;
 	u64				send_cqe_buf_addr;
 	size_t				send_cqe_buf_size;
-	u64				peer_send_cqe_buf_addr;
-	u64				peer_send_cons_addr;
+	u64				peer_send_cqe_buf_dma_addr;
+	u64				peer_send_cons_dma_addr;
 	u32				peer_cmpl_vbell_idx;
 
 	/* recv ring indices */
@@ -314,8 +314,8 @@ struct ntrdma_rqp_init_attr {
 	u32 send_wqe_cap;
 	u32 send_wqe_sg_cap;
 	u32 peer_cmpl_vbell_idx;
-	u64 peer_send_cqe_buf_addr;
-	u64 peer_send_cons_addr;
+	u64 peer_send_cqe_buf_dma_addr;
+	u64 peer_send_cons_dma_addr;
 };
 
 int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,

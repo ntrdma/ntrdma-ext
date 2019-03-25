@@ -37,8 +37,10 @@ static void ntc_virt_buf_free(struct ntc_dev *ntc, u64 size,
 	kfree(buf);
 }
 
-static u64 ntc_virt_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
-			    enum dma_data_direction dir)
+static u64 ntc_virt_buf_map(struct ntc_dev *ntc,
+		void *buf, u64 size,
+		enum dma_data_direction dir,
+		enum ntc_dma_access dma_dev)
 {
 	/* return value must store at least a platform virtual address */
 	BUILD_BUG_ON(sizeof(u64) < sizeof(buf));
@@ -46,8 +48,29 @@ static u64 ntc_virt_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
 	return (u64)buf;
 }
 
-static void ntc_virt_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
-			       enum dma_data_direction dir)
+static void ntc_virt_buf_unmap(struct ntc_dev *ntc,
+		u64 addr, u64 size,
+		enum dma_data_direction dir,
+		enum ntc_dma_access dma_dev)
+{
+	rmb(); /* read data in the order it is received out of the channel */
+}
+
+static u64 ntc_virt_res_map(struct ntc_dev *ntc,
+		u64 phys_buf, u64 size,
+		enum dma_data_direction dir,
+		enum ntc_dma_access dma_dev)
+{
+	/* return value must store at least a platform virtual address */
+	BUILD_BUG_ON(sizeof(u64) < sizeof(phys_buf));
+
+	return (u64)phys_buf;
+}
+
+static void ntc_virt_res_unmap(struct ntc_dev *ntc,
+		u64 dma_addr, u64 size,
+		enum dma_data_direction dir,
+		enum ntc_dma_access dma_dev)
 {
 	rmb(); /* read data in the order it is received out of the channel */
 }
@@ -99,7 +122,7 @@ static int ntc_virt_umem_sgl(struct ntc_dev *ntc, void *umem,
 		}
 
 		if (sgl && virt_count < count) {
-			sgl[virt_count].addr = (u64)virt_addr;
+			sgl[virt_count].dma_addr_local = (u64)virt_addr;
 			sgl[virt_count].len = virt_len;
 		}
 
@@ -109,7 +132,7 @@ static int ntc_virt_umem_sgl(struct ntc_dev *ntc, void *umem,
 	if (virt_count && sgl && count > 0) {
 		/* virt_len is start offset in the first page */
 		virt_len = ib_umem_offset(ibumem);
-		sgl[0].addr += virt_len;
+		sgl[0].dma_addr_local += virt_len;
 		sgl[0].len -= virt_len;
 
 		if (virt_count <= count) {
@@ -123,8 +146,10 @@ static int ntc_virt_umem_sgl(struct ntc_dev *ntc, void *umem,
 	return virt_count;
 }
 
-static void ntc_virt_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
-			      enum dma_data_direction dir)
+static void ntc_virt_sync_cpu(struct ntc_dev *ntc,
+		u64 addr, u64 size,
+		enum dma_data_direction dir,
+		enum ntc_dma_access dma_dev)
 {
 	rmb(); /* read data in the order it is received out of the channel */
 }
@@ -134,7 +159,9 @@ struct ntc_map_ops ntc_virt_map_ops = {
 	.buf_free			= ntc_virt_buf_free,
 	.buf_map			= ntc_virt_buf_map,
 	.buf_unmap			= ntc_virt_buf_unmap,
-	.buf_sync_cpu			= ntc_virt_sync_cpu,
+	.res_map			= ntc_virt_res_map,
+	.res_unmap			= ntc_virt_res_unmap,
+	.buf_sync_cpu		= ntc_virt_sync_cpu,
 	.umem_get			= ntc_virt_umem_get,
 	.umem_put			= ntc_virt_umem_put,
 	.umem_sgl			= ntc_virt_umem_sgl,

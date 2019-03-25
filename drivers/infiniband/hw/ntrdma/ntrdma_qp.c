@@ -147,11 +147,16 @@ static void ntrdma_qp_work_cb(unsigned long ptrhld);
 static void ntrdma_rqp_work_cb(unsigned long ptrhld);
 static void ntrdma_rqp_vbell_cb(void *ctx);
 
-int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
-		   struct ntrdma_cq *recv_cq, struct ntrdma_cq *send_cq,
-		   struct ntrdma_qp_init_attr *attr)
+static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
+		struct ntrdma_dev *dev,
+		struct ntrdma_cq *recv_cq, struct ntrdma_cq *send_cq,
+		struct ntrdma_qp_init_attr *attr,
+		int is_deinit)
 {
 	int rc;
+
+	if (is_deinit)
+		goto deinit;
 
 	rc = ntrdma_res_init(&qp->res, dev, &dev->qp_vec,
 			     ntrdma_qp_enable, ntrdma_qp_disable, ntrdma_qp_reset);
@@ -203,10 +208,13 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 		goto err_send_wqe_buf;
 	}
 
+	/*Accessed by local (DMA)*/
 	qp->send_wqe_buf_addr = ntc_buf_map(dev->ntc,
-					    qp->send_wqe_buf,
-					    qp->send_wqe_buf_size,
-					    DMA_TO_DEVICE);
+			qp->send_wqe_buf,
+			qp->send_wqe_buf_size,
+			DMA_TO_DEVICE,
+			IOAT_DEV_ACCESS);
+
 	if (!qp->send_wqe_buf_addr) {
 		rc = -EIO;
 		goto err_send_wqe_buf_addr;
@@ -232,7 +240,8 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 	qp->send_cqe_buf_addr = ntc_buf_map(dev->ntc,
 					    qp->send_cqe_buf,
 					    qp->send_cqe_buf_size,
-					    DMA_FROM_DEVICE);
+					    DMA_FROM_DEVICE,
+						NTB_DEV_ACCESS);
 	if (!qp->send_cqe_buf_addr) {
 		rc = -EIO;
 		goto err_send_cqe_buf_addr;
@@ -240,8 +249,8 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 
 	/* peer rqp send queue is zero until enabled */
 
-	qp->peer_send_wqe_buf_addr = 0;
-	qp->peer_send_prod_addr = 0;
+	qp->peer_send_wqe_buf_dma_addr = 0;
+	qp->peer_send_prod_dma_addr = 0;
 	qp->peer_send_vbell_idx = 0;
 
 	/* set up the recv work ring */
@@ -266,7 +275,8 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 	qp->recv_wqe_buf_addr = ntc_buf_map(dev->ntc,
 					    qp->recv_wqe_buf,
 					    qp->recv_wqe_buf_size,
-					    DMA_TO_DEVICE);
+					    DMA_TO_DEVICE,
+						IOAT_DEV_ACCESS);
 	if (!qp->recv_wqe_buf_addr) {
 		rc = -EIO;
 		goto err_recv_wqe_buf_addr;
@@ -285,8 +295,8 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 
 	/* peer rqp recv queue is zero until enabled */
 
-	qp->peer_recv_wqe_buf_addr = 0;
-	qp->peer_recv_prod_addr = 0;
+	qp->peer_recv_wqe_buf_dma_addr = 0;
+	qp->peer_recv_prod_dma_addr = 0;
 
 	/* initialize synchronization */
 
@@ -301,8 +311,8 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 	/* add qp to completion queues for polling */
 
 	/* TODO: add these during qp modify */
-	ntrdma_cq_add_poll(recv_cq, &qp->recv_poll);
-	ntrdma_cq_add_poll(send_cq, &qp->send_poll);
+	ntrdma_cq_add_poll(qp->recv_cq, &qp->recv_poll);
+	ntrdma_cq_add_poll(qp->send_cq, &qp->send_poll);
 
 	tasklet_init(&qp->send_work,
 		     ntrdma_qp_work_cb,
@@ -310,30 +320,41 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 
 	return 0;
 
-	//ntrdma_cq_del_send_qp(qp->send_cq, qp);
-	//ntrdma_cq_del_recv_qp(qp->recv_cq, qp);
-	//kfree(qp->recv_cqe_buf);
+deinit:
+	ntrdma_cq_del_poll(qp->send_cq, &qp->send_poll);
+	ntrdma_cq_del_poll(qp->recv_cq, &qp->recv_poll);
+	kfree(qp->recv_cqe_buf);
+	qp->recv_cqe_buf = 0;
 err_recv_cqe_buf:
 	ntc_buf_unmap(dev->ntc,
-		      qp->recv_wqe_buf_addr,
-		      qp->recv_wqe_buf_size,
-		      DMA_TO_DEVICE);
+			qp->recv_wqe_buf_addr,
+			qp->recv_wqe_buf_size,
+			DMA_TO_DEVICE,
+			IOAT_DEV_ACCESS);
+	qp->recv_wqe_buf_addr = 0;
 err_recv_wqe_buf_addr:
 	kfree(qp->recv_wqe_buf);
+	qp->recv_wqe_buf = 0;
 err_recv_wqe_buf:
 	ntc_buf_unmap(dev->ntc,
-		      qp->send_cqe_buf_addr,
-		      qp->send_cqe_buf_size,
-		      DMA_FROM_DEVICE);
+			qp->send_cqe_buf_addr,
+			qp->send_cqe_buf_size,
+			DMA_FROM_DEVICE,
+			NTB_DEV_ACCESS);
+	qp->send_cqe_buf_addr = 0;
 err_send_cqe_buf_addr:
 	kfree(qp->send_cqe_buf);
+	qp->send_cqe_buf = 0;
 err_send_cqe_buf:
 	ntc_buf_unmap(dev->ntc,
 		      qp->send_wqe_buf_addr,
 		      qp->send_wqe_buf_size,
-		      DMA_TO_DEVICE);
+		      DMA_TO_DEVICE,
+			  IOAT_DEV_ACCESS);
+	qp->send_wqe_buf_addr = 0;
 err_send_wqe_buf_addr:
 	kfree(qp->send_wqe_buf);
+	qp->send_wqe_buf = 0;
 err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
 	ntrdma_cq_put(qp->recv_cq);
@@ -342,33 +363,18 @@ err_res:
 	return rc;
 }
 
+int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
+		   struct ntrdma_cq *recv_cq, struct ntrdma_cq *send_cq,
+		   struct ntrdma_qp_init_attr *attr)
+{
+	return ntrdma_qp_init_deinit(qp, dev, recv_cq, send_cq, attr, false);
+}
+
 void ntrdma_qp_deinit(struct ntrdma_qp *qp)
 {
-	struct ntrdma_dev *dev;
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	dev = ntrdma_qp_dev(qp);
-
-	ntrdma_cq_del_poll(qp->send_cq, &qp->send_poll);
-	ntrdma_cq_del_poll(qp->recv_cq, &qp->recv_poll);
-	kfree(qp->recv_cqe_buf);
-	ntc_buf_unmap(dev->ntc,
-		      qp->recv_wqe_buf_addr,
-		      qp->recv_wqe_buf_size,
-		      DMA_TO_DEVICE);
-	kfree(qp->recv_wqe_buf);
-	ntc_buf_unmap(dev->ntc,
-		      qp->send_cqe_buf_addr,
-		      qp->send_cqe_buf_size,
-		      DMA_FROM_DEVICE);
-	kfree(qp->send_cqe_buf);
-	ntc_buf_unmap(dev->ntc,
-		      qp->send_wqe_buf_addr,
-		      qp->send_wqe_buf_size,
-		      DMA_TO_DEVICE);
-	kfree(qp->send_wqe_buf);
-	ntrdma_cq_put(qp->send_cq);
-	ntrdma_cq_put(qp->recv_cq);
-	ntrdma_res_deinit(&qp->res);
+	ntrdma_qp_init_deinit(qp, dev, NULL, NULL, NULL, true);
 }
 
 struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
@@ -430,7 +436,7 @@ static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	ntrdma_dbg(dev, "called\n");
+	ntrdma_vdbg(dev, "called\n");
 
 	ntrdma_qp_recv_work(qp);
 
@@ -451,7 +457,7 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	int rc;
 
-	ntrdma_dbg(dev, "called\n");
+	ntrdma_vdbg(dev, "called\n");
 
 	if (!rsp || rsp->hdr.status) {
 		rc = -EIO;
@@ -504,7 +510,7 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	ntrdma_dbg(dev, "called\n");
+	ntrdma_vdbg(dev, "called\n");
 
 	cmd->qp_create.op = NTRDMA_CMD_QP_CREATE;
 	cmd->qp_create.qp_key = qp->res.key;
@@ -524,6 +530,109 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 	return 0;
 }
 
+static int ntrdma_qp_enable_disable_cmpl_common(struct ntrdma_qp *qp,
+		struct ntrdma_dev *dev, union ntrdma_rsp *rsp,
+		int is_disable)
+{
+	int rc;
+	u64 peer_recv_wqe_buf_phys_addr;
+	u64 peer_recv_prod_phys_addr;
+	u64 peer_send_wqe_buf_phys_addr;
+	u64 peer_send_prod_phys_addr;
+
+	if (is_disable)
+		goto disable;
+
+	peer_recv_wqe_buf_phys_addr =
+		ntc_peer_addr(dev->ntc, rsp->qp_create.recv_wqe_buf_addr);
+	peer_recv_prod_phys_addr =
+		ntc_peer_addr(dev->ntc, rsp->qp_create.recv_prod_addr);
+	peer_send_wqe_buf_phys_addr =
+		ntc_peer_addr(dev->ntc, rsp->qp_create.send_wqe_buf_addr);
+	peer_send_prod_phys_addr =
+		ntc_peer_addr(dev->ntc, rsp->qp_create.send_prod_addr);
+
+	qp->peer_recv_wqe_buf_dma_addr =
+		ntc_resource_map(dev->ntc,
+				peer_recv_wqe_buf_phys_addr,
+				qp->recv_wqe_buf_size,
+				DMA_FROM_DEVICE,
+				IOAT_DEV_ACCESS);
+	if (unlikely(!qp->peer_recv_wqe_buf_dma_addr)) {
+		rc = -EIO;
+		goto err_peer_recv_wqe_buf_dma_addr;
+	}
+
+	qp->peer_recv_prod_dma_addr =
+		ntc_resource_map(dev->ntc,
+				peer_recv_prod_phys_addr,
+				sizeof(u32),
+				DMA_FROM_DEVICE,
+				IOAT_DEV_ACCESS);
+	if (unlikely(!qp->peer_recv_prod_dma_addr)) {
+		rc = -EIO;
+		goto err_peer_recv_prod_dma_addr;
+	}
+
+	qp->peer_send_wqe_buf_dma_addr =
+		ntc_resource_map(dev->ntc,
+				peer_send_wqe_buf_phys_addr,
+				qp->send_wqe_buf_size,
+				DMA_FROM_DEVICE,
+				IOAT_DEV_ACCESS);
+	if (unlikely(!qp->peer_send_wqe_buf_dma_addr)) {
+		rc = -EIO;
+		goto err_peer_send_wqe_buf_dma_addr;
+	}
+
+	qp->peer_send_prod_dma_addr =
+		ntc_resource_map(dev->ntc,
+				peer_send_prod_phys_addr,
+				sizeof(u32),
+				DMA_FROM_DEVICE,
+				IOAT_DEV_ACCESS);
+	if (unlikely(!qp->peer_send_prod_dma_addr)) {
+		rc = -EIO;
+		goto err_peer_send_prod_dma_addr;
+	}
+
+	qp->peer_send_vbell_idx = rsp->qp_create.send_vbell_idx;
+
+
+	return 0;
+disable:
+	ntc_resource_unmap(dev->ntc,
+			qp->peer_send_prod_dma_addr,
+			sizeof(u32),
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+	qp->peer_send_prod_dma_addr = 0;
+err_peer_send_prod_dma_addr:
+	ntc_resource_unmap(dev->ntc,
+			qp->peer_send_wqe_buf_dma_addr,
+			qp->send_wqe_buf_size,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+	qp->peer_send_wqe_buf_dma_addr = 0;
+err_peer_send_wqe_buf_dma_addr:
+	ntc_resource_unmap(dev->ntc,
+			qp->peer_recv_prod_dma_addr,
+			sizeof(u32),
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+	qp->peer_recv_prod_dma_addr = 0;
+err_peer_recv_prod_dma_addr:
+	ntc_resource_unmap(dev->ntc,
+			qp->peer_recv_wqe_buf_dma_addr,
+			qp->recv_wqe_buf_size,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+	qp->peer_recv_wqe_buf_dma_addr = 0;
+err_peer_recv_wqe_buf_dma_addr:
+	ntrdma_res_done_cmds(&qp->res);
+	return rc;
+}
+
 static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 				 union ntrdma_rsp *rsp, struct ntrdma_req *req)
 {
@@ -532,22 +641,14 @@ static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	int rc;
 
-	ntrdma_dbg(dev, "called\n");
+	ntrdma_vdbg(dev, "called\n");
 
-	if (!rsp || rsp->hdr.status) {
-		rc = -EIO;
-		goto err;
-	}
+	if (!rsp || rsp->hdr.status)
+		return -EIO;
 
-	qp->peer_recv_wqe_buf_addr =
-		ntc_peer_addr(dev->ntc, rsp->qp_create.recv_wqe_buf_addr);
-	qp->peer_recv_prod_addr =
-		ntc_peer_addr(dev->ntc, rsp->qp_create.recv_prod_addr);
-	qp->peer_send_wqe_buf_addr =
-		ntc_peer_addr(dev->ntc, rsp->qp_create.send_wqe_buf_addr);
-	qp->peer_send_prod_addr =
-		ntc_peer_addr(dev->ntc, rsp->qp_create.send_prod_addr);
-	qp->peer_send_vbell_idx = rsp->qp_create.send_vbell_idx;
+	rc = ntrdma_qp_enable_disable_cmpl_common(qp, dev, rsp, false);
+	if (rc)
+		return rc;
 
 	if (qp->state > NTRDMA_QPS_RESET) {
 		qpcb->cb.cmd_prep = ntrdma_qp_modify_prep;
@@ -559,10 +660,6 @@ static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	}
 
 	return 0;
-
-err:
-	ntrdma_res_done_cmds(&qp->res);
-	return rc;
 }
 
 static int ntrdma_qp_disable(struct ntrdma_res *res)
@@ -601,7 +698,7 @@ static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	ntrdma_dbg(dev, "called\n");
+	ntrdma_vdbg(dev, "called\n");
 
 	cmd->qp_delete.op = NTRDMA_CMD_QP_DELETE;
 	cmd->qp_delete.qp_key = qp->res.key;
@@ -617,12 +714,14 @@ static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	int rc;
 
-	ntrdma_dbg(dev, "called\n");
+	ntrdma_vdbg(dev, "called\n");
 
 	if (!rsp || rsp->hdr.status) {
 		rc = -EIO;
 		goto err;
 	}
+
+	ntrdma_qp_enable_disable_cmpl_common(qp, dev, NULL, true);
 
 	ntrdma_res_done_cmds(&qp->res);
 	kfree(qpcb);
@@ -642,10 +741,10 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	spin_lock_bh(&qp->send_prod_lock);
 	{
 		qp->ring_ready = false;
-		qp->peer_recv_wqe_buf_addr = 0;
-		qp->peer_recv_prod_addr = 0;
-		qp->peer_send_wqe_buf_addr = 0;
-		qp->peer_send_prod_addr = 0;
+		qp->peer_recv_wqe_buf_dma_addr = 0;
+		qp->peer_recv_prod_dma_addr = 0;
+		qp->peer_send_wqe_buf_dma_addr = 0;
+		qp->peer_send_prod_dma_addr = 0;
 		qp->peer_send_vbell_idx = 0;
 	}
 	spin_unlock_bh(&qp->send_prod_lock);
@@ -661,10 +760,15 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 	kfree(rqp);
 }
 
-int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
-		    struct ntrdma_rqp_init_attr *attr, u32 key)
+static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
+		struct ntrdma_dev *dev,
+		struct ntrdma_rqp_init_attr *attr,
+		u32 key, int is_deinit)
 {
 	int rc;
+
+	if (is_deinit)
+		goto deinit;
 
 	rc = ntrdma_rres_init(&rqp->rres, dev, &dev->rqp_vec,
 			      ntrdma_rqp_free, key);
@@ -707,10 +811,13 @@ int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
 
 	*rqp->send_prod_buf = attr->send_wqe_idx;
 
+	/* Accessed by remote (NTB)*/
 	rqp->send_wqe_buf_addr = ntc_buf_map(dev->ntc,
-					     rqp->send_wqe_buf,
-					     rqp->send_wqe_buf_size,
-					     DMA_FROM_DEVICE);
+			rqp->send_wqe_buf,
+			rqp->send_wqe_buf_size,
+			DMA_FROM_DEVICE,
+			NTB_DEV_ACCESS);
+
 	if (!rqp->send_wqe_buf_addr) {
 		rc = -EIO;
 		goto err_send_wqe_buf_addr;
@@ -730,7 +837,8 @@ int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
 	rqp->send_cqe_buf_addr = ntc_buf_map(dev->ntc,
 					     rqp->send_cqe_buf,
 					     rqp->send_cqe_buf_size,
-					     DMA_TO_DEVICE);
+					     DMA_TO_DEVICE,
+						 IOAT_DEV_ACCESS);
 	if (!rqp->send_cqe_buf_addr) {
 		rc = -EIO;
 		goto err_send_cqe_buf_addr;
@@ -738,8 +846,8 @@ int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
 
 	/* peer qp send queue info is provided */
 
-	rqp->peer_send_cqe_buf_addr = attr->peer_send_cqe_buf_addr;
-	rqp->peer_send_cons_addr = attr->peer_send_cons_addr;
+	rqp->peer_send_cqe_buf_dma_addr = attr->peer_send_cqe_buf_dma_addr;
+	rqp->peer_send_cons_dma_addr = attr->peer_send_cons_dma_addr;
 	rqp->peer_cmpl_vbell_idx = attr->peer_cmpl_vbell_idx;
 
 	/* set up the recv work ring */
@@ -767,7 +875,8 @@ int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
 	rqp->recv_wqe_buf_addr = ntc_buf_map(dev->ntc,
 					     rqp->recv_wqe_buf,
 					     rqp->recv_wqe_buf_size,
-					     DMA_FROM_DEVICE);
+					     DMA_FROM_DEVICE,
+						 NTB_DEV_ACCESS);
 	if (!rqp->recv_wqe_buf_addr) {
 		rc = -EIO;
 		goto err_recv_wqe_buf_addr;
@@ -789,53 +898,53 @@ int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
 		     to_ptrhld(rqp));
 
 	return 0;
-
-	//ntc_buf_unmap(dev->ntc,
-	//		 rqp->recv_wqe_buf_addr,
-	//		 rqp->recv_wqe_buf_size,
-	//		 DMA_FROM_DEVICE);
+deinit:
+	ntc_buf_unmap(dev->ntc,
+			rqp->recv_wqe_buf_addr,
+			rqp->recv_wqe_buf_size,
+			DMA_FROM_DEVICE,
+			NTB_DEV_ACCESS);
+	rqp->recv_wqe_buf_addr = 0;
 err_recv_wqe_buf_addr:
 	kfree(rqp->recv_wqe_buf);
+	rqp->recv_wqe_buf = 0;
 err_recv_wqe_buf:
 	ntc_buf_unmap(dev->ntc,
-		      rqp->send_cqe_buf_addr,
-		      rqp->send_cqe_buf_size,
-		      DMA_TO_DEVICE);
+			rqp->send_cqe_buf_addr,
+			rqp->send_cqe_buf_size,
+			DMA_TO_DEVICE,
+			IOAT_DEV_ACCESS);
+	rqp->send_cqe_buf_addr = 0;
 err_send_cqe_buf_addr:
 	kfree(rqp->send_cqe_buf);
+	rqp->send_cqe_buf = 0;
 err_send_cqe_buf:
 	ntc_buf_unmap(dev->ntc,
-		      rqp->send_wqe_buf_addr,
-		      rqp->send_wqe_buf_size,
-		      DMA_FROM_DEVICE);
+			rqp->send_wqe_buf_addr,
+			rqp->send_wqe_buf_size,
+			DMA_FROM_DEVICE,
+			NTB_DEV_ACCESS);
+	rqp->send_wqe_buf_addr = 0;
 err_send_wqe_buf_addr:
 	kfree(rqp->send_wqe_buf);
+	rqp->send_wqe_buf = 0;
 err_send_wqe_buf:
 	ntrdma_rres_deinit(&rqp->rres);
 err_rres:
 	return rc;
 }
 
+int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
+		    struct ntrdma_rqp_init_attr *attr, u32 key)
+{
+	return ntrdma_rqp_init_deinit(rqp, dev, attr, key, false);
+}
+
 void ntrdma_rqp_deinit(struct ntrdma_rqp *rqp)
 {
 	struct ntrdma_dev *dev = ntrdma_rqp_dev(rqp);
 
-	ntc_buf_unmap(dev->ntc,
-		      rqp->recv_wqe_buf_addr,
-		      rqp->recv_wqe_buf_size,
-		      DMA_FROM_DEVICE);
-	kfree(rqp->recv_wqe_buf);
-	ntc_buf_unmap(dev->ntc,
-		      rqp->send_cqe_buf_addr,
-		      rqp->send_cqe_buf_size,
-		      DMA_TO_DEVICE);
-	kfree(rqp->send_cqe_buf);
-	ntc_buf_unmap(dev->ntc,
-		      rqp->send_wqe_buf_addr,
-		      rqp->send_wqe_buf_size,
-		      DMA_FROM_DEVICE);
-	kfree(rqp->send_wqe_buf);
-	ntrdma_rres_deinit(&rqp->rres);
+	ntrdma_rqp_init_deinit(rqp, dev, NULL, 0, true);
 }
 
 void ntrdma_rqp_del(struct ntrdma_rqp *rqp)
@@ -1391,7 +1500,8 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	ntc_buf_sync_dev(dev->ntc,
 			 qp->recv_wqe_buf_addr,
 			 qp->recv_wqe_buf_size,
-			 DMA_TO_DEVICE);
+			 DMA_TO_DEVICE,
+			 IOAT_DEV_ACCESS);
 
 	for (;;) {
 		ntrdma_qp_recv_prod_put(qp, end, base);
@@ -1400,7 +1510,7 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 		off = start * qp->recv_wqe_size;
 		len = (end - start) * qp->recv_wqe_size;
 		src = qp->recv_wqe_buf_addr + off;
-		dst = qp->peer_recv_wqe_buf_addr + off;
+		dst = qp->peer_recv_wqe_buf_dma_addr + off;
 
 		ntc_req_memcpy(dev->ntc, req,
 			       dst, src, len,
@@ -1413,7 +1523,7 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 
 	/* send the prod idx */
 	ntc_req_imm32(dev->ntc, req,
-		      qp->peer_recv_prod_addr,
+		      qp->peer_recv_prod_dma_addr,
 		      qp->recv_prod,
 		      true, NULL, NULL);
 
@@ -1563,13 +1673,14 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	ntc_buf_sync_dev(dev->ntc,
 			 qp->send_wqe_buf_addr,
 			 qp->send_wqe_buf_size,
-			 DMA_TO_DEVICE);
+			 DMA_TO_DEVICE,
+			 IOAT_DEV_ACCESS);
 
 	/* send the portion of the ring */
 	off = start * qp->send_wqe_size;
 	len = (pos - start) * qp->send_wqe_size;
 	src = qp->send_wqe_buf_addr + off;
-	dst = qp->peer_send_wqe_buf_addr + off;
+	dst = qp->peer_send_wqe_buf_dma_addr + off;
 
 	ntc_req_memcpy(dev->ntc, req,
 		       dst, src, len,
@@ -1577,7 +1688,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* send the prod idx */
 	ntc_req_imm32(dev->ntc, req,
-		      qp->peer_send_prod_addr,
+		      qp->peer_send_prod_dma_addr,
 		      qp->send_prod,
 		      true, NULL, NULL);
 
@@ -1802,13 +1913,14 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	ntc_buf_sync_dev(dev->ntc,
 			 rqp->send_cqe_buf_addr,
 			 rqp->send_cqe_buf_size,
-			 DMA_TO_DEVICE);
+			 DMA_TO_DEVICE,
+			 IOAT_DEV_ACCESS);
 
 	/* send the portion of the ring */
 	off = start * sizeof(struct ntrdma_cqe);
 	len = (pos - start) * sizeof(struct ntrdma_cqe);
 	src = rqp->send_cqe_buf_addr + off;
-	dst = rqp->peer_send_cqe_buf_addr + off;
+	dst = rqp->peer_send_cqe_buf_dma_addr + off;
 
 	ntc_req_memcpy(dev->ntc, req,
 		       dst, src, len,
@@ -1816,7 +1928,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	/* send the cons idx */
 	ntc_req_imm32(dev->ntc, req,
-		      rqp->peer_send_cons_addr,
+		      rqp->peer_send_cons_dma_addr,
 		      rqp->send_cons,
 		      true, NULL, NULL);
 

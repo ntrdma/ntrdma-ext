@@ -71,9 +71,11 @@ static inline void ntrdma_debugfs_print_mr_sg_list(struct seq_file *s,
 {
 	u32 i;
 
-	for (i = 0; i < sg_count; ++i)
-		seq_printf(s, "%ssg_list[%u] dma %#llx len %#llx\n",
-			   pre, i, sg_list[i].addr, sg_list[i].len);
+	for (i = 0; i < sg_count; ++i) {
+		seq_printf(s, "%ssg_list[%u] dma local %#llx len %#llx\n",
+			   pre, i, sg_list[i].addr,
+			   sg_list[i].len);
+	}
 }
 
 static inline void ntrdma_debugfs_print_wr_sg_list(struct seq_file *s,
@@ -309,7 +311,8 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "vbell_start %u\n", dev->vbell_next);
 	seq_printf(s, "vbell_next %u\n", dev->vbell_next);
 	seq_printf(s, "vbell_buf_addr %#llx\n", dev->vbell_buf_addr);
-	seq_printf(s, "peer_vbell_buf_addr %#llx\n", dev->peer_vbell_buf_addr);
+	seq_printf(s, "peer_vbell_buf_dma_addr %#llx\n",
+			dev->peer_vbell_buf_dma_addr);
 	seq_printf(s, "peer_vbell_count %u\n", dev->peer_vbell_count);
 
 	seq_printf(s, "cmd_ready %d\n", dev->cmd_ready);
@@ -319,14 +322,14 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 		   dev->cmd_send_cons_buf ? *dev->cmd_send_cons_buf : 0);
 	seq_printf(s, "cmd_send_cmpl %u\n", dev->cmd_send_cmpl);
 
-	seq_printf(s, "cmd_send_buf_addr %#llx\n",
-		   dev->cmd_send_buf_addr);
+	seq_printf(s, "cmd_send_buf_dma_addr %#llx\n",
+		   dev->cmd_send_buf_dma_addr);
 	seq_printf(s, "cmd_send_rsp_buf_addr %#llx\n",
 		   dev->cmd_send_rsp_buf_addr);
-	seq_printf(s, "peer_cmd_recv_buf_addr %#llx\n",
-		   dev->peer_cmd_recv_buf_addr);
-	seq_printf(s, "peer_cmd_recv_prod_addr %#llx\n",
-		   dev->peer_cmd_recv_prod_addr);
+	seq_printf(s, "peer_cmd_recv_buf_dma_addr %#llx\n",
+		   dev->peer_cmd_recv_buf_dma_addr);
+	seq_printf(s, "peer_cmd_recv_prod_dma_addr %#llx\n",
+		   dev->peer_cmd_recv_prod_dma_addr);
 	seq_printf(s, "peer_cmd_recv_vbell_idx %u\n",
 		   dev->peer_cmd_recv_vbell_idx);
 
@@ -343,10 +346,10 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 		   dev->cmd_recv_buf_addr);
 	seq_printf(s, "cmd_recv_rsp_buf_addr %#llx\n",
 		   dev->cmd_recv_rsp_buf_addr);
-	seq_printf(s, "peer_cmd_send_rsp_buf_addr %#llx\n",
-		   dev->peer_cmd_send_rsp_buf_addr);
-	seq_printf(s, "peer_cmd_send_cons_addr %#llx\n",
-		   dev->peer_cmd_send_cons_addr);
+	seq_printf(s, "peer_cmd_send_rsp_buf_dma_addr %#llx\n",
+		   dev->peer_cmd_send_rsp_buf_dma_addr);
+	seq_printf(s, "peer_cmd_send_cons_dma_addr %#llx\n",
+		   dev->peer_cmd_send_cons_dma_addr);
 	seq_printf(s, "peer_cmd_send_vbell_idx %u\n",
 		   dev->peer_cmd_send_vbell_idx);
 
@@ -365,7 +368,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "eth_rx_prod %#x\n", eth->rx_prod);
 	seq_printf(s, "eth_rx_cmpl %#x\n", eth->rx_cmpl);
 
-	seq_printf(s, "eth_rx_wqe_buf_addr %#llx\n", eth->rx_wqe_buf_addr);
+	seq_printf(s, "eth_rx_wqe_buf_addr %#llx\n", eth->rx_wqe_buf_dma_addr);
 	seq_printf(s, "eth_rx_wqe_buf_size %#zx\n", eth->rx_wqe_buf_size);
 
 	seq_printf(s, "eth_rx_cqe_buf_addr %#llx\n", eth->rx_cqe_buf_addr);
@@ -375,10 +378,10 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 		   eth->rx_cons_buf ? *eth->rx_cons_buf : 0);
 	seq_printf(s, "eth_rx_cons_buf_addr %#llx\n", eth->rx_cons_buf_addr);
 
-	seq_printf(s, "peer_eth_tx_wqe_buf_addr %#llx\n",
-		   eth->peer_tx_wqe_buf_addr);
-	seq_printf(s, "peer_eth_tx_prod_buf_addr %#llx\n",
-		   eth->peer_tx_prod_buf_addr);
+	seq_printf(s, "peer_eth_tx_wqe_buf_dma_addr %#llx\n",
+		   eth->peer_tx_wqe_buf_dma_addr);
+	seq_printf(s, "peer_eth_tx_prod_buf_dma_addr %#llx\n",
+		   eth->peer_tx_prod_buf_dma_addr);
 
 	seq_printf(s, "eth_tx_cap %#x\n", eth->tx_cap);
 	seq_printf(s, "eth_tx_cons %#x\n", eth->tx_cons);
@@ -394,10 +397,10 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 		   eth->tx_prod_buf ? *eth->tx_prod_buf : 0);
 	seq_printf(s, "eth_tx_prod_buf_addr %#llx\n", eth->tx_prod_buf_addr);
 
-	seq_printf(s, "peer_eth_rx_cqe_buf_addr %#llx\n",
-		   eth->peer_rx_cqe_buf_addr);
-	seq_printf(s, "peer_eth_rx_cons_buf_addr %#llx\n",
-		   eth->peer_rx_cons_buf_addr);
+	seq_printf(s, "peer_eth_rx_cqe_buf_dma_addr %#llx\n",
+		   eth->peer_rx_cqe_buf_dma_addr);
+	seq_printf(s, "peer_eth_rx_cons_buf_dma_addr %#llx\n",
+		   eth->peer_rx_cons_buf_dma_addr);
 
 	seq_printf(s, "peer_eth_vbell_idx %#x\n", eth->peer_vbell_idx);
 	seq_printf(s, "eth_vbell_idx %u\n", eth->vbell_idx);
@@ -593,7 +596,7 @@ static int ntrdma_debugfs_mr_info_show(struct seq_file *s, void *v)
 	struct ntrdma_mr *mr = s->private;
 
 	return ntrdma_debugfs_mr_info(s, mr->addr, mr->len, mr->access,
-				      mr->sg_count, mr->sg_list);
+				      mr->sg_count, mr->local_dma);
 }
 
 static int ntrdma_debugfs_mr_info_open(struct inode *inode, struct file *file)
@@ -653,8 +656,10 @@ static int ntrdma_debugfs_qp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "send_wqe_buf_size %#zx\n", qp->send_wqe_buf_size);
 	seq_printf(s, "send_cqe_buf_addr %#llx\n", qp->send_cqe_buf_addr);
 	seq_printf(s, "send_cqe_buf_size %#zx\n", qp->send_cqe_buf_size);
-	seq_printf(s, "peer_send_wqe_buf_addr %#llx\n", qp->peer_send_wqe_buf_addr);
-	seq_printf(s, "peer_send_prod_addr %#llx\n", qp->peer_send_prod_addr);
+	seq_printf(s, "peer_send_wqe_buf_dma_addr %#llx\n",
+			qp->peer_send_wqe_buf_dma_addr);
+	seq_printf(s, "peer_send_prod_dma_addr %#llx\n",
+			qp->peer_send_prod_dma_addr);
 	seq_printf(s, "peer_send_vbell_idx %u\n", qp->peer_send_vbell_idx);
 
 	seq_printf(s, "recv_cap %u\n", qp->recv_cap);
@@ -665,8 +670,10 @@ static int ntrdma_debugfs_qp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "recv_wqe_buf_addr %#llx\n", qp->recv_wqe_buf_addr);
 	seq_printf(s, "recv_wqe_buf_size %#zx\n", qp->recv_wqe_buf_size);
 	seq_printf(s, "recv_cqe_buf_size %#zx\n", qp->recv_cqe_buf_size);
-	seq_printf(s, "peer_recv_wqe_buf_addr %#llx\n", qp->peer_recv_wqe_buf_addr);
-	seq_printf(s, "peer_recv_prod_addr %#llx\n", qp->peer_recv_prod_addr);
+	seq_printf(s, "peer_recv_wqe_buf_dma_addr %#llx\n",
+			qp->peer_recv_wqe_buf_dma_addr);
+	seq_printf(s, "peer_recv_prod_dma_addr %#llx\n",
+			qp->peer_recv_prod_dma_addr);
 
 	return 0;
 }
@@ -823,8 +830,10 @@ static int ntrdma_debugfs_rqp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "send_wqe_buf_size %#zx\n", rqp->send_wqe_buf_size);
 	seq_printf(s, "send_cqe_buf_addr %#llx\n", rqp->send_cqe_buf_addr);
 	seq_printf(s, "send_cqe_buf_size %#zx\n", rqp->send_cqe_buf_size);
-	seq_printf(s, "peer_send_cqe_buf_addr %#llx\n", rqp->peer_send_cqe_buf_addr);
-	seq_printf(s, "peer_send_cons_addr %#llx\n", rqp->peer_send_cons_addr);
+	seq_printf(s, "peer_send_cqe_buf_dma_addr %#llx\n",
+			rqp->peer_send_cqe_buf_dma_addr);
+	seq_printf(s, "peer_send_cons_dma_addr %#llx\n",
+			rqp->peer_send_cons_dma_addr);
 	seq_printf(s, "peer_cmpl_vbell_idx %u\n", rqp->peer_cmpl_vbell_idx);
 
 	seq_printf(s, "recv_cap %u\n", rqp->recv_cap);

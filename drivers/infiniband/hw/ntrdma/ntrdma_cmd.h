@@ -112,7 +112,9 @@ struct ntrdma_cmd_qp_create {
 	u32				send_wqe_sg_cap;
 	u32				send_ring_idx;
 	u64				send_cqe_buf_addr;
+	size_t			send_cqe_buf_size;
 	u64				send_cons_addr;
+	size_t			send_cons_size;
 	u32				cmpl_vbell_idx;
 };
 
@@ -137,9 +139,13 @@ struct ntrdma_rsp_qp_create {
 	u32				qp_key;
 	u32				send_vbell_idx;
 	u64				recv_wqe_buf_addr;
+	size_t			recv_wqe_buf_size;
 	u64				recv_prod_addr;
+	size_t			recv_prod_size;
 	u64				send_wqe_buf_addr;
+	size_t			send_wqe_buf_size;
 	u64				send_prod_addr;
+	size_t			send_prod_size;
 };
 
 /* Delete or modify queue pair response */
