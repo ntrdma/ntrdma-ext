@@ -92,7 +92,7 @@ void ntrdma_cq_del(struct ntrdma_cq *cq)
 	spin_lock_bh(&cq->arm_lock);
 	{
 		cq->arm = 0;
-		ntrdma_dev_vbell_del(dev, &cq->vbell, cq->vbell_idx);
+		ntrdma_dev_vbell_del(dev, &cq->vbell);
 	}
 	spin_unlock_bh(&cq->arm_lock);
 
