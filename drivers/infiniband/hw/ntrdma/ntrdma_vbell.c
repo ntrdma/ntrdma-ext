@@ -270,6 +270,9 @@ void ntrdma_dev_vbell_del(struct ntrdma_dev *dev,
 void ntrdma_dev_vbell_clear(struct ntrdma_dev *dev,
 			    struct ntrdma_vbell *vbell, u32 idx)
 {
+	if (unlikely(idx >= NTRDMA_DEV_VBELL_COUNT))
+		return;
+
 	spin_lock_bh(&dev->vbell_self_lock);
 	{
 		ntrdma_vbell_clear(&dev->vbell_vec[idx], vbell);
@@ -281,6 +284,9 @@ int ntrdma_dev_vbell_add(struct ntrdma_dev *dev,
 			 struct ntrdma_vbell *vbell, u32 idx)
 {
 	int rc;
+
+	if (unlikely(idx >= NTRDMA_DEV_VBELL_COUNT))
+		rc = -EINVAL;
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	{
