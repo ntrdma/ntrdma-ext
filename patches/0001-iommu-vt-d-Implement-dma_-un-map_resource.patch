@@ -1,0 +1,74 @@
+From d54e3e619c66441ac0f446748ab07b00da1c475b Mon Sep 17 00:00:00 2001
+From: Logan Gunthorpe <logang@deltatee.com>
+Date: Fri, 18 Jan 2019 17:05:59 -0700
+Subject: [PATCH] iommu/vt-d: Implement dma_[un]map_resource()
+
+Currently the Intel IOMMU uses the default dma_[un]map_resource()
+implementations does nothing and simply returns the physical address
+unmodified.
+
+However, this doesn't create the IOVA entries necessary for addresses
+mapped this way to work when the IOMMU is enabled. Thus, when the
+IOMMU is enabled, drivers relying on dma_map_resource() will trigger
+DMAR errors. We see this when running ntb_transport with the IOMMU
+enabled, DMA, and switchtec hardware.
+
+The implementation for intel_map_resource() is nearly identical to
+intel_map_page(), we just have to re-create __intel_map_single().
+dma_unmap_resource() uses intel_unmap_page() directly as the
+functions are identical.
+
+Change-Id: Icfc6e4aa07099c02097b0e95ebeafff8e90cab33
+Signed-off-by: Logan Gunthorpe <logang@deltatee.com>
+Cc: David Woodhouse <dwmw2@infradead.org>
+Cc: Joerg Roedel <joro@8bytes.org>
+---
+ drivers/iommu/intel-iommu.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/iommu/intel-iommu.c b/drivers/iommu/intel-iommu.c
+index 83f3d48..973e043 100644
+--- a/drivers/iommu/intel-iommu.c
++++ b/drivers/iommu/intel-iommu.c
+@@ -3647,13 +3647,27 @@ static dma_addr_t __intel_map_single(struct device *dev, phys_addr_t paddr,
+ 	return 0;
+ }
+ 
++static dma_addr_t __intel_map_page(struct device *dev, struct page *page,
++				   unsigned long offset, size_t size, int dir,
++				   u64 dma_mask)
++{
++	return __intel_map_single(dev, page_to_phys(page) + offset, size, dir,
++				  dma_mask);
++}
++
+ static dma_addr_t intel_map_page(struct device *dev, struct page *page,
+ 				 unsigned long offset, size_t size,
+ 				 enum dma_data_direction dir,
+ 				 unsigned long attrs)
+ {
+-	return __intel_map_single(dev, page_to_phys(page) + offset, size,
+-				  dir, *dev->dma_mask);
++	return __intel_map_page(dev, page, offset, size, dir, *dev->dma_mask);
++}
++
++static dma_addr_t intel_map_resource(struct device *dev, phys_addr_t phys_addr,
++				     size_t size, enum dma_data_direction dir,
++				     unsigned long attrs)
++{
++	return __intel_map_single(dev, phys_addr, size, dir, *dev->dma_mask);
+ }
+ 
+ static void intel_unmap(struct device *dev, dma_addr_t dev_addr, size_t size)
+@@ -3873,6 +3887,8 @@ static int intel_mapping_error(struct device *dev, dma_addr_t dma_addr)
+ 	.unmap_sg = intel_unmap_sg,
+ 	.map_page = intel_map_page,
+ 	.unmap_page = intel_unmap_page,
++	.map_resource = intel_map_resource,
++	.unmap_resource = intel_unmap_page,
+ 	.mapping_error = intel_mapping_error,
+ #ifdef CONFIG_X86
+ 	.dma_supported = x86_dma_supported,
+-- 
+1.9.3
+

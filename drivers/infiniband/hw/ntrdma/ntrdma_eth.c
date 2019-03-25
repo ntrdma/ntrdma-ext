@@ -44,13 +44,35 @@ static void ntrdma_eth_dma_cb(void *ctx);
 static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
 static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
 
-int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
+static inline void ntrdma_dev_eth_rx_drain(struct ntrdma_dev *dev)
+{
+	struct ntrdma_eth *eth = dev->eth;
+	u32 start, pos, end, base;
+
+	do {
+		ntrdma_ring_consume(eth->rx_prod,
+				eth->rx_cmpl,
+				eth->rx_cap,
+				&start, &end, &base);
+
+		for (pos = start; pos != end; ++pos)
+			kfree(eth->rx_buf[pos]);
+
+		eth->rx_cmpl = ntrdma_ring_update(end, base, eth->rx_cap);
+	} while (start != end);
+
+}
+static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 			u32 vbell_idx,
-			u32 rx_cap)
+			u32 rx_cap,
+			int is_deinit)
 {
 	struct net_device *net;
 	struct ntrdma_eth *eth;
 	int rc;
+
+	if (is_deinit)
+		goto deinit;
 
 	net = alloc_etherdev(sizeof(*eth));
 	if (!net) {
@@ -93,11 +115,14 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 		goto err_rx_wqe_buf;
 	}
 
-	eth->rx_wqe_buf_addr = ntc_buf_map(dev->ntc,
+	/* Accessed by local (DMA) */
+	eth->rx_wqe_buf_dma_addr = ntc_buf_map(dev->ntc,
 					   eth->rx_wqe_buf,
 					   eth->rx_wqe_buf_size,
-					   DMA_TO_DEVICE);
-	if (!eth->rx_wqe_buf_addr) {
+					   DMA_TO_DEVICE,
+					   IOAT_DEV_ACCESS);
+
+	if (!eth->rx_wqe_buf_dma_addr) {
 		rc = -EIO;
 		goto err_rx_wqe_addr;
 	}
@@ -114,7 +139,8 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 	eth->rx_cqe_buf_addr = ntc_buf_map(dev->ntc,
 					   eth->rx_cqe_buf,
 					   eth->rx_cqe_buf_size,
-					   DMA_FROM_DEVICE);
+					   DMA_FROM_DEVICE,
+					   NTB_DEV_ACCESS);
 	if (!eth->rx_cqe_buf_addr) {
 		rc = -EIO;
 		goto err_rx_cqe_addr;
@@ -131,8 +157,8 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 
 	*eth->rx_cons_buf = 0;
 
-	eth->peer_tx_wqe_buf_addr = 0;
-	eth->peer_tx_prod_buf_addr = 0;
+	eth->peer_tx_wqe_buf_dma_addr = 0;
+	eth->peer_tx_prod_buf_dma_addr = 0;
 
 	eth->tx_cap = 0;
 	eth->tx_cons = 0;
@@ -146,8 +172,8 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 	eth->tx_prod_buf = NULL;
 	eth->tx_prod_buf_addr = 0;
 
-	eth->peer_rx_cqe_buf_addr = 0;
-	eth->peer_rx_cons_buf_addr = 0;
+	eth->peer_rx_cqe_buf_dma_addr = 0;
+	eth->peer_rx_cons_buf_dma_addr = 0;
 	eth->peer_vbell_idx = 0;
 
 	spin_lock_init(&eth->rx_prod_lock);
@@ -165,7 +191,10 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 		goto err_register;
 
 	return 0;
-
+deinit:
+	eth = dev->eth;
+	net = eth->napi.dev;
+	unregister_netdev(net);
 err_register:
 	netif_napi_del(&eth->napi);
 	ntc_buf_free(dev->ntc,
@@ -176,17 +205,20 @@ err_rx_cons_buf:
 	ntc_buf_unmap(dev->ntc,
 		      eth->rx_cqe_buf_addr,
 		      eth->rx_cqe_buf_size,
-		      DMA_FROM_DEVICE);
+		      DMA_FROM_DEVICE,
+			  NTB_DEV_ACCESS);
 err_rx_cqe_addr:
 	kfree(eth->rx_cqe_buf);
 err_rx_cqe_buf:
 	ntc_buf_unmap(dev->ntc,
-		      eth->rx_wqe_buf_addr,
+		      eth->rx_wqe_buf_dma_addr,
 		      eth->rx_wqe_buf_size,
-		      DMA_TO_DEVICE);
+		      DMA_TO_DEVICE,
+			  IOAT_DEV_ACCESS);
 err_rx_wqe_addr:
 	kfree(eth->rx_wqe_buf);
 err_rx_wqe_buf:
+	ntrdma_dev_eth_rx_drain(dev);
 	kfree(eth->rx_buf);
 err_rx_buf:
 	free_netdev(net);
@@ -194,45 +226,16 @@ err_net:
 	return rc;
 }
 
+int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
+			u32 vbell_idx,
+			u32 rx_cap)
+{
+	return ntrdma_dev_eth_init_deinit(dev, vbell_idx, rx_cap, false);
+}
+
 void ntrdma_dev_eth_deinit(struct ntrdma_dev *dev)
 {
-	struct ntrdma_eth *eth = dev->eth;
-	struct net_device *net = eth->napi.dev;
-	u32 start, pos, end, base;
-
-	unregister_netdev(net);
-	netif_napi_del(&eth->napi);
-
-	ntc_buf_free(dev->ntc,
-		     sizeof(*eth->rx_cons_buf),
-		     eth->rx_cons_buf,
-		     eth->rx_cons_buf_addr);
-	ntc_buf_unmap(dev->ntc,
-		      eth->rx_cqe_buf_addr,
-		      eth->rx_cqe_buf_size,
-		      DMA_FROM_DEVICE);
-	kfree(eth->rx_cqe_buf);
-	ntc_buf_unmap(dev->ntc,
-		      eth->rx_wqe_buf_addr,
-		      eth->rx_wqe_buf_size,
-		      DMA_TO_DEVICE);
-	kfree(eth->rx_wqe_buf);
-
-	do {
-		ntrdma_ring_consume(eth->rx_prod,
-				    eth->rx_cmpl,
-				    eth->rx_cap,
-				    &start, &end, &base);
-
-		for (pos = start; pos != end; ++pos)
-			kfree(eth->rx_buf[pos]);
-
-		eth->rx_cmpl = ntrdma_ring_update(end, base, eth->rx_cap);
-	} while (start != end);
-
-	kfree(eth->rx_buf);
-
-	free_netdev(net);
+	ntrdma_dev_eth_init_deinit(dev, 0, 0, true);
 }
 
 int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
@@ -252,26 +255,25 @@ int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 	return 0;
 }
 
-int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
+static inline int ntrdma_dev_eth_hello_prep_unperp(struct ntrdma_dev *dev,
 			      struct ntrdma_eth_hello_info *peer_info,
-			      struct ntrdma_eth_hello_prep *prep)
+			      struct ntrdma_eth_hello_prep *prep,
+				  int is_unperp)
 {
 	struct ntrdma_eth *eth = dev->eth;
 	int rc;
+	u64 peer_rx_cqe_buf_phys_addr;
+	u64 peer_rx_cons_buf_phys_addr;
 
-	eth->peer_rx_cqe_buf_addr =
-		ntc_peer_addr(dev->ntc, peer_info->rx_buf_addr);
-	eth->peer_rx_cons_buf_addr =
-		ntc_peer_addr(dev->ntc, peer_info->rx_idx_addr);
+	if (is_unperp)
+		goto unprep;
 
 	if (peer_info->vbell_idx > NTRDMA_DEV_VBELL_COUNT) {
 		ntrdma_err(dev, "peer info suspected as garbage vbell_idx %u\n",
 				peer_info->vbell_idx);
 		rc = -ENOMEM;
-		goto err_tx_wqe_buf;
+		goto err_peer_rx_cqe_buf_dma_addr;
 	}
-
-	eth->peer_vbell_idx = peer_info->vbell_idx;
 
 	/* added protection with a big enough size, since rx_cap and
 	 * rx_idx can hold ANY value, which would fail the kmalloc
@@ -280,8 +282,41 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 		ntrdma_err(dev, "peer info is suspected as garbage cap %u idx %u\n",
 				peer_info->rx_cap, peer_info->rx_idx);
 		rc = -ENOMEM;
-		goto err_tx_wqe_buf;
+		goto err_peer_rx_cqe_buf_dma_addr;
 	}
+
+	peer_rx_cqe_buf_phys_addr =
+		ntc_peer_addr(dev->ntc, peer_info->rx_buf_addr);
+	peer_rx_cons_buf_phys_addr =
+		ntc_peer_addr(dev->ntc, peer_info->rx_idx_addr);
+
+	eth->peer_rx_cqe_buf_dma_addr =
+		ntc_resource_map(dev->ntc,
+			peer_rx_cqe_buf_phys_addr,
+			eth->rx_cqe_buf_size,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+
+	if (unlikely(!eth->peer_rx_cqe_buf_dma_addr)) {
+		rc = -EIO;
+		goto err_peer_rx_cqe_buf_dma_addr;
+	}
+
+	eth->peer_rx_cons_buf_dma_addr =
+		ntc_resource_map(dev->ntc,
+			peer_rx_cons_buf_phys_addr,
+			sizeof(*eth->rx_cons_buf),
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+
+	if (unlikely(!eth->peer_rx_cons_buf_dma_addr)) {
+		rc = -EIO;
+		goto err_peer_rx_cons_buf_dma_addr;
+	}
+
+	eth->peer_vbell_idx = peer_info->vbell_idx;
+
+
 	eth->tx_cap = peer_info->rx_cap;
 	eth->tx_cons = peer_info->rx_idx;
 	eth->tx_cmpl = peer_info->rx_idx;
@@ -295,10 +330,13 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 		goto err_tx_wqe_buf;
 	}
 
+	/* accessed by peer (NTB) */
 	eth->tx_wqe_buf_addr = ntc_buf_map(dev->ntc,
 					   eth->tx_wqe_buf,
 					   eth->tx_wqe_buf_size,
-					   DMA_FROM_DEVICE);
+					   DMA_FROM_DEVICE,
+					   NTB_DEV_ACCESS);
+
 	if (!eth->tx_wqe_buf_addr) {
 		ntrdma_err(dev, "dma mapping failed\n");
 		rc = -EIO;
@@ -314,10 +352,12 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 		goto err_tx_cqe_buf;
 	}
 
+	/* Accessed by local (DMA)*/
 	eth->tx_cqe_buf_addr = ntc_buf_map(dev->ntc,
 					   eth->tx_cqe_buf,
 					   eth->tx_cqe_buf_size,
-					   DMA_TO_DEVICE);
+					   DMA_TO_DEVICE,
+					   IOAT_DEV_ACCESS);
 	if (!eth->tx_cqe_buf_addr) {
 		ntrdma_err(dev, "dma mapping failed\n");
 		rc = -EIO;
@@ -335,42 +375,144 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 
 	*eth->tx_prod_buf = peer_info->rx_idx;
 
-	prep->tx_buf_addr = eth->tx_wqe_buf_addr;
-	prep->tx_idx_addr = eth->tx_prod_buf_addr;
-
 	return 0;
-
+unprep:
 	ntc_buf_free(dev->ntc,
 		     sizeof(*eth->tx_prod_buf),
 		     eth->tx_prod_buf,
 		     eth->tx_prod_buf_addr);
+	eth->tx_prod_buf = 0;
 err_tx_prod_buf:
 	ntc_buf_unmap(dev->ntc,
 		      eth->tx_cqe_buf_addr,
 		      eth->tx_cqe_buf_size,
-		      DMA_TO_DEVICE);
+		      DMA_TO_DEVICE,
+			  IOAT_DEV_ACCESS);
+	 eth->tx_cqe_buf_addr = 0;
 err_tx_cqe_addr:
 	kfree(eth->tx_cqe_buf);
 err_tx_cqe_buf:
+	eth->tx_cqe_buf_size = 0;
 	ntc_buf_unmap(dev->ntc,
 		      eth->tx_wqe_buf_addr,
 		      eth->tx_wqe_buf_size,
-		      DMA_FROM_DEVICE);
+		      DMA_FROM_DEVICE,
+			  NTB_DEV_ACCESS);
 err_tx_wqe_addr:
 	kfree(eth->tx_wqe_buf);
+	eth->tx_wqe_buf = 0;
 err_tx_wqe_buf:
+	eth->peer_vbell_idx = 0;
+	eth->tx_cap = 0;
+	eth->tx_cons = 0;
+	eth->tx_cmpl = 0;
+	eth->tx_wqe_buf_size = 0;
+	ntc_resource_unmap(dev->ntc,
+			eth->peer_rx_cons_buf_dma_addr,
+			sizeof(*eth->rx_cons_buf),
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+	eth->peer_rx_cons_buf_dma_addr = 0;
+err_peer_rx_cons_buf_dma_addr:
+	ntc_resource_unmap(dev->ntc,
+			eth->peer_rx_cqe_buf_dma_addr,
+			eth->rx_cqe_buf_size,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+	eth->peer_rx_cqe_buf_dma_addr = 0;
+err_peer_rx_cqe_buf_dma_addr:
 	return rc;
 }
 
-void ntrdma_dev_eth_hello_done(struct ntrdma_dev *dev,
-			       struct ntrdma_eth_hello_prep *peer_prep)
+int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
+			      struct ntrdma_eth_hello_info *peer_info,
+			      struct ntrdma_eth_hello_prep *prep)
 {
 	struct ntrdma_eth *eth = dev->eth;
+	int rc;
 
-	eth->peer_tx_wqe_buf_addr =
+	rc = ntrdma_dev_eth_hello_prep_unperp(dev, peer_info, prep, false);
+	if (rc)
+		return rc;
+
+	prep->tx_buf_addr = eth->tx_wqe_buf_addr;
+	prep->tx_idx_addr = eth->tx_prod_buf_addr;
+
+	return 0;
+}
+
+static inline int ntrdma_dev_eth_hello_done_undone(struct ntrdma_dev *dev,
+			       struct ntrdma_eth_hello_prep *peer_prep,
+				   int is_undone)
+{
+	struct ntrdma_eth *eth = dev->eth;
+	u64 peer_tx_wqe_buf_phys_addr;
+	u64 peer_tx_prod_buf_phys_addr;
+	int rc;
+
+	if (is_undone)
+		goto undone;
+
+	peer_tx_wqe_buf_phys_addr =
 		ntc_peer_addr(dev->ntc, peer_prep->tx_buf_addr);
-	eth->peer_tx_prod_buf_addr =
+	peer_tx_prod_buf_phys_addr =
 		ntc_peer_addr(dev->ntc, peer_prep->tx_idx_addr);
+
+	eth->peer_tx_wqe_buf_dma_addr =
+			ntc_resource_map(dev->ntc,
+			peer_tx_wqe_buf_phys_addr,
+			eth->tx_wqe_buf_size,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+
+	if (unlikely(!eth->peer_tx_wqe_buf_dma_addr)) {
+		rc = -EIO;
+		goto err_peer_tx_wqe_buf_dma_addr;
+	}
+
+	dev_dbg(ntc_map_dev(dev->ntc, 0),
+			"Mapping physical addr %llx to dma addr %llx\n",
+			peer_tx_wqe_buf_phys_addr,
+			eth->peer_tx_wqe_buf_dma_addr);
+
+	eth->peer_tx_prod_buf_dma_addr =
+			ntc_resource_map(dev->ntc,
+			peer_tx_prod_buf_phys_addr,
+			sizeof(*eth->tx_prod_buf),
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+	if (unlikely(!eth->peer_tx_prod_buf_dma_addr)) {
+		rc = -EIO;
+		goto err_peer_tx_prod_buf_dma_addr;
+	}
+
+	dev_dbg(ntc_map_dev(dev->ntc, 0),
+			"Mapping physical addr %llx to dma addr %llx\n",
+			peer_tx_prod_buf_phys_addr,
+			eth->peer_tx_prod_buf_dma_addr);
+	return 0;
+undone:
+	ntc_resource_unmap(dev->ntc,
+			eth->peer_tx_prod_buf_dma_addr,
+			(u64)sizeof(*eth->tx_prod_buf),
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+	eth->peer_tx_prod_buf_dma_addr = 0;
+err_peer_tx_prod_buf_dma_addr:
+	ntc_resource_unmap(dev->ntc,
+			eth->peer_tx_wqe_buf_dma_addr,
+			eth->tx_wqe_buf_size,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+		eth->peer_tx_wqe_buf_dma_addr = 0;
+err_peer_tx_wqe_buf_dma_addr:
+	return rc;
+}
+
+int ntrdma_dev_eth_hello_done(struct ntrdma_dev *dev,
+			       struct ntrdma_eth_hello_prep *peer_prep)
+{
+	return ntrdma_dev_eth_hello_done_undone(dev, peer_prep, false);
 }
 
 void ntrdma_dev_eth_enable(struct ntrdma_dev *dev)
@@ -393,25 +535,9 @@ void ntrdma_dev_eth_reset(struct ntrdma_dev *dev)
 {
 	struct ntrdma_eth *eth = dev->eth;
 
-	ntc_buf_free(dev->ntc,
-		     sizeof(*eth->tx_prod_buf),
-		     eth->tx_prod_buf,
-		     eth->tx_prod_buf_addr);
-	ntc_buf_unmap(dev->ntc,
-		      eth->tx_cqe_buf_addr,
-		      eth->tx_cqe_buf_size,
-		      DMA_TO_DEVICE);
-	kfree(eth->tx_cqe_buf);
-	ntc_buf_unmap(dev->ntc,
-		      eth->tx_wqe_buf_addr,
-		      eth->tx_wqe_buf_size,
-		      DMA_FROM_DEVICE);
-	kfree(eth->tx_wqe_buf);
-
 	*eth->rx_cons_buf = eth->rx_cmpl;
-	eth->peer_rx_cqe_buf_addr = 0;
-	eth->peer_rx_cons_buf_addr = 0;
-	eth->peer_vbell_idx = 0;
+	ntrdma_dev_eth_hello_done_undone(dev, NULL, true);
+	ntrdma_dev_eth_hello_prep_unperp(dev, NULL, NULL, true);
 }
 
 static void ntrdma_eth_rx_fill(struct ntrdma_eth *eth)
@@ -455,9 +581,12 @@ more:
 			if (!buf)
 				break;
 
+			/* Accessed by local (DMA) */
 			dst = ntc_buf_map(dev->ntc,
 					  buf, len,
-					  DMA_FROM_DEVICE);
+					  DMA_FROM_DEVICE,
+					  NTB_DEV_ACCESS);
+
 			if (!dst) {
 				kfree(buf);
 				break;
@@ -471,18 +600,18 @@ more:
 		eth->rx_prod = ntrdma_ring_update(pos, base, eth->rx_cap);
 
 		ntc_buf_sync_dev(dev->ntc,
-				 eth->rx_wqe_buf_addr,
+				 eth->rx_wqe_buf_dma_addr,
 				 eth->rx_wqe_buf_size,
-				 DMA_TO_DEVICE);
+				 DMA_TO_DEVICE,
+				 IOAT_DEV_ACCESS);
 
 		off = start * sizeof(*eth->rx_wqe_buf);
 		len = (pos - start) * sizeof(*eth->rx_wqe_buf);
-		src = eth->rx_wqe_buf_addr + off;
-		dst = eth->peer_tx_wqe_buf_addr + off;
-
+		src = eth->rx_wqe_buf_dma_addr + off;
+		dst = eth->peer_tx_wqe_buf_dma_addr + off;
 		ntc_req_memcpy(dev->ntc, req,
-			       dst, src, len,
-			       true, NULL, NULL);
+				dst, src, len,
+				true, NULL, NULL);
 
 		ntrdma_ring_produce(eth->rx_prod,
 				    eth->rx_cmpl,
@@ -492,7 +621,7 @@ more:
 			goto more;
 
 		ntc_req_imm32(dev->ntc, req,
-			      eth->peer_tx_prod_buf_addr,
+			      eth->peer_tx_prod_buf_dma_addr,
 			      eth->rx_prod,
 			      true, NULL, NULL);
 
@@ -528,7 +657,8 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 	ntc_buf_sync_cpu(dev->ntc,
 			 eth->rx_cqe_buf_addr,
 			 eth->rx_cqe_buf_size,
-			 DMA_FROM_DEVICE);
+			 DMA_FROM_DEVICE,
+			 NTB_DEV_ACCESS);
 
 	ntrdma_ring_consume(*eth->rx_cons_buf,
 			    eth->rx_cmpl,
@@ -544,8 +674,9 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 		len = eth->rx_wqe_buf[pos].len;
 
 		ntc_buf_unmap(dev->ntc,
-			      addr, len,
-			      DMA_FROM_DEVICE);
+				addr, len,
+				DMA_FROM_DEVICE,
+				NTB_DEV_ACCESS);
 
 		rx_addr = eth->rx_cqe_buf[pos].addr;
 		rx_len = eth->rx_cqe_buf[pos].len;
@@ -596,6 +727,12 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 	return count;
 }
 
+struct ntrdma_skb_cb {
+	u64 dst;
+	u64 src;
+	u64 len;
+};
+
 static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 					 struct net_device *net)
 {
@@ -605,6 +742,9 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 	u64 dst, src, tx_addr;
 	size_t off, len, tx_off, tx_len;
 	u32 pos, end, base;
+	struct ntrdma_skb_cb *skb_ctx;
+
+	BUILD_BUG_ON(sizeof(*skb_ctx) > sizeof(skb->cb));
 
 	if (!eth->link) {
 		kfree_skb(skb);
@@ -622,7 +762,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 		kfree_skb(skb);
 		eth->napi.dev->stats.tx_errors++;
 		eth->napi.dev->stats.tx_fifo_errors++;
-		goto skip;
+		goto done;
 	}
 
 	tx_addr = eth->tx_wqe_buf[pos].addr;
@@ -651,22 +791,31 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 		kfree_skb(skb);
 	} else {
-		dst = ntc_peer_addr(dev->ntc, tx_addr);
+		/* Accessed by local (DMA) */
+		dst = ntc_resource_map(dev->ntc,
+				ntc_peer_addr(dev->ntc, tx_addr),
+				len + tx_off,
+				DMA_FROM_DEVICE,
+				IOAT_DEV_ACCESS);
+
+		if (!dst)
+			goto err_res_map;
+
 		src = ntc_buf_map(dev->ntc, skb->head,
 				  skb_end_offset(skb),
-				  DMA_TO_DEVICE);
-		if (!src) {
-			kfree_skb(skb);
-			eth->napi.dev->stats.tx_errors++;
-			eth->napi.dev->stats.tx_dropped++;
-			goto skip;
-		}
+				  DMA_TO_DEVICE,
+				  IOAT_DEV_ACCESS);
+		if (!src)
+			goto err_buf_map;
 
 		/*
 		 * save the mapped dma addr in the skb control buffer,
 		 * so that it can be unmapped later in the dma callback.
 		 */
-		*(u64 *)skb->cb = src;
+		skb_ctx = (struct ntrdma_skb_cb *)skb->cb;
+		skb_ctx->src = src;
+		skb_ctx->dst = dst;
+		skb_ctx->len = len + tx_off;
 
 		ntc_req_memcpy(dev->ntc, req,
 			       dst, src + off - tx_off, len + tx_off,
@@ -692,9 +841,8 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 			off = pos * sizeof(*eth->tx_cqe_buf);
 			len = (end - pos) * sizeof(*eth->tx_cqe_buf);
-			dst = eth->peer_rx_cqe_buf_addr + off;
+			dst = eth->peer_rx_cqe_buf_dma_addr + off;
 			src = eth->tx_cqe_buf_addr + off;
-
 			ntc_req_memcpy(dev->ntc, req,
 				       dst, src, len,
 				       true, NULL, NULL);
@@ -704,7 +852,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 		}
 
 		ntc_req_imm32(dev->ntc, req,
-			      eth->peer_rx_cons_buf_addr,
+			      eth->peer_rx_cons_buf_dma_addr,
 			      eth->tx_cmpl,
 			      true, NULL, NULL);
 
@@ -714,8 +862,19 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 		eth->req = NULL;
 	}
+	goto done;
 
-skip:
+err_buf_map:
+	ntc_resource_unmap(dev->ntc,
+			dst,
+			len + tx_off,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+err_res_map:
+	kfree_skb(skb);
+	eth->napi.dev->stats.tx_errors++;
+	eth->napi.dev->stats.tx_dropped++;
+done:
 	if (eth->tx_cons == *eth->tx_prod_buf) {
 		netif_stop_queue(eth->napi.dev);
 		napi_schedule(&eth->napi);
@@ -736,14 +895,19 @@ static void ntrdma_eth_dma_cb(void *ctx)
 	struct sk_buff *skb = ctx;
 	struct ntrdma_eth *eth = ntrdma_net_eth(skb->dev);
 	struct ntrdma_dev *dev = eth->dev;
-	u64 src;
+	struct ntrdma_skb_cb *skb_ctx = (struct ntrdma_skb_cb *)skb->cb;
 
 	/* retrieve the mapped addr from the skb control buffer */
-	src = *(u64 *)skb->cb;
 
-	ntc_buf_unmap(dev->ntc, src,
-		      skb_end_offset(skb),
-		      DMA_TO_DEVICE);
+	ntc_buf_unmap(dev->ntc, skb_ctx->src,
+			skb_end_offset(skb),
+			DMA_TO_DEVICE,
+			IOAT_DEV_ACCESS);
+
+	ntc_resource_unmap(dev->ntc, skb_ctx->dst,
+			skb_ctx->len,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
 
 	consume_skb(skb);
 

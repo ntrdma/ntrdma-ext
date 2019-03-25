@@ -97,7 +97,7 @@ struct ntrdma_dev {
 #ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 	u32				*vbell_peer_seq;
 #endif
-	u64				peer_vbell_buf_addr;
+	u64				peer_vbell_buf_dma_addr;
 	int				peer_vbell_count;
 
 	/* commands to affect remote resources */
@@ -122,8 +122,8 @@ struct ntrdma_dev {
 	union ntrdma_rsp		*cmd_recv_rsp_buf;
 	u64				cmd_recv_rsp_buf_addr;
 	size_t				cmd_recv_rsp_buf_size;
-	u64				peer_cmd_send_rsp_buf_addr;
-	u64				peer_cmd_send_cons_addr;
+	u64				peer_cmd_send_rsp_buf_dma_addr;
+	u64				peer_cmd_send_cons_dma_addr;
 	u32				peer_cmd_send_vbell_idx;
 
 	/* command recv work */
@@ -142,16 +142,16 @@ struct ntrdma_dev {
 
 	/* command send ring buffers and consumer index */
 	union ntrdma_cmd		*cmd_send_buf;
-	u64				cmd_send_buf_addr;
+	u64				cmd_send_buf_dma_addr;
 	size_t				cmd_send_buf_size;
 	union ntrdma_rsp		*cmd_send_rsp_buf;
 	u32				*cmd_send_cons_buf;
 	u64				cmd_send_rsp_buf_addr;
 	size_t				cmd_send_rsp_buf_size;
-	u64				peer_cmd_recv_buf_addr;
-	u64				peer_cmd_recv_prod_addr;
+	u64				peer_cmd_recv_buf_dma_addr;
+	u64				peer_cmd_recv_prod_dma_addr;
 	u32				peer_cmd_recv_vbell_idx;
-
+	int				is_cmd_hello_done;
 	/* hello buffers */
 	u8 *hello_local_buf;
 	int hello_local_buf_size;

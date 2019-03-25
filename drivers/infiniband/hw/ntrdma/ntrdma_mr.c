@@ -36,6 +36,7 @@
 #include "ntrdma_cmd.h"
 #include "ntrdma_pd.h"
 #include "ntrdma_mr.h"
+#include "ntrdma_res.h"
 
 struct ntrdma_mr_cmd_cb {
 	struct ntrdma_cmd_cb cb;
@@ -79,6 +80,9 @@ int ntrdma_mr_init(struct ntrdma_mr *mr,
 	mr->addr = addr;
 	mr->len = len;
 
+	mr->local_dma = mr->sg_list;
+	mr->remote_dma = mr->sg_list + sg_count;
+
 	mr->sg_count = ntc_umem_sgl(dev->ntc, umem, mr->sg_list, sg_count);
 	if (mr->sg_count != sg_count) {
 		rc = -ENOMEM;
@@ -86,10 +90,12 @@ int ntrdma_mr_init(struct ntrdma_mr *mr,
 	}
 
 	if (sg_count)
-		WARN_ON((mr->sg_list[0].addr ^ addr) & (PAGE_SIZE - 1));
+		WARN((mr->sg_list[0].addr ^ addr) & (PAGE_SIZE - 1),
+				"Invalid sg list addr %llx while user addr %llx",
+				mr->sg_list[0].addr, addr);
 
 	rc = ntrdma_res_init(&mr->res, dev, &dev->mr_vec,
-			     ntrdma_mr_enable, ntrdma_mr_disable, NULL);
+			ntrdma_mr_enable, ntrdma_mr_disable, NULL);
 	if (rc)
 		goto err;
 
@@ -176,7 +182,7 @@ static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
 	cmd->mr_append.sg_pos = mrcb->sg_pos;
 	cmd->mr_append.sg_count = mrcb->sg_count;
 
-	memcpy(cmd->mr_append.sg_list, &mr->sg_list[mrcb->sg_pos],
+	memcpy(cmd->mr_append.sg_list, &mr->remote_dma[mrcb->sg_pos],
 	       mrcb->sg_count * sizeof(*mr->sg_list));
 
 	return 0;
@@ -198,7 +204,7 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 	cmd->mr_create.sg_cap = mr->sg_count;
 	cmd->mr_create.sg_count = mrcb->sg_count;
 
-	memcpy(cmd->mr_create.sg_list, mr->sg_list,
+	memcpy(cmd->mr_create.sg_list, mr->remote_dma,
 	       mrcb->sg_count * sizeof(*mr->sg_list));
 
 	return 0;

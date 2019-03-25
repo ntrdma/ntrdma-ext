@@ -86,6 +86,12 @@ struct ntc_ctx_ops {
 	void (*signal)(void *ctx, int vec);
 };
 
+enum ntc_dma_access {
+	NTB_DEV_ACCESS = 0,
+	IOAT_DEV_ACCESS
+};
+
+
 static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
 {
 	/* commented callbacks are not required: */
@@ -116,13 +122,14 @@ static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
  * @clear_signal:	See ntc_clear_signal().
  */
 struct ntc_dev_ops {
-	struct device *(*map_dev)(struct ntc_dev *ntc);
+	struct device *(*map_dev)(struct ntc_dev *ntc,
+			enum ntc_dma_access dma_dev);
 
 	int (*link_disable)(struct ntc_dev *ntc);
 	int (*link_enable)(struct ntc_dev *ntc);
 	int (*link_reset)(struct ntc_dev *ntc);
 
-	u64 (*peer_addr)(struct ntc_dev *ntc, u64 addr);
+	u64 (*peer_addr)(struct ntc_dev *ntc, u64 dma_addr_local);
 
 	void *(*req_create)(struct ntc_dev *ntc);
 	void (*req_cancel)(struct ntc_dev *ntc, void *req);
@@ -190,17 +197,28 @@ struct ntc_sge {
  * @umem_count		See ntc_umem_count().
  */
 struct ntc_map_ops {
-	void *(*buf_alloc)(struct ntc_dev *ntc, u64 size, u64 *addr, gfp_t gfp);
-	void (*buf_free)(struct ntc_dev *ntc, u64 size, void *buf, u64 addr);
-
+	void *(*buf_alloc)(struct ntc_dev *ntc, u64 size,
+			u64 *dma_addr_local, gfp_t gfp);
+	void (*buf_free)(struct ntc_dev *ntc, u64 size,
+			void *buf, u64 dma_addr_local);
 	u64 (*buf_map)(struct ntc_dev *ntc, void *buf, u64 size,
-		       enum dma_data_direction dir);
-	void (*buf_unmap)(struct ntc_dev *ntc, u64 addr, u64 size,
-			  enum dma_data_direction dir);
-	void (*buf_sync_cpu)(struct ntc_dev *ntc, u64 addr, u64 size,
-			     enum dma_data_direction dir);
-	void (*buf_sync_dev)(struct ntc_dev *ntc, u64 addr, u64 size,
-			     enum dma_data_direction dir);
+		       enum dma_data_direction dir,
+			   enum ntc_dma_access dma_dev);
+	void (*buf_unmap)(struct ntc_dev *ntc, u64 dma_addr_local, u64 size,
+			enum dma_data_direction dir,
+			enum ntc_dma_access dma_dev);
+	u64 (*res_map)(struct ntc_dev *ntc, u64 phys_addr, u64 size,
+			enum dma_data_direction dir,
+			enum ntc_dma_access dma_dev);
+	void (*res_unmap)(struct ntc_dev *ntc, u64 dma_addr_local, u64 size,
+			enum dma_data_direction dir,
+			enum ntc_dma_access dma_dev);
+	void (*buf_sync_cpu)(struct ntc_dev *ntc, u64 dma_addr_local, u64 size,
+			     enum dma_data_direction dir,
+				 enum ntc_dma_access dma_dev);
+	void (*buf_sync_dev)(struct ntc_dev *ntc, u64 dma_addr_local, u64 size,
+			     enum dma_data_direction dir,
+				 enum ntc_dma_access dma_dev);
 
 	void *(*umem_get)(struct ntc_dev *ntc, struct ib_ucontext *uctx,
 			  unsigned long uaddr, size_t size,
@@ -492,12 +510,13 @@ void ntc_ctx_signal(struct ntc_dev *ntc, int vec);
  *
  * Return: The device for channel mapping.
  */
-static inline struct device *ntc_map_dev(struct ntc_dev *ntc)
+static inline struct device *ntc_map_dev(struct ntc_dev *ntc,
+		enum ntc_dma_access dma_dev)
 {
 	if (!ntc->dev_ops->map_dev)
 		return &ntc->dev;
 
-	return ntc->dev_ops->map_dev(ntc);
+	return ntc->dev_ops->map_dev(ntc, dma_dev);
 }
 
 /**
@@ -834,12 +853,40 @@ static inline void ntc_buf_free(struct ntc_dev *ntc, u64 size,
  *
  * Return: The channel-mapped buffer address, or Zero.
  */
-static inline u64 ntc_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
-			      enum dma_data_direction dir)
+static inline u64 _ntc_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
+			      enum dma_data_direction dir,
+				  enum ntc_dma_access dma_dev,
+				  const char *func)
 {
-	return ntc->map_ops->buf_map(ntc, buf, size, dir);
+	u64 dma_addr = ntc->map_ops->buf_map(ntc, buf, size, dir, dma_dev);
+
+	dev_dbg(ntc_map_dev(ntc, dma_dev),
+			"DMA DEBUG Mapping buffer %p to dma addr %llx size %llx direction %d, by %s\n",
+			buf, dma_addr, size, dir, func);
+
+	return dma_addr;
 }
 
+#define ntc_buf_map(_ntc, _buf, _size, _dir, _dev) \
+	_ntc_buf_map(_ntc, _buf, _size, _dir, _dev, __func__)
+
+static inline u64 _ntc_resource_map(struct ntc_dev *ntc, u64 phys_addr,
+		u64 size, enum dma_data_direction dir,
+		enum ntc_dma_access dma_dev, const char *func)
+{
+	u64 dma_addr =
+			ntc->map_ops->res_map(ntc, phys_addr, size,
+					dir, dma_dev);
+
+	dev_dbg(ntc_map_dev(ntc, dma_dev),
+			"DMA DEBUG Mapping physical addr %llx to dma addr %llx size %llx direction %d, by %s\n",
+			phys_addr, dma_addr, size, dir, func);
+
+	return dma_addr;
+}
+
+#define ntc_resource_map(_ntc, _phys_addr, _size, _dir, _dma_dev) \
+	_ntc_resource_map(_ntc, _phys_addr, _size, _dir, _dma_dev, __func__)
 /**
  * ntc_buf_unmap() - unmap a channel-mapped kernel memory buffer
  * @ntc:	Device context.
@@ -853,11 +900,33 @@ static inline u64 ntc_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
  * by the cpu.  When unmapping, the driver need not explicitly call
  * ntc_buf_sync_cpu() to sync the data in the buffer.
  */
-static inline void ntc_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
-				 enum dma_data_direction dir)
+static inline void _ntc_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
+				enum dma_data_direction dir,
+				enum ntc_dma_access dma_dev,
+				const char *func)
 {
-	ntc->map_ops->buf_unmap(ntc, addr, size, dir);
+	dev_dbg(ntc_map_dev(ntc, dma_dev),
+			"DMA DEBUG Unmapping dma addr %llx size %llx direction %d, by %s\n",
+			addr, size, dir, func);
+	ntc->map_ops->buf_unmap(ntc, addr, size, dir, dma_dev);
 }
+
+#define ntc_buf_unmap(_ntc, _addr, _size, _dir, _dma_dev) \
+	_ntc_buf_unmap(_ntc, _addr, _size, _dir, _dma_dev, __func__)
+
+static inline void _ntc_resource_unmap(struct ntc_dev *ntc, u64 dma_addr,
+				u64 size,
+				enum dma_data_direction dir,
+				enum ntc_dma_access dma_dev,
+				const char *func)
+{
+	dev_dbg(ntc_map_dev(ntc, dma_dev),
+			"DMA DEBUG Unmapping dma addr %llx size %llx direction %d, by %s\n",
+			dma_addr, size, dir, func);
+	ntc->map_ops->res_unmap(ntc, dma_addr, size, dir, dma_dev);
+}
+#define ntc_resource_unmap(_ntc, _dma_addr, _size, _dir, _dma_dev) \
+	_ntc_resource_unmap(_ntc, _dma_addr, _size, _dir, _dma_dev, __func__)
 
 /**
  * ntc_buf_sync_cpu() - sync a channel-mapped buffer for cpu access
@@ -871,10 +940,11 @@ static inline void ntc_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
  * the buffer, before the sync, is available for the cpu, after the sync.
  */
 static inline void ntc_buf_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
-				    enum dma_data_direction dir)
+				    enum dma_data_direction dir,
+					enum ntc_dma_access dma_dev)
 {
 	if (ntc->map_ops->buf_sync_cpu)
-		ntc->map_ops->buf_sync_cpu(ntc, addr, size, dir);
+		ntc->map_ops->buf_sync_cpu(ntc, addr, size, dir, dma_dev);
 }
 
 /**
@@ -890,10 +960,11 @@ static inline void ntc_buf_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
  * after the sync.
  */
 static inline void ntc_buf_sync_dev(struct ntc_dev *ntc, u64 addr, u64 size,
-				    enum dma_data_direction dir)
+				    enum dma_data_direction dir,
+					enum ntc_dma_access dma_dev)
 {
 	if (ntc->map_ops->buf_sync_dev)
-		ntc->map_ops->buf_sync_dev(ntc, addr, size, dir);
+		ntc->map_ops->buf_sync_dev(ntc, addr, size, dir, dma_dev);
 }
 
 /**

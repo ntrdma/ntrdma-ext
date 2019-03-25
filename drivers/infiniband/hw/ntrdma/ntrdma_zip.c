@@ -116,7 +116,7 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 
 		/* Advance the source memory region entry */
 		while (mr_off >= mr->sg_list[mr_i].len) {
-			mr_off -= mr->sg_list[mr_i].len;
+			mr_off -= mr->local_dma[mr_i].len;
 
 			if (++mr_i == mr->sg_count) {
 				/* out of bounds of source memory region */
@@ -125,8 +125,10 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 			}
 
 			ntc_buf_sync_dev(dev->ntc,
-					 mr->sg_list[mr_i].addr, mr->sg_list[mr_i].len,
-					 DMA_BIDIRECTIONAL);
+				 mr->local_dma[mr_i].addr,
+				 mr->local_dma[mr_i].len,
+				 DMA_BIDIRECTIONAL,
+				 IOAT_DEV_ACCESS);
 		}
 
 		/* Get a reference to the destination memory region */
@@ -163,7 +165,7 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 
 		dst = rmr->sg_list[rmr_i].addr + rmr_off;
 
-		src = mr->sg_list[mr_i].addr + mr_off;
+		src = mr->local_dma[mr_i].addr + mr_off;
 
 		len = min_t(size_t,
 			    min_t(u32,
@@ -171,7 +173,10 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 				  src_sg_list[src_i].len - src_off),
 			    min_t(u64,
 				  rmr->sg_list[rmr_i].len - rmr_off,
-				  mr->sg_list[mr_i].len - mr_off));
+				  mr->local_dma[mr_i].len - mr_off));
+
+		dev_vdbg(&dev->ntc->dev, "request memcpy dst %llx src %llx len %zu\n",
+				 dst, src, len);
 
 		ntc_req_memcpy(dev->ntc, req,
 			       dst, src, len,
@@ -252,8 +257,8 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 		}
 
 		/* Advance the memory region entry */
-		while (mr_off >= mr->sg_list[mr_i].len) {
-			mr_off -= mr->sg_list[mr_i].len;
+		while (mr_off >= mr->local_dma[mr_i].len) {
+			mr_off -= mr->local_dma[mr_i].len;
 
 			if (++mr_i == mr->sg_count) {
 				/* out of bounds of the memory region */
@@ -262,18 +267,19 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 			}
 
 			ntc_buf_sync_cpu(dev->ntc,
-					 mr->sg_list[mr_i].addr,
-					 mr->sg_list[mr_i].len,
-					 DMA_BIDIRECTIONAL);
+					 mr->local_dma[mr_i].addr,
+					 mr->local_dma[mr_i].len,
+					 DMA_BIDIRECTIONAL,
+					 NTB_DEV_ACCESS);
 		}
 
 		/* Now we have resolved one range to sync */
 
-		dma = mr->sg_list[mr_i].addr + mr_off;
+		dma = mr->local_dma[mr_i].addr + mr_off;
 
 		len = min_t(size_t,
 			    dst_sg_list[sg_i].len - sg_off,
-			    mr->sg_list[mr_i].len - mr_off);
+			    mr->local_dma[mr_i].len - mr_off);
 
 		/* Advance the offsets and continue to the next */
 

@@ -65,7 +65,7 @@ struct ntrdma_eth {
 
 	void				**rx_buf;
 	struct ntrdma_eth_qe		*rx_wqe_buf;
-	u64				rx_wqe_buf_addr;
+	u64				rx_wqe_buf_dma_addr;
 	size_t				rx_wqe_buf_size;
 	struct ntrdma_eth_qe		*rx_cqe_buf;
 	u64				rx_cqe_buf_addr;
@@ -74,8 +74,8 @@ struct ntrdma_eth {
 	u32				*rx_cons_buf;
 	u64				rx_cons_buf_addr;
 
-	u64				peer_tx_wqe_buf_addr;
-	u64				peer_tx_prod_buf_addr;
+	u64				peer_tx_wqe_buf_dma_addr;
+	u64				peer_tx_prod_buf_dma_addr;
 
 	/* ethernet tx ring indices */
 
@@ -95,8 +95,8 @@ struct ntrdma_eth {
 	u32				*tx_prod_buf;
 	u64				tx_prod_buf_addr;
 
-	u64				peer_rx_cqe_buf_addr;
-	u64				peer_rx_cons_buf_addr;
+	u64				peer_rx_cqe_buf_dma_addr;
+	u64				peer_rx_cons_buf_dma_addr;
 	u32				peer_vbell_idx;
 
 	/* one at a time each: poster, producer, consumer, completer */

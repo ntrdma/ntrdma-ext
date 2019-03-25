@@ -60,7 +60,9 @@ struct ntrdma_mr {
 	u64				len;
 
 	u32				sg_count;
-	struct ntc_sge			sg_list[];
+	struct ntc_sge	*local_dma;
+	struct ntc_sge	*remote_dma;
+	struct ntc_sge	sg_list[];
 };
 
 #define ntrdma_mr_dev(__mr) ntrdma_res_dev(&(__mr)->res)
