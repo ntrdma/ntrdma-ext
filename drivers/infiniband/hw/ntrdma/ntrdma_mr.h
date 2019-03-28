@@ -167,4 +167,15 @@ static inline void ntrdma_rmr_repo(struct ntrdma_rmr *rmr)
 struct ntrdma_mr *ntrdma_dev_mr_look(struct ntrdma_dev *dev, int key);
 struct ntrdma_rmr *ntrdma_dev_rmr_look(struct ntrdma_dev *dev, int key);
 
+
+/* from intel spec, canonical address is when bits 48-63 are identical and equal
+ * to the 47th bit (starting count from 0).
+ * When 0 its a user-space and 1 is for kernel space.
+ * on aslr enabled systems, we can get 1's for user space addresses as well.
+ */
+#define MASK 0xffff800000000000
+static inline bool is_canonical(u64 addr)
+{
+	return ((addr & MASK) == 0 || (addr & MASK) == MASK);
+}
 #endif

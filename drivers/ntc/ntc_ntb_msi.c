@@ -101,7 +101,10 @@ MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 
 #define NTC_CTX_BUF_SIZE 1024
 
-#define INTEL_ALIGN 16
+/* PCIe spec - TLP data must be 4-byte naturally
+ * aligned and in increments of 4-byte Double Words (DW).
+ */
+#define PCIE_ADDR_ALIGN 4
 
 #ifndef iowrite64
 #ifdef writeq
@@ -567,7 +570,7 @@ static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 		goto err;
 	}
 
-	dev->info_self_on_peer->msi_irqs_num = msi_irqs_num;
+	iowrite32(msi_irqs_num, &dev->info_self_on_peer->msi_irqs_num);
 
 	for (msi_idx = 0; msi_idx < msi_irqs_num; msi_idx++) {
 		iowrite32(msi_data[msi_idx], &dev->info_self_on_peer->msi_data[msi_idx]);
@@ -620,7 +623,7 @@ static inline void ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 				(phys_addr_t *)&peer_irq_addr_base,
 				&size);
 		if ((rc < 0) || (size != sizeof(u32)) ||
-				!IS_ALIGNED(peer_irq_addr_base, INTEL_ALIGN)) {
+				!IS_ALIGNED(peer_irq_addr_base, PCIE_ADDR_ALIGN)) {
 			dev_err(&dev->ntc.dev, "Peer DB addr invalid\n");
 			return;
 		}
@@ -895,13 +898,18 @@ static int ntc_ntb_link_reset(struct ntc_dev *ntc)
 static u64 ntc_ntb_peer_addr(struct ntc_dev *ntc, u64 addr)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
-
-	if (addr > dev->peer_dram_size || !IS_ALIGNED(addr, INTEL_ALIGN)) {
-		dev_err(&dev->ntc.dev, "dram_base 0x%llx + off 0x%llx\n",
-				dev->peer_dram_base, addr);
-		return 0;
+	if (addr > dev->peer_dram_size) {
+		dev_err(&dev->ntc.dev, "off 0x%llx is larger than memory size %lu\n",
+				addr, dev->peer_dram_size);
+				return 0;
 	}
 
+	if (!IS_ALIGNED(addr, PCIE_ADDR_ALIGN)) {
+		dev_err(&dev->ntc.dev, "addr 0x%llx is not aligned to %d\n",
+				addr, PCIE_ADDR_ALIGN);
+				return 0;
+		return 0;
+	}
 	return dev->peer_dram_base + addr;
 }
 
