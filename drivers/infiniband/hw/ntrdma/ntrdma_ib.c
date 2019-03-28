@@ -849,6 +849,12 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	ntrdma_vdbg(dev, "called\n");
 
+	if (!is_canonical(virt_addr)) {
+		rc = -EINVAL;
+		ntrdma_err(dev, "reg_user_mr with non canonical addr (corrupted?)\n");
+		goto err_umem;
+	}
+
 	umem = ntc_umem_get(dev->ntc, pd->ibpd.uobject->context,
 			    start, length, mr_access_flags, false);
 
