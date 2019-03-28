@@ -69,8 +69,7 @@ MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 
 /* Protocol version for backwards compatibility */
 #define NTC_NTB_VERSION_NONE		0
-#define NTC_NTB_VERSION_MAX		2
-#define NTC_NTB_VERSION_MIN		2
+#define NTC_NTB_VERSION_FIRST		2
 
 #define NTC_NTB_VERSION_BAD_MAGIC	U32_C(~0)
 #define NTC_NTB_VERSION_MAGIC_2		U32_C(0x2250cb1c)
@@ -130,8 +129,14 @@ struct ntc_ntb_imm {
 	void				*cb_ctx;
 };
 
+#define MAX_SUPPORTED_VERSIONS 32
+struct multi_version_support {
+	u32 num;
+	u32 versions[MAX_SUPPORTED_VERSIONS];
+};
+
 struct ntc_ntb_info {
-	u32				version;
+	struct multi_version_support	versions;
 	u32				magic;
 	u32				ping;
 
@@ -218,6 +223,9 @@ struct ntc_ntb_dev {
 #define ntc_ntb_dma_dev(__dev) \
 	(&(__dev)->ntb->pdev->dev)
 
+static u32 supported_versions[] = {
+		NTC_NTB_VERSION_FIRST
+};
 static int ntc_ntb_read_msi_config(struct ntc_ntb_dev *dev,
 				    u64 *addr, u32 *val)
 {
@@ -278,28 +286,33 @@ static int ntc_ntb_read_msi_config(struct ntc_ntb_dev *dev,
 
 }
 
-static inline u32 ntc_ntb_version(int version, int version_min)
+static inline void ntc_ntb_version(struct multi_version_support *versions)
 {
-	BUILD_BUG_ON(NTC_NTB_VERSION_MAX & ((~0) << 16));
-	BUILD_BUG_ON(NTC_NTB_VERSION_MIN & ((~0) << 16));
+	int i;
 
-	return (version << 16) | version_min;
+	for (i = 0; i < ARRAY_SIZE(supported_versions); i++)
+		versions->versions[i] = supported_versions[i];
+	versions->num = ARRAY_SIZE(supported_versions);
+	BUILD_BUG_ON(versions->num > MAX_SUPPORTED_VERSIONS);
 }
 
-static inline int ntc_ntb_version_choose(u32 v1, u32 v2)
+static inline u32 ntc_ntb_version_matching(struct ntc_ntb_dev *dev,
+		struct multi_version_support *v1,
+		struct multi_version_support *v2)
 {
-	int max1, min1, max2, min2, mask;
+	int i, j;
 
-	mask = BIT(16) - 1;
+	for (j = v1->num - 1; j >= 0; j--)
+		for (i = v2->num - 1; i >= 0; i--)
+			if (v1->versions[j] == v2->versions[i])
+				return v1->versions[j];
 
-	max1 = mask & (v1 >> 16);
-	min1 = mask & v1;
-	max2 = mask & (v2 >> 16);
-	min2 = mask & v2;
-
-	if (min1 <= max2 && max1 >= min2)
-		return min(max1, max2);
-
+	dev_err(&dev->ntc.dev, "Local supported versions (%d) are:\n", v1->num);
+	for (j = 0; j < v1->num; j++)
+		dev_err(&dev->ntc.dev, "0x%08x\n", v1->versions[j]);
+	dev_err(&dev->ntc.dev, "Remote supported versions (%d) are:\n", v2->num);
+	for (i = 0; i < v2->num; i++)
+		dev_err(&dev->ntc.dev, "0x%08x\n", v2->versions[i]);
 	return NTC_NTB_VERSION_NONE;
 }
 
@@ -545,20 +558,25 @@ static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 
 static inline void ntc_ntb_send_version(struct ntc_ntb_dev *dev)
 {
-	u32 version;
+	struct multi_version_support versions;
+	int i;
+
 
 	dev_dbg(&dev->ntc.dev, "link send version\n");
 
-	version = ntc_ntb_version(NTC_NTB_VERSION_MAX, NTC_NTB_VERSION_MIN);
+	ntc_ntb_version(&versions);
 
-	iowrite32(version, &dev->info_self_on_peer->version);
+	for (i = 0; i < versions.num; i++)
+		iowrite32(versions.versions[i],
+			&dev->info_self_on_peer->versions.versions[i]);
+	iowrite32(versions.num, &dev->info_self_on_peer->versions.num);
 
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_VER_SENT);
 }
 
 static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 {
-	u32 version, peer_version;
+	struct multi_version_support versions, *peer_versions;
 	u64 msi_addr[NTB_MAX_IRQS];
 	u32 msi_data[NTB_MAX_IRQS];
 	int msi_idx;
@@ -566,18 +584,16 @@ static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 
 	dev_dbg(&dev->ntc.dev, "link choose version and send msi data\n");
 
-	version = ntc_ntb_version(NTC_NTB_VERSION_MAX, NTC_NTB_VERSION_MIN);
+	ntc_ntb_version(&versions);
+	peer_versions = &dev->info_peer_on_self->versions;
+	if (peer_versions->num > MAX_SUPPORTED_VERSIONS)
+		goto err;
 
-	peer_version = dev->info_peer_on_self->version;
-
-	dev_dbg(&dev->ntc.dev, "version %x peer_version %x\n",
-		version, peer_version);
-
-	dev->version = ntc_ntb_version_choose(version, peer_version);
+	dev->version = ntc_ntb_version_matching(dev, &versions, peer_versions);
 	if (dev->version == NTC_NTB_VERSION_NONE)
 		goto err;
 
-	dev_dbg(&dev->ntc.dev, "ok version\n");
+	dev_dbg(&dev->ntc.dev, "Agree on version %d\n", dev->version);
 
 	iowrite32(ntc_ntb_version_magic(dev->version),
 		  &dev->info_self_on_peer->magic);
