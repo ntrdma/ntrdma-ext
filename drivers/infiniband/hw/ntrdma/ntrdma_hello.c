@@ -34,22 +34,16 @@
 #include "ntrdma_res.h"
 #include "ntrdma_vbell.h"
 
-#define NTRDMA_VER_NONE			0
-#define NTRDMA_VER_MIN			1
-#define NTRDMA_VER_MAX			1
-#define NTRDMA_V1_MAGIC			0x3ce4dbd8
-#define NTRDMA_V1_P2_MAGIC		0x1a1530f1
-#define NTRDMA_V1_P3_MAGIC		0xe09005ed
-
 enum status {
 	NOT_DONE = 0,
 	DONE
 };
 
+#define MAX_SUPPORTED_VERSIONS 32
 struct ntrdma_hello_phase1 {
 	/* protocol negotiation */
-	u32				version_min;
-	u32				version_max;
+	u32				versions[MAX_SUPPORTED_VERSIONS];
+	u32				version_num;
 };
 
 struct ntrdma_hello_phase2 {
@@ -81,6 +75,15 @@ struct ntrdma_hello_phase3 {
 	struct ntrdma_eth_hello_prep	eth_prep;
 };
 
+static void ntrdma_buff_supported_versions(struct ntrdma_hello_phase1 *buff)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(supported_versions); i++)
+		buff->versions[i] = supported_versions[i];
+	buff->version_num = ARRAY_SIZE(supported_versions);
+	BUILD_BUG_ON(buff->version_num > MAX_SUPPORTED_VERSIONS);
+}
 
 int ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
 				void *in_buf, size_t in_size,
@@ -90,17 +93,40 @@ int ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
 	if (sizeof(struct ntrdma_hello_phase1) > out_size)
 		return -EINVAL; 
 
-	out->version_min = NTRDMA_VER_MIN;
-	out->version_max = NTRDMA_VER_MAX;
+	ntrdma_buff_supported_versions(out);
 
 	return NOT_DONE;
 }
+
+static inline u32 ntrdma_version_choose(struct ntrdma_dev *dev,
+		struct ntrdma_hello_phase1 *v1,
+		struct ntrdma_hello_phase1 *v2)
+{
+	int i, j;
+
+	for (j = v1->version_num - 1; j >= 0; j--)
+		for (i = v2->version_num - 1; i >= 0; i--)
+			if (v1->versions[j] == v2->versions[i])
+				return v1->versions[j];
+
+	ntrdma_err(dev, "Local supported versions (%d) are:\n",
+			v1->version_num);
+	for (j = 0; j < v1->version_num; j++)
+		ntrdma_err(dev, "0x%08x\n", v1->versions[j]);
+	ntrdma_err(dev, "Remote supported versions (%d) are:\n",
+			v2->version_num);
+	for (i = 0; i < v2->version_num; i++)
+		ntrdma_err(dev, "0x%08x\n", v2->versions[i]);
+	return NTRDMA_VER_NONE;
+}
+
 
 int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 				void *in_buf, size_t in_size,
 				void *out_buf, size_t out_size)
 {
 	struct ntrdma_hello_phase1 *in;
+	struct ntrdma_hello_phase1 local;
 	struct ntrdma_hello_phase2 *out;
 
 	if (in_size < sizeof(*in) || out_size < sizeof(*out))
@@ -108,16 +134,17 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 
 	in = in_buf;
 	out = out_buf;
+	ntrdma_buff_supported_versions(&local);
 
-	if (in->version_min <= NTRDMA_VER_MAX &&
-	    in->version_max >= NTRDMA_VER_MIN) {
-		dev->version = min_t(u32, in->version_max, NTRDMA_VER_MAX);
-	} else {
-		dev->version = NTRDMA_VER_NONE;
-		ntrdma_err(dev, "version is not in range %d - %d\n",
-				in->version_min, in->version_max);
+	if (!in || (in->version_num > MAX_SUPPORTED_VERSIONS))
+		return -EINVAL;
+
+	dev->version = ntrdma_version_choose(dev, in, &local);
+	if (dev->version == NTRDMA_VER_NONE) {
+		ntrdma_err(dev, "version is not aggreed\n");
 		return -EINVAL;
 	}
+	ntrdma_dbg(dev, "Agree on version %d", dev->version);
 
 	/* protocol validation */
 	out->version_magic = NTRDMA_V1_MAGIC;
