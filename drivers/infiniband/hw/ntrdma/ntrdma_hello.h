@@ -35,6 +35,12 @@
 
 #include "ntrdma.h"
 
+#define MAX_VBELL_COUNT 1024
+#define NTRDMA_VER_NONE			0
+#define NTRDMA_VER_FIRST		1
+#define NTRDMA_V1_MAGIC			0x3ce4dbd8
+#define NTRDMA_V1_P2_MAGIC		0x1a1530f1
+#define NTRDMA_V1_P3_MAGIC		0xe09005ed
 
 struct ntrdma_cmd_hello_info {
 	u64 send_rsp_buf_addr;
@@ -48,6 +54,10 @@ struct ntrdma_cmd_hello_info {
 struct ntrdma_cmd_hello_prep {
 	u64 recv_buf_addr;
 	u64 recv_prod_addr;
+};
+
+static u32 supported_versions[] = {
+		NTRDMA_VER_FIRST
 };
 
 void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
