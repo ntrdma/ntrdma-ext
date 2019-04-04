@@ -443,9 +443,15 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	memset(qp, 0, sizeof(*qp));
 
 	qp_attr.pd_key = pd->key;
-	qp_attr.recv_wqe_cap = ibqp_attr->cap.max_recv_wr;
+
+	/* Avoiding zero size alloc in case max_*_wr is 0 */
+	qp_attr.recv_wqe_cap = (!ibqp_attr->cap.max_recv_wr) ?
+				1 : ibqp_attr->cap.max_recv_wr;
 	qp_attr.recv_wqe_sg_cap = ibqp_attr->cap.max_recv_sge;
-	qp_attr.send_wqe_cap = ibqp_attr->cap.max_send_wr;
+
+	/* Avoiding zero size alloc in case max_*_wr is 0 */
+	qp_attr.send_wqe_cap = (!ibqp_attr->cap.max_send_wr) ?
+				1 : ibqp_attr->cap.max_send_wr;
 	qp_attr.send_wqe_sg_cap = ibqp_attr->cap.max_send_sge;
 
 	rc = ntrdma_qp_init(qp, dev, recv_cq, send_cq, &qp_attr);
