@@ -858,7 +858,11 @@ static inline u64 _ntc_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
 				  enum ntc_dma_access dma_dev,
 				  const char *func)
 {
-	u64 dma_addr = ntc->map_ops->buf_map(ntc, buf, size, dir, dma_dev);
+	u64 dma_addr;
+
+	WARN_ON(size == 0);
+
+	dma_addr = ntc->map_ops->buf_map(ntc, buf, size, dir, dma_dev);
 
 	dev_dbg(ntc_map_dev(ntc, dma_dev),
 			"DMA DEBUG Mapping buffer %p to dma addr %llx size %llx direction %d, by %s\n",
@@ -874,8 +878,11 @@ static inline u64 _ntc_resource_map(struct ntc_dev *ntc, u64 phys_addr,
 		u64 size, enum dma_data_direction dir,
 		enum ntc_dma_access dma_dev, const char *func)
 {
-	u64 dma_addr =
-			ntc->map_ops->res_map(ntc, phys_addr, size,
+	u64 dma_addr;
+
+	WARN_ON(size == 0);
+
+	dma_addr = ntc->map_ops->res_map(ntc, phys_addr, size,
 					dir, dma_dev);
 
 	dev_dbg(ntc_map_dev(ntc, dma_dev),
@@ -920,6 +927,8 @@ static inline void _ntc_resource_unmap(struct ntc_dev *ntc, u64 dma_addr,
 				enum ntc_dma_access dma_dev,
 				const char *func)
 {
+	WARN_ON(size == 0);
+
 	dev_dbg(ntc_map_dev(ntc, dma_dev),
 			"DMA DEBUG Unmapping dma addr %llx size %llx direction %d, by %s\n",
 			dma_addr, size, dir, func);
@@ -943,6 +952,8 @@ static inline void ntc_buf_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
 				    enum dma_data_direction dir,
 					enum ntc_dma_access dma_dev)
 {
+	WARN_ON(size == 0);
+
 	if (ntc->map_ops->buf_sync_cpu)
 		ntc->map_ops->buf_sync_cpu(ntc, addr, size, dir, dma_dev);
 }
@@ -963,6 +974,8 @@ static inline void ntc_buf_sync_dev(struct ntc_dev *ntc, u64 addr, u64 size,
 				    enum dma_data_direction dir,
 					enum ntc_dma_access dma_dev)
 {
+	WARN_ON(size == 0);
+
 	if (ntc->map_ops->buf_sync_dev)
 		ntc->map_ops->buf_sync_dev(ntc, addr, size, dir, dma_dev);
 }

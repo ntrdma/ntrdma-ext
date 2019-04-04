@@ -215,7 +215,8 @@ static inline int ntrdma_dev_cmd_hello_done_undone(struct ntrdma_dev *dev,
 	peer_cmd_recv_prod_addr =
 		ntc_peer_addr(dev->ntc, peer_prep->recv_prod_addr);
 
-	dev->peer_cmd_recv_buf_dma_addr = ntc_resource_map(dev->ntc,
+	dev->peer_cmd_recv_buf_dma_addr =
+			ntc_resource_map(dev->ntc,
 			peer_cmd_recv_buf_addr,
 			dev->cmd_recv_buf_size,
 			DMA_FROM_DEVICE,
@@ -225,7 +226,8 @@ static inline int ntrdma_dev_cmd_hello_done_undone(struct ntrdma_dev *dev,
 		goto err_peer_cmd_recv_buf_dma_addr;
 	}
 
-	dev->peer_cmd_recv_prod_dma_addr = ntc_resource_map(dev->ntc,
+	dev->peer_cmd_recv_prod_dma_addr =
+			ntc_resource_map(dev->ntc,
 			peer_cmd_recv_prod_addr,
 			sizeof(*dev->cmd_recv_prod_buf),
 			DMA_FROM_DEVICE,
