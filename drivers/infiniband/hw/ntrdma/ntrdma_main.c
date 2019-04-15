@@ -68,7 +68,6 @@ static int ntrdma_probe(struct ntc_driver *self,
 
 	return 0;
 
-	ntrdma_dev_deinit(dev);
 err_init:
 	ib_dealloc_device((void *)dev);
 	return rc;
@@ -79,7 +78,7 @@ static void ntrdma_remove(struct ntc_driver *self, struct ntc_dev *ntc)
 	struct ntrdma_dev *dev = ntc_get_ctx(ntc);
 
 	pr_devel("remove ntc %s\n", dev_name(&ntc->dev));
-
+	ntrdma_dev_ib_deinit(dev);
 	ntc_link_disable(ntc);
 	ntrdma_dev_deinit(dev);
 	ib_dealloc_device((void *)dev);

@@ -492,6 +492,10 @@ static inline int ntrdma_dev_eth_hello_done_undone(struct ntrdma_dev *dev,
 			eth->peer_tx_prod_buf_dma_addr);
 	return 0;
 undone:
+
+	WARN(eth->link == true,
+			"OMG!!! eth hello undone while eth link is up");
+
 	ntc_resource_unmap(dev->ntc,
 			eth->peer_tx_prod_buf_dma_addr,
 			(u64)sizeof(*eth->tx_prod_buf),

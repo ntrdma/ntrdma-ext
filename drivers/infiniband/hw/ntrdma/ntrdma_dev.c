@@ -186,7 +186,6 @@ void ntrdma_dev_deinit(struct ntrdma_dev *dev)
 	/* Prevent callbacks from the lower layer */
 	ntc_clear_ctx(dev->ntc);
 	ntrdma_debugfs_dev_del(dev);
-	ntrdma_dev_ib_deinit(dev);
 	ntrdma_dev_eth_deinit(dev);
 	ntrdma_dev_res_deinit(dev);
 	ntrdma_dev_cmd_deinit(dev);
@@ -202,7 +201,7 @@ void ntrdma_dev_enable(struct ntrdma_dev *dev)
 
 void ntrdma_dev_disable(struct ntrdma_dev *dev)
 {
-	ntrdma_dbg(dev, "not implemented\n");
+	ntrdma_dev_eth_disable(dev);
 }
 
 void ntrdma_dev_quiesce(struct ntrdma_dev *dev)
