@@ -99,9 +99,9 @@ err_vec:
 
 void ntrdma_dev_vbell_deinit(struct ntrdma_dev *dev)
 {
-	int i = 0;
+	int i;
 
-	for (; i < NTB_MAX_IRQS; i++)
+	for (i = 0; i < NTB_MAX_IRQS; i++)
 		tasklet_kill(&dev->vbell_work[i]);
 
 	ntc_buf_free(dev->ntc,

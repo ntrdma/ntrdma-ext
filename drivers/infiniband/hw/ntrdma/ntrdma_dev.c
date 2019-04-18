@@ -183,6 +183,8 @@ void ntrdma_dev_hello_deinit(struct ntrdma_dev *dev)
 
 void ntrdma_dev_deinit(struct ntrdma_dev *dev)
 {
+	/* Prevent callbacks from the lower layer */
+	ntc_clear_ctx(dev->ntc);
 	ntrdma_debugfs_dev_del(dev);
 	ntrdma_dev_ib_deinit(dev);
 	ntrdma_dev_eth_deinit(dev);
