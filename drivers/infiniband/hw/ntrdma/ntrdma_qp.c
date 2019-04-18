@@ -669,6 +669,14 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 	struct ntrdma_qp_cmd_cb *qpcb;
 	int rc;
 
+	spin_lock_bh(&qp->recv_prod_lock);
+	qp->recv_error = true;
+	spin_unlock_bh(&qp->recv_prod_lock);
+
+	spin_lock_bh(&qp->send_prod_lock);
+	qp->send_error = true;
+	spin_unlock_bh(&qp->send_prod_lock);
+
 	ntrdma_res_start_cmds(&qp->res);
 
 	qpcb = kmalloc_node(sizeof(*qpcb),
@@ -738,16 +746,21 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	struct ntrdma_qp *qp = ntrdma_res_qp(res);
 
 	spin_lock_bh(&qp->recv_prod_lock);
-	spin_lock_bh(&qp->send_prod_lock);
 	{
+		qp->recv_error = true;
 		qp->peer_recv_wqe_buf_dma_addr = 0;
 		qp->peer_recv_prod_dma_addr = 0;
+	}
+	spin_unlock_bh(&qp->recv_prod_lock);
+
+	spin_lock_bh(&qp->send_prod_lock);
+	{
+		qp->send_error = true;
 		qp->peer_send_wqe_buf_dma_addr = 0;
 		qp->peer_send_prod_dma_addr = 0;
 		qp->peer_send_vbell_idx = 0;
 	}
 	spin_unlock_bh(&qp->send_prod_lock);
-	spin_unlock_bh(&qp->recv_prod_lock);
 }
 
 static void ntrdma_rqp_free(struct ntrdma_rres *rres)
@@ -898,6 +911,7 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 
 	return 0;
 deinit:
+	tasklet_kill(&rqp->send_work);
 	ntc_buf_unmap(dev->ntc,
 			rqp->recv_wqe_buf_addr,
 			rqp->recv_wqe_buf_size,
