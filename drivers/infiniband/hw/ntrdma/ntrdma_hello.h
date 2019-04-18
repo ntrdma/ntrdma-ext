@@ -56,10 +56,6 @@ struct ntrdma_cmd_hello_prep {
 	u64 recv_prod_addr;
 };
 
-static u32 supported_versions[] = {
-		NTRDMA_VER_FIRST
-};
-
 void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
 			       struct ntrdma_cmd_hello_info *info);
 int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,

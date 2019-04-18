@@ -40,6 +40,11 @@ enum status {
 };
 
 #define MAX_SUPPORTED_VERSIONS 32
+
+static u32 supported_versions[] = {
+		NTRDMA_VER_FIRST
+};
+
 struct ntrdma_hello_phase1 {
 	/* protocol negotiation */
 	u32				versions[MAX_SUPPORTED_VERSIONS];
