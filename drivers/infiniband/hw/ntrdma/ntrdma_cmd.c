@@ -187,6 +187,8 @@ err_send_rsp_buf:
 err_send_buf_addr:
 	kfree(dev->cmd_send_buf);
 err_send_buf:
+	cancel_work_sync(&dev->cmd_send_work);
+	cancel_work_sync(&dev->cmd_recv_work);
 	return rc;
 }
 
