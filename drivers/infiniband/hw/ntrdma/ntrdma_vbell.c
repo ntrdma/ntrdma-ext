@@ -92,6 +92,8 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 err_buf:
 	kfree(dev->vbell_vec);
 err_vec:
+	for (i = 0; i < NTB_MAX_IRQS; i++)
+		tasklet_kill(&dev->vbell_work[i]);
 	return rc;
 }
 
