@@ -321,6 +321,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	return 0;
 
 deinit:
+	tasklet_kill(&qp->send_work);
 	ntrdma_cq_del_poll(qp->send_cq, &qp->send_poll);
 	ntrdma_cq_del_poll(qp->recv_cq, &qp->recv_poll);
 	kfree(qp->recv_cqe_buf);
