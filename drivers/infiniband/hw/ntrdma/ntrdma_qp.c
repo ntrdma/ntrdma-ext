@@ -183,7 +183,6 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->access = 0;
 
 	qp->rqp_key = -1;
-	qp->ring_ready = false;
 
 	qp->send_wqe_sg_cap = attr->send_wqe_sg_cap;
 	qp->recv_wqe_sg_cap = attr->recv_wqe_sg_cap;
@@ -741,7 +740,6 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	spin_lock_bh(&qp->recv_prod_lock);
 	spin_lock_bh(&qp->send_prod_lock);
 	{
-		qp->ring_ready = false;
 		qp->peer_recv_wqe_buf_dma_addr = 0;
 		qp->peer_recv_prod_dma_addr = 0;
 		qp->peer_send_wqe_buf_dma_addr = 0;

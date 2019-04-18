@@ -99,9 +99,6 @@ struct ntrdma_qp {
 	/* key of connected remote queue pair, or -1 if not connected */
 	u32			rqp_key;
 
-	/* rings are prepared for copying to the peer */
-	bool		ring_ready;
-
 	/* sizes and capacities of single work queue entries */
 	int			send_wqe_sg_cap;
 	int			recv_wqe_sg_cap;

@@ -641,7 +641,6 @@ static int ntrdma_debugfs_qp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "send_error %u\n", qp->send_error);
 	seq_printf(s, "send_abort %u\n", qp->send_abort);
 	seq_printf(s, "rqp_key %u\n", qp->rqp_key);
-	seq_printf(s, "ring_ready %u\n", qp->ring_ready);
 	seq_printf(s, "send_wqe_sg_cap %u\n", qp->send_wqe_sg_cap);
 	seq_printf(s, "recv_wqe_sg_cap %u\n", qp->recv_wqe_sg_cap);
 	seq_printf(s, "send_wqe_size %#zx\n", qp->send_wqe_size);
