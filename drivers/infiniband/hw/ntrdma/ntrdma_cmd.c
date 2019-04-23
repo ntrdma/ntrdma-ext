@@ -900,10 +900,17 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 				ntc_peer_addr(dev->ntc,
 						rmr->sg_list[i].addr);
 
+
+		ntrdma_vdbg(dev,
+				"sg %d addr %llx(%llx) len %llx\n",
+				i, rmr->sg_list[i].addr,
+				remote_phys_addr,
+				rmr->sg_list[i].len);
+
 		rmr->sg_list[i].addr =
 				ntc_resource_map(dev->ntc,
 				remote_phys_addr,
-				cmd->sg_list[i].len,
+				rmr->sg_list[i].len,
 				DMA_FROM_DEVICE,
 				IOAT_DEV_ACCESS);
 
@@ -919,10 +926,10 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 	rsp->hdr.status = 0;
 	return 0;
 err_map:
-	for (i--; i <= 0 ; i--) {
+	for (--i; i >= 0 ; i--) {
 		ntc_resource_unmap(dev->ntc,
 				rmr->sg_list[i].addr,
-				cmd->sg_list[i].len,
+				rmr->sg_list[i].len,
 				DMA_FROM_DEVICE,
 				IOAT_DEV_ACCESS);
 		rmr->sg_list[i].addr = 0;
