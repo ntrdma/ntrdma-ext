@@ -44,6 +44,7 @@
 #include <linux/msi.h>
 
 #include <linux/ntc.h>
+#include <linux/ntc_trace.h>
 
 #define DRIVER_NAME			"ntc_ntb"
 #define DRIVER_DESCRIPTION		"NTC Non Transparent Bridge"

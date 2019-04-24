@@ -36,6 +36,7 @@
 #include <linux/slab.h>
 
 #include <rdma/ib_user_verbs.h>
+#include <linux/ntc_trace.h>
 
 #include "ntrdma_dev.h"
 #include "ntrdma_cmd.h"
@@ -732,6 +733,9 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			/* transform work request into the entry */
 			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr,
 						   qp->send_wqe_sg_cap);
+			TRACE("OPCODE %d: dev %p, flags %x, addr %llx, rc = %d\n"
+					, ibwr->opcode, dev, ibwr->send_flags,
+					wqe->rdma_addr, rc);
 			if (rc)
 				break;
 
@@ -814,6 +818,8 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 			/* transform work request to queue entry */
 			rc = ntrdma_ib_recv_to_wqe(wqe, ibwr,
 						   qp->recv_wqe_sg_cap);
+			TRACE("OPCODE %d: wrid %llu, rc = %d\n"
+					, wqe->op_code, ibwr->wr_id, rc);
 			if (rc)
 				break;
 
