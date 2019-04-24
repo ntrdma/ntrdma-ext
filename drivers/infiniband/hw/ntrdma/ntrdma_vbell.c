@@ -320,18 +320,28 @@ int ntrdma_dev_vbell_add(struct ntrdma_dev *dev,
 {
 	int rc;
 
-	if (unlikely(idx >= NTRDMA_DEV_VBELL_COUNT))
+	if (unlikely(idx >= NTRDMA_DEV_VBELL_COUNT)) {
 		rc = -EINVAL;
+		ntrdma_err(dev,
+				"vbell add failed, idx %d >= %d\n",
+				idx, NTRDMA_DEV_VBELL_COUNT);
+		goto err;
+	}
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	{
-		if (!dev->vbell_enable)
+		if (!dev->vbell_enable) {
 			rc = -EINVAL;
-		else
-			rc = ntrdma_vbell_add(&dev->vbell_vec[idx], vbell);
-	}
-	spin_unlock_bh(&dev->vbell_self_lock);
+			ntrdma_err(dev,
+					"vbell add failed, vbell not enabled\n");
+			goto err_unlock;
+		}
 
+		rc = ntrdma_vbell_add(&dev->vbell_vec[idx], vbell);
+	}
+err_unlock:
+	spin_unlock_bh(&dev->vbell_self_lock);
+err:
 	return rc;
 }
 
