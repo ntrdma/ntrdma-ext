@@ -81,11 +81,12 @@ struct ntrdma_res {
 #define ntrdma_res_dev(res) ntrdma_obj_dev(&(res)->obj)
 
 int ntrdma_res_init(struct ntrdma_res *res,
-		    struct ntrdma_dev *dev,
-		    struct ntrdma_kvec *vec,
-		    int (*enable)(struct ntrdma_res *res),
-		    int (*disable)(struct ntrdma_res *res),
-		    void (*reset)(struct ntrdma_res *res));
+		struct ntrdma_dev *dev,
+		struct ntrdma_kvec *vec,
+		int (*enable)(struct ntrdma_res *res),
+		int (*disable)(struct ntrdma_res *res),
+		void (*reset)(struct ntrdma_res *res),
+		int reserved_key);
 
 void ntrdma_res_deinit(struct ntrdma_res *res);
 

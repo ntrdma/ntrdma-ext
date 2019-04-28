@@ -90,7 +90,7 @@ struct ntrdma_kvec {
 };
 
 /* Allocate an empty vector with a capacity */
-int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, int node);
+int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, int node, int first_key);
 /* Destroy a vector */
 void ntrdma_kvec_deinit(struct ntrdma_kvec *vec);
 /* Reserve the next available key */

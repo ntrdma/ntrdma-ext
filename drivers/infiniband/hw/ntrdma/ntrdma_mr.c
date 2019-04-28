@@ -96,7 +96,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr,
 				mr->sg_list[0].addr, addr);
 
 	rc = ntrdma_res_init(&mr->res, dev, &dev->mr_vec,
-			ntrdma_mr_enable, ntrdma_mr_disable, NULL);
+			ntrdma_mr_enable, ntrdma_mr_disable, NULL, -1);
 	if (rc)
 		goto err;
 

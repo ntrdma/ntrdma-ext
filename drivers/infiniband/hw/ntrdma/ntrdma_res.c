@@ -56,13 +56,19 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 	INIT_LIST_HEAD(&dev->cq_list);
 	INIT_LIST_HEAD(&dev->res_list);
 
-	rc = ntrdma_kvec_init(&dev->mr_vec, NTRDMA_RES_VEC_INIT_CAP, dev->node);
+	rc = ntrdma_kvec_init(&dev->mr_vec,
+			NTRDMA_RES_VEC_INIT_CAP,
+			dev->node, 0);
+
 	if (rc) {
 		ntrdma_dbg(dev, "mr vec failed\n");
 		goto err_mr;
 	}
 
-	rc = ntrdma_kvec_init(&dev->qp_vec, NTRDMA_RES_VEC_INIT_CAP, dev->node);
+	rc = ntrdma_kvec_init(&dev->qp_vec,
+			NTRDMA_RES_VEC_INIT_CAP,
+			dev->node, 2);
+
 	if (rc) {
 		ntrdma_dbg(dev, "qp vec failed\n");
 		goto err_qp;
@@ -72,13 +78,19 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 
 	INIT_LIST_HEAD(&dev->rres_list);
 
-	rc = ntrdma_vec_init(&dev->rmr_vec, NTRDMA_RES_VEC_INIT_CAP, dev->node);
+	rc = ntrdma_vec_init(&dev->rmr_vec,
+			NTRDMA_RES_VEC_INIT_CAP,
+			dev->node);
+
 	if (rc) {
 		ntrdma_dbg(dev, "rmr vec failed\n");
 		goto err_rmr;
 	}
 
-	rc = ntrdma_vec_init(&dev->rqp_vec, NTRDMA_RES_VEC_INIT_CAP, dev->node);
+	rc = ntrdma_vec_init(&dev->rqp_vec,
+			NTRDMA_RES_VEC_INIT_CAP,
+			dev->node);
+
 	if (rc) {
 		ntrdma_dbg(dev, "rqp vec failed\n");
 		goto err_rqp;
@@ -207,10 +219,11 @@ struct ntrdma_rres *ntrdma_dev_rres_look(struct ntrdma_dev *dev,
 }
 
 int ntrdma_res_init(struct ntrdma_res *res,
-		    struct ntrdma_dev *dev, struct ntrdma_kvec *vec,
-		    int (*enable)(struct ntrdma_res *res),
-		    int (*disable)(struct ntrdma_res *res),
-		    void (*reset)(struct ntrdma_res *res))
+		struct ntrdma_dev *dev, struct ntrdma_kvec *vec,
+		int (*enable)(struct ntrdma_res *res),
+		int (*disable)(struct ntrdma_res *res),
+		void (*reset)(struct ntrdma_res *res),
+		int reserved_key)
 {
 	int rc;
 
@@ -227,16 +240,19 @@ int ntrdma_res_init(struct ntrdma_res *res,
 	mutex_init(&res->lock);
 	init_completion(&res->cmds_done);
 
-	mutex_lock(&dev->res_lock);
-	{
-		res->key = ntrdma_kvec_reserve_key(res->vec, dev->node);
-		if (res->key < 0) {
-			rc = -ENOMEM;
-			goto err_key;
+	if (reserved_key == -1) {
+		mutex_lock(&dev->res_lock);
+		{
+			res->key = ntrdma_kvec_reserve_key(res->vec, dev->node);
+			if (res->key < 0) {
+				rc = -ENOMEM;
+				goto err_key;
+			}
 		}
+		mutex_unlock(&dev->res_lock);
+	} else {
+		res->key = reserved_key;
 	}
-	mutex_unlock(&dev->res_lock);
-
 	return 0;
 
 err_key:
