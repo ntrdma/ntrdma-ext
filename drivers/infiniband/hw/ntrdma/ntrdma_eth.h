@@ -116,4 +116,10 @@ struct ntrdma_eth {
 #define ntrdma_net_eth(__net) \
 	netdev_priv(__net)
 
+static inline struct net_device *ntrdma_get_net(struct ntrdma_dev *dev)
+{
+	struct ntrdma_eth *eth = dev->eth;
+
+	return eth->napi.dev;
+}
 #endif

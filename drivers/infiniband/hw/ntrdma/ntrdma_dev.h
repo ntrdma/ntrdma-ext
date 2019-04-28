@@ -185,6 +185,10 @@ struct ntrdma_dev {
 
 	/* virtual ethernet device */
 	struct ntrdma_eth		*eth;
+
+	/* GRH */
+	struct ib_grh	grh;
+	u64 grh_dma_addr;
 };
 
 #define ntrdma_ib_dev(__ibdev) \
