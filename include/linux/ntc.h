@@ -884,7 +884,6 @@ static inline u64 _ntc_resource_map(struct ntc_dev *ntc, u64 phys_addr,
 
 	dma_addr = ntc->map_ops->res_map(ntc, phys_addr, size,
 					dir, dma_dev);
-
 	dev_vdbg(ntc_map_dev(ntc, dma_dev),
 			"DMA DEBUG Mapping physical addr %llx to dma addr %llx size %llx direction %d, by %s\n",
 			phys_addr, dma_addr, size, dir, func);
