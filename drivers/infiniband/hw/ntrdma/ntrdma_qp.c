@@ -473,6 +473,8 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 
 err:
 	ntrdma_res_done_cmds(&qp->res);
+
+	ntrdma_qp_recv_work(qp);
 	return rc;
 }
 
@@ -655,11 +657,14 @@ static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	if (qp->state > NTRDMA_QPS_RESET) {
 		qpcb->cb.cmd_prep = ntrdma_qp_modify_prep;
 		qpcb->cb.rsp_cmpl = ntrdma_qp_modify_cmpl;
-		ntrdma_dev_cmd_add(dev, &qpcb->cb);
+		ntrdma_dev_cmd_add_unsafe(dev, &qpcb->cb);
 	} else {
 		ntrdma_res_done_cmds(&qp->res);
 		kfree(qpcb);
+		ntrdma_qp_recv_work(qp);
 	}
+
+
 
 	return 0;
 }
@@ -1086,7 +1091,11 @@ int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp)
 
 void ntrdma_qp_recv_post_done(struct ntrdma_qp *qp)
 {
-	ntrdma_qp_recv_work(qp);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+
+	if (dev->res_enable)
+		ntrdma_qp_recv_work(qp);
+
 	mutex_unlock(&qp->recv_post_lock);
 }
 

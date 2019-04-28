@@ -578,7 +578,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 					IB_LINK_LAYER_UNSPECIFIED)) {
 			ntrdma_dbg(dev, "invalid modify\n");
 			rc = -EINVAL;
-			goto err_attr;
+			goto unlock_exit;
 		}
 
 		if (ibqp_mask & IB_QP_STATE)
@@ -586,25 +586,27 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 
 		if (ibqp_mask & IB_QP_ACCESS_FLAGS)
 			qp->access = ibqp_attr->qp_access_flags;
-
+			
 		if (ibqp_mask & IB_QP_DEST_QPN)
 			qp->rqp_key = ibqp_attr->dest_qp_num;
+			
+	rc = 0;
 
-		mutex_lock(&dev->res_lock);
-		{
-			rc = ntrdma_qp_modify(qp);
-			/* FIXME: unchecked */
+	mutex_lock(&dev->res_lock);
+
+	if (dev->res_enable) {
+		rc = ntrdma_qp_modify(qp);
+		if (!WARN(rc, "ntrdma_qp_modify: failed rc = %d", rc))
 			ntrdma_dev_cmd_submit(dev);
-		}
+
 		mutex_unlock(&dev->res_lock);
 
 		ntrdma_res_wait_cmds(&qp->res);
+	} else {
+		mutex_unlock(&dev->res_lock);
 	}
-	ntrdma_res_unlock(&qp->res);
 
-	return 0;
-
-err_attr:
+unlock_exit:
 	ntrdma_res_unlock(&qp->res);
 	return rc;
 }

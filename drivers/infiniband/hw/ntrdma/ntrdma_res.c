@@ -111,8 +111,6 @@ void ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 
 	mutex_lock(&dev->res_lock);
 	{
-		dev->res_enable = 1;
-
 		list_for_each_entry(res, &dev->res_list, obj.dev_entry) {
 			rc = res->enable(res);
 			if (unlikely(rc)) {
@@ -120,9 +118,12 @@ void ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 						res->enable);
 			}
 		}
-
+		ntrdma_dev_cmd_submit(dev);
 		ntrdma_dev_cmd_finish(dev);
 	}
+
+	dev->res_enable = 1;
+
 	mutex_unlock(&dev->res_lock);
 
 	return;

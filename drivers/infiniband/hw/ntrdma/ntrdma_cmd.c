@@ -48,6 +48,7 @@
 #define NTRDMA_RES_VBELL		1
 #define NTRDMA_RRES_VBELL		0
 #define MAX_CMDS 16
+#define CMD_TIMEOUT_MSEC 5000 /*5 sec*/
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev);
 static void ntrdma_cmd_send_work_cb(struct work_struct *ws);
@@ -496,12 +497,19 @@ void ntrdma_dev_cmd_disable(struct ntrdma_dev *dev)
 	mutex_unlock(&dev->cmd_send_lock);
 }
 
+void ntrdma_dev_cmd_add_unsafe(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
+{
+	WARN(!mutex_is_locked(&dev->cmd_send_lock),
+			"Entered %s, without locking cmd_send_lock\n",
+			__func__);
+
+	list_add_tail(&cb->dev_entry, &dev->cmd_pend_list);
+}
+
 void ntrdma_dev_cmd_add(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
 {
 	mutex_lock(&dev->cmd_send_lock);
-	{
-		list_add_tail(&cb->dev_entry, &dev->cmd_pend_list);
-	}
+	ntrdma_dev_cmd_add_unsafe(dev, cb);
 	mutex_unlock(&dev->cmd_send_lock);
 }
 
@@ -512,13 +520,17 @@ void ntrdma_dev_cmd_submit(struct ntrdma_dev *dev)
 
 void ntrdma_dev_cmd_finish(struct ntrdma_dev *dev)
 {
-	mutex_lock(&dev->cmd_send_lock);
-	{
-		wait_event_cmd(dev->cmd_send_cond, ntrdma_cmd_done(dev),
-			       mutex_unlock(&dev->cmd_send_lock),
-			       mutex_lock(&dev->cmd_send_lock));
-	}
-	mutex_unlock(&dev->cmd_send_lock);
+	int ret;
+
+	ret = wait_event_timeout(dev->cmd_send_cond,
+			ntrdma_cmd_done(dev), CMD_TIMEOUT_MSEC);
+
+	if (!ret)
+		ntrdma_err(dev,
+				"TIMEOUT: waiting for all pending commands to complete, after %d msec\n",
+				CMD_TIMEOUT_MSEC);
+
+	/*TODO: Move to reset*/
 }
 
 static inline void ntrdma_cmd_send_vbell_clear(struct ntrdma_dev *dev)
@@ -655,6 +667,8 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 		}
 	}
 	mutex_unlock(&dev->cmd_send_lock);
+
+	wake_up(&dev->cmd_send_cond);
 }
 
 static void ntrdma_cmd_send_work_cb(struct work_struct *ws)
