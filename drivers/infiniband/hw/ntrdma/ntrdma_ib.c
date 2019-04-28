@@ -101,20 +101,34 @@ static int ntrdma_query_gid(struct ib_device *ibdev,
 	return 0;
 }
 
+struct ntrdma_ah {
+	struct ib_ah ibah;
+	struct rdma_ah_attr attr;
+};
+
 /* not implemented / not required? */
 static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
 				      struct rdma_ah_attr *ah_attr,
 				      struct ib_udata *udata)
 {
-	pr_debug("not implemented, returning %d\n", -ENOSYS);
-	return ERR_PTR(-ENOSYS);
+	struct ntrdma_ah *ah = kzalloc(sizeof(*ah), GFP_ATOMIC);
+
+	if (!ah)
+		return ERR_PTR(-ENOMEM);
+
+	ah->attr = *ah_attr;
+
+	return &ah->ibah;
+
 }
 
 /* not implemented / not required? */
 static int ntrdma_destroy_ah(struct ib_ah *ibah)
 {
-	pr_debug("not implemented, returning %d\n", -ENOSYS);
-	return -ENOSYS;
+	struct ntrdma_ah *ah = container_of(ibah, struct ntrdma_ah, ibah);
+
+	kfree(ah);
+	return 0;
 }
 
 /* not implemented / not required? */
