@@ -551,6 +551,115 @@ static int ntrdma_query_qp(struct ib_qp *ibqp,
 	return 0;
 }
 
+static void ntrdma_modify_qp_debug(struct ib_qp *ibqp,
+		struct ib_qp_attr *ibqp_attr,
+		int ibqp_mask,
+		struct ib_udata *ibudata)
+{
+	if (ibqp_mask & IB_QP_STATE) {
+		pr_debug("%s: IB_QP_STATE %d\n",
+				__func__, ibqp_attr->qp_state);
+	}
+
+	if (ibqp_mask & IB_QP_CUR_STATE) {
+		pr_debug("%s: IB_QP_CUR_STATE %d\n",
+				__func__, ibqp_attr->cur_qp_state);
+	}
+
+	if (ibqp_mask & IB_QP_EN_SQD_ASYNC_NOTIFY) {
+		pr_debug("%s: IB_QP_EN_SQD_ASYNC_NOTIFY %d\n",
+				__func__, ibqp_attr->en_sqd_async_notify);
+	}
+
+	if (ibqp_mask & IB_QP_ACCESS_FLAGS) {
+		pr_debug("%s: IB_QP_ACCESS_FLAGS %d\n",
+				__func__, ibqp_attr->qp_access_flags);
+	}
+
+	if (ibqp_mask & IB_QP_PKEY_INDEX) {
+		pr_debug("%s: IB_QP_PKEY_INDEX %d\n",
+				__func__, ibqp_attr->pkey_index);
+	}
+
+	if (ibqp_mask & IB_QP_PORT) {
+		pr_debug("%s: IB_QP_PORT %d\n",
+				__func__, ibqp_attr->port_num);
+	}
+
+	if (ibqp_mask & IB_QP_QKEY) {
+		pr_debug("%s: IB_QP_QKEY %d\n",
+				__func__, ibqp_attr->qkey);
+	}
+
+	if (ibqp_mask & IB_QP_AV) {
+		pr_debug("%s: IB_QP_AV\n",
+				__func__);
+	}
+
+	if (ibqp_mask & IB_QP_PATH_MTU) {
+		pr_debug("%s: IB_QP_PATH_MTU %d\n",
+				__func__, ibqp_attr->path_mtu);
+	}
+
+	if (ibqp_mask & IB_QP_TIMEOUT) {
+		pr_debug("%s: IB_QP_TIMEOUT %d\n",
+				__func__, ibqp_attr->timeout);
+	}
+
+	if (ibqp_mask & IB_QP_RETRY_CNT) {
+		pr_debug("%s: IB_QP_RETRY_CNT %d\n",
+				__func__, ibqp_attr->retry_cnt);
+	}
+
+	if (ibqp_mask & IB_QP_RNR_RETRY) {
+		pr_debug("%s: IB_QP_RNR_RETRY %d\n",
+				__func__, ibqp_attr->rnr_retry);
+	}
+
+	if (ibqp_mask & IB_QP_RQ_PSN) {
+		pr_debug("%s: IB_QP_RQ_PSN %d\n",
+				__func__, ibqp_attr->rq_psn);
+	}
+
+	if (ibqp_mask & IB_QP_MAX_QP_RD_ATOMIC) {
+		pr_debug("%s: IB_QP_MAX_QP_RD_ATOMIC %d\n",
+				__func__, ibqp_attr->max_rd_atomic);
+	}
+
+	if (ibqp_mask & IB_QP_ALT_PATH)
+		pr_debug("%s: IB_QP_ALT_PATH\n", __func__);
+
+	if (ibqp_mask & IB_QP_MIN_RNR_TIMER) {
+		pr_debug("%s: IB_QP_MIN_RNR_TIMER %d\n",
+				__func__, ibqp_attr->min_rnr_timer);
+	}
+
+	if (ibqp_mask & IB_QP_SQ_PSN) {
+		pr_debug("%s: IB_QP_SQ_PSN %d\n",
+				__func__, ibqp_attr->sq_psn);
+	}
+
+	if (ibqp_mask & IB_QP_MAX_DEST_RD_ATOMIC) {
+		pr_debug("%s: IB_QP_MAX_DEST_RD_ATOMIC %d\n",
+				__func__, ibqp_attr->max_dest_rd_atomic);
+	}
+
+	if (ibqp_mask & IB_QP_PATH_MIG_STATE) {
+		pr_debug("%s: IB_QP_PATH_MIG_STATE %d\n",
+				__func__, ibqp_attr->path_mig_state);
+	}
+
+	if (ibqp_mask & IB_QP_CAP) {
+		pr_debug("%s: IB_QP_CAP\n",
+				__func__);
+	}
+
+	if (ibqp_mask & IB_QP_DEST_QPN) {
+		pr_debug("%s: IB_QP_DEST_QPN %d\n",
+				__func__, ibqp_attr->dest_qp_num);
+	}
+}
+
 static int ntrdma_modify_qp(struct ib_qp *ibqp,
 			    struct ib_qp_attr *ibqp_attr,
 			    int ibqp_mask,
@@ -563,6 +672,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	qp = ntrdma_ib_qp(ibqp);
 	dev = ntrdma_qp_dev(qp);
 
+	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask, ibudata);
 	ntrdma_res_lock(&qp->res);
 	{
 		cur_state = ibqp_mask & IB_QP_CUR_STATE ?
