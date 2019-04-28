@@ -35,11 +35,31 @@
 #include "ntrdma_mr.h"
 #include "ntrdma_zip.h"
 
+
+struct dma_res_unmap_ctx {
+	struct ntrdma_dev *dev;
+	u64 dma_addr;
+	u64 len;
+};
+
+void dma_res_unmap_cb(void *cb_ctx)
+{
+	struct dma_res_unmap_ctx *ctx = cb_ctx;
+
+	ntc_resource_unmap(ctx->dev->ntc,
+			ctx->dma_addr,
+			ctx->len,
+			DMA_FROM_DEVICE,
+			IOAT_DEV_ACCESS);
+
+	kfree(ctx);
+}
+
 int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
-		    struct ntrdma_wr_sge *dst_sg_list,
-		    struct ntrdma_wr_sge *src_sg_list,
-		    u32 dst_sg_count, u32 src_sg_count,
-		    bool rdma_read)
+		struct ntrdma_wr_sge *dst_sg_list,
+		struct ntrdma_wr_sge *src_sg_list,
+		u32 dst_sg_count, u32 src_sg_count,
+		bool rdma_read)
 {
 	struct ntrdma_mr *mr = NULL;
 	struct ntrdma_rmr *rmr = NULL;
@@ -51,6 +71,9 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 	u64 dst, src;
 	size_t len;
 	int rc;
+	bool is_dma_mr = false;
+	bool is_dma_rmr = false;
+	u64 dst_len, src_len;
 
 	for (;;) {
 		/* Advance the source work request entry */
@@ -95,8 +118,12 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 			}
 		}
 
+		if (src_sg_list[src_i].key == NTRDMA_RESERVED_DMA_LEKY) {
+			is_dma_mr = true;
+		}
+
 		/* Get a reference to the source memory region */
-		if (!mr) {
+		if (!mr && !is_dma_mr) {
 			if (src_i == src_sg_count) {
 				ntrdma_err(dev,
 						"Error out of bounds src work request %d\n",
@@ -119,7 +146,7 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 		}
 
 		/* Advance the source memory region entry */
-		while (mr_off >= mr->sg_list[mr_i].len) {
+		while (!is_dma_mr && mr_off >= mr->sg_list[mr_i].len) {
 			mr_off -= mr->local_dma[mr_i].len;
 
 			if (++mr_i == mr->sg_count) {
@@ -137,8 +164,19 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 					IOAT_DEV_ACCESS);
 		}
 
+		if (is_dma_mr) {
+			ntc_buf_sync_dev(dev->ntc,
+					src_sg_list[src_i].addr,
+					src_sg_list[src_i].len,
+					DMA_BIDIRECTIONAL,
+					IOAT_DEV_ACCESS);
+		}
+
+		if (dst_sg_list[dst_i].key == NTRDMA_RESERVED_DMA_LEKY)
+			is_dma_rmr = true;
+
 		/* Get a reference to the destination memory region */
-		if (!rmr) {
+		if (!rmr && !is_dma_rmr) {
 			if (dst_i == dst_sg_count) {
 				ntrdma_err(dev,
 						"Error out of bounds dst work request %d\n",
@@ -161,7 +199,7 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 		}
 
 		/* Advance the destination memory region entry */
-		while (rmr_off >= rmr->sg_list[rmr_i].len) {
+		while (!is_dma_rmr && rmr_off >= rmr->sg_list[rmr_i].len) {
 			rmr_off -= rmr->sg_list[rmr_i].len;
 
 			if (++rmr_i == rmr->sg_count) {
@@ -174,25 +212,67 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 		}
 
 		/* Now we have resolved one source and destination */
+		if (!is_dma_rmr) {
+			dst = rmr->sg_list[rmr_i].addr + rmr_off;
+			dst_len = min_t(size_t,
+					dst_sg_list[dst_i].len - dst_off,
+					rmr->sg_list[rmr_i].len - rmr_off);
 
-		dst = rmr->sg_list[rmr_i].addr + rmr_off;
+			src = mr->local_dma[mr_i].addr + mr_off;
+			src_len = min_t(size_t,
+					src_sg_list[src_i].len - src_off,
+					mr->local_dma[mr_i].len - mr_off);
+			len = min_t(size_t, dst_len, src_len);
+			ntc_req_memcpy(dev->ntc, req,
+					dst, src, len,
+					false, NULL, NULL);
+		} else {
+			struct dma_res_unmap_ctx *ctx;
+			u64 peer_phys = ntc_peer_addr(dev->ntc,
+					dst_sg_list[dst_i].addr + dst_off);
 
-		src = mr->local_dma[mr_i].addr + mr_off;
+			ctx = kmalloc_node(sizeof(*ctx), GFP_ATOMIC,
+					dev_to_node(&dev->ntc->dev));
 
-		len = min_t(size_t,
-			    min_t(u32,
-				  dst_sg_list[dst_i].len - dst_off,
-				  src_sg_list[src_i].len - src_off),
-			    min_t(u64,
-				  rmr->sg_list[rmr_i].len - rmr_off,
-				  mr->local_dma[mr_i].len - mr_off));
+			if (!ctx) {
+				ntrdma_err(dev,
+						"Failed map ctx for DMA MR\n");
+				rc = -EINVAL;
+				goto err;
+			}
+
+			dst_len = dst_sg_list[dst_i].len - dst_off;
+
+			dst = ntc_resource_map(dev->ntc,
+					peer_phys,
+					dst_len,
+					DMA_FROM_DEVICE,
+					IOAT_DEV_ACCESS);
+
+			if (!dst) {
+				kfree(ctx);
+				ntrdma_err(dev,
+						"Failed resource map %#llx len %llu\n",
+						peer_phys, dst_len);
+				rc = -EINVAL;
+				goto err;
+			}
+
+			src = src_sg_list[src_i].addr;
+			src_len = src_sg_list[src_i].len;
+			len = min_t(size_t, dst_len, src_len);
+
+			ctx->dev = dev;
+			ctx->dma_addr = dst;
+			ctx->len = dst_len;
+
+			ntc_req_memcpy(dev->ntc, req,
+					dst, src, len,
+					false, dma_res_unmap_cb, ctx);
+		}
 
 		dev_vdbg(&dev->ntc->dev, "request memcpy dst %llx src %llx len %zu\n",
-				 dst, src, len);
-
-		ntc_req_memcpy(dev->ntc, req,
-			       dst, src, len,
-			       false, NULL, NULL);
+								 dst, src, len);
 
 		/* Advance the offsets and continue to the next */
 
@@ -212,6 +292,9 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 		}
 
 		total_len += len;
+
+		is_dma_mr = false;
+		is_dma_rmr = false;
 	}
 
 err:
@@ -240,6 +323,7 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 	u64 dma;
 	size_t len;
 	int rc;
+	bool is_dma_mr = false;
 
 	for (;;) {
 		/* Advance the work request entry */
@@ -258,8 +342,11 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 			}
 		}
 
+		if (dst_sg_list[sg_i].key == NTRDMA_RESERVED_DMA_LEKY)
+			is_dma_mr = true;
+
 		/* Get a reference to the memory region */
-		if (!mr) {
+		if (!is_dma_mr && !mr) {
 			mr = ntrdma_dev_mr_look(dev, dst_sg_list[sg_i].key);
 			if (!mr) {
 				ntrdma_err(dev, "Invalid MR key %u\n",
@@ -273,7 +360,7 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 		}
 
 		/* Advance the memory region entry */
-		while (mr_off >= mr->local_dma[mr_i].len) {
+		while (!is_dma_mr && mr_off >= mr->local_dma[mr_i].len) {
 			mr_off -= mr->local_dma[mr_i].len;
 
 			if (++mr_i == mr->sg_count) {
@@ -293,16 +380,31 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 
 		/* Now we have resolved one range to sync */
 
-		dma = mr->local_dma[mr_i].addr + mr_off;
+		if (is_dma_mr) {
+			ntc_buf_sync_cpu(dev->ntc,
+					dst_sg_list[sg_i].addr,
+					dst_sg_list[sg_i].len,
+					DMA_BIDIRECTIONAL,
+					NTB_DEV_ACCESS);
+		}
 
-		len = min_t(size_t,
-			    dst_sg_list[sg_i].len - sg_off,
-			    mr->local_dma[mr_i].len - mr_off);
+		if (!is_dma_mr) {
+			dma = mr->local_dma[mr_i].addr + mr_off;
+			len = min_t(size_t,
+					dst_sg_list[sg_i].len - sg_off,
+					mr->local_dma[mr_i].len - mr_off);
+		} else {
+			dma = dst_sg_list[sg_i].addr;
+			len = dst_sg_list[sg_i].len - sg_off;
+
+		}
 
 		/* Advance the offsets and continue to the next */
 
 		sg_off += len;
 		mr_off += len;
+
+		is_dma_mr = false;
 	}
 
 err:

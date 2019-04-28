@@ -50,6 +50,7 @@
 
 #define NTRDMA_DEV_VBELL_COUNT 0x400
 #define NTRDMA_DEV_VBELL_START 0x8
+#define NTRDMA_RESERVED_DMA_LEKY 0xFFFF
 
 struct vbell_work_data_s {
 	struct ntrdma_dev *dev;
