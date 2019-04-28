@@ -192,7 +192,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	if (rc)
 		goto err_add;
 
-	ntrdma_dbg(dev, "added cq %p\n", cq);
+	ntrdma_dbg(dev, "added cq %p ib cq %p\n", cq, &cq->ibcq);
 
 	return &cq->ibcq;
 
@@ -466,7 +466,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	qp->ibqp.qp_num = qp->res.key;
 	qp->state = IB_QPS_RESET;
 
-	ntrdma_dbg(dev, "added qp%d\n", qp->res.key);
+	ntrdma_dbg(dev, "added qp%d type %d\n",
+			qp->res.key, ibqp_attr->qp_type);
 
 	return &qp->ibqp;
 
@@ -712,8 +713,11 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 	/* verify the qp state and lock for posting sends */
 	rc = ntrdma_qp_send_post_start(qp);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev,
+				"ntrdma_qp_send_post_start failed %d\n", rc);
 		goto out;
+	}
 
 	while (ibwr) {
 		/* get the next posting range in the ring */
@@ -721,7 +725,8 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 		if (pos == end) {
 			/* posting too many oustanding requests */
-			ntrdma_dbg(dev, "posting too many sends\n");
+			ntrdma_err(dev,
+					"posting too many sends\n");
 			rc = -EINVAL;
 			break;
 		}
@@ -859,7 +864,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	void *umem;
 	int rc, i, count;
 
-	ntrdma_vdbg(dev, "called\n");
+	ntrdma_vdbg(dev, "called user addr %llx len %llx:\n",
+			virt_addr, length);
 
 	if (!is_canonical(virt_addr)) {
 		rc = -EINVAL;
@@ -911,12 +917,12 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	ntrdma_dbg(dev, "count %x\n", mr->sg_count);
 
 	for (i = 0; i < count; ++i) {
-		ntrdma_dbg(dev, "local sgl[%x] dma %llx len %llx\n",
-			   i, mr->local_dma[i].addr,
-			   mr->local_dma[i].len);
-		ntrdma_dbg(dev, "remote sgl[%x] dma %llx len %llx\n",
-			   i, mr->remote_dma[i].addr,
-			   mr->remote_dma[i].len);
+		ntrdma_dbg(dev, "local sgl[%d] dma %#llx len %#llx\n",
+				i, mr->local_dma[i].addr,
+				mr->local_dma[i].len);
+		ntrdma_dbg(dev, "remote sgl[%d] dma %#llx len %#llx\n",
+				i, mr->remote_dma[i].addr,
+				mr->remote_dma[i].len);
 	}
 
 	return &mr->ibmr;
