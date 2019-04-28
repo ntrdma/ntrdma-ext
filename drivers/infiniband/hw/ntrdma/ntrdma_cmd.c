@@ -44,6 +44,7 @@
 #include "ntrdma_mr.h"
 #include "ntrdma_qp.h"
 #include "ntrdma_wr.h"
+#include "linux/ntc_trace.h"
 
 #define NTRDMA_RES_VBELL		1
 #define NTRDMA_RRES_VBELL		0
@@ -584,6 +585,10 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			list_del(&cb->dev_entry);
 
 			ntrdma_vdbg(dev, "rsp cmpl pos %d\n", pos);
+
+			TRACE("CMD: respond received for %ps pos %u",
+				cb->rsp_cmpl, pos);
+
 			rc = cb->rsp_cmpl(cb, &dev->cmd_send_rsp_buf[pos], req);
 			WARN(rc, "%ps failed rc = %d", cb->rsp_cmpl, rc);
 			/* FIXME: command failed, now what? */
@@ -605,14 +610,17 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 		for (pos = start; pos < end; ++pos) {
 			if (list_empty(&dev->cmd_pend_list))
 				break;
-
 			cb = list_first_entry(&dev->cmd_pend_list,
-					      struct ntrdma_cmd_cb,
-					      dev_entry);
+					struct ntrdma_cmd_cb,
+					dev_entry);
 
 			list_move_tail(&cb->dev_entry, &dev->cmd_post_list);
 
 			ntrdma_vdbg(dev, "cmd prep pos %d\n", pos);
+
+			TRACE("CMD: post cmd by %ps pos %u\n",
+				cb->cmd_prep, pos);
+
 			rc = cb->cmd_prep(cb, &dev->cmd_send_buf[pos], req);
 			WARN(rc, "%ps failed rc = %d", cb->cmd_prep, rc);
 			/* FIXME: command failed, now what? */
@@ -641,22 +649,28 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			src = dev->cmd_send_buf_dma_addr + off;
 
 			ntc_req_memcpy(dev->ntc, req,
-				       dst, src, len,
-				       true, NULL, NULL);
+					dst, src, len,
+					true, NULL, NULL);
 
 			/* update the producer index on the peer */
 
 			ntc_req_imm32(dev->ntc, req,
-				      dev->peer_cmd_recv_prod_dma_addr,
-				      dev->cmd_send_prod,
-				      true, NULL, NULL);
+					dev->peer_cmd_recv_prod_dma_addr,
+					dev->cmd_send_prod,
+					true, NULL, NULL);
 
 			/* update the vbell and signal the peer */
 
 			ntrdma_dev_vbell_peer(dev, req,
-					      dev->peer_cmd_recv_vbell_idx);
+					dev->peer_cmd_recv_vbell_idx);
+
 			ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
 			ntc_req_submit(dev->ntc, req);
+
+			TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
+				(pos - start), start,
+				dev->peer_cmd_recv_vbell_idx);
+
 		} else {
 			ntc_req_cancel(dev->ntc, req);
 		}
@@ -1228,6 +1242,9 @@ err_sanity:
 static int ntrdma_cmd_recv(struct ntrdma_dev *dev, union ntrdma_cmd *cmd,
 			   union ntrdma_rsp *rsp, void *req)
 {
+	TRACE("CMD: received: op %d\n",
+			cmd->op);
+
 	switch (cmd->op) {
 	case NTRDMA_CMD_NONE:
 		return ntrdma_cmd_recv_none(dev, cmd->op, &rsp->hdr);
@@ -1335,16 +1352,19 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			dst = dev->peer_cmd_send_rsp_buf_dma_addr + off;
 			src = dev->cmd_recv_rsp_buf_addr + off;
 
+			TRACE("CMD: send reply for %d cmds to pos %d\n",
+						(pos - start), start);
+
 			ntc_req_memcpy(dev->ntc, req,
-				       dst, src, len,
-				       true, NULL, NULL);
+					dst, src, len,
+					true, NULL, NULL);
 
 			/* update the producer index on the peer */
 
 			ntc_req_imm32(dev->ntc, req,
-				      dev->peer_cmd_send_cons_dma_addr,
-				      dev->cmd_recv_cons,
-				      true, NULL, NULL);
+					dev->peer_cmd_send_cons_dma_addr,
+					dev->cmd_recv_cons,
+					true, NULL, NULL);
 
 			/* update the vbell and signal the peer */
 

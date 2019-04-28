@@ -45,6 +45,8 @@
 #include "ntrdma_cq.h"
 #include "ntrdma_zip.h"
 
+#include <linux/ntc_trace.h>
+
 #define NTRDMA_QP_BATCH_SIZE 0x10
 
 struct ntrdma_qp_cmd_cb {
@@ -515,6 +517,7 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
 	ntrdma_vdbg(dev, "called\n");
+	TRACE("qp_enable prep: %d", qp->res.key);
 
 	cmd->qp_create.op = NTRDMA_CMD_QP_CREATE;
 	cmd->qp_create.qp_key = qp->res.key;
@@ -646,6 +649,8 @@ static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	int rc;
 
 	ntrdma_vdbg(dev, "called\n");
+
+	TRACE("qp_enable cmpl: %d", qp->res.key);
 
 	if (!rsp || rsp->hdr.status)
 		return -EIO;
