@@ -156,12 +156,16 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 		int is_deinit)
 {
 	int rc;
+	int reserved_key = -1;
 
 	if (is_deinit)
 		goto deinit;
 
 	rc = ntrdma_res_init(&qp->res, dev, &dev->qp_vec,
-			     ntrdma_qp_enable, ntrdma_qp_disable, ntrdma_qp_reset);
+			ntrdma_qp_enable,
+			ntrdma_qp_disable,
+			ntrdma_qp_reset,
+			reserved_key);
 	if (rc)
 		goto err_res;
 

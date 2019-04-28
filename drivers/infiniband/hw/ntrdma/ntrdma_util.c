@@ -107,7 +107,7 @@ int ntrdma_vec_resize_larger(struct ntrdma_vec *vec, u32 cap, int node)
 	return 0;
 }
 
-int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, int node)
+int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, int node, int first_key)
 {
 	vec->keys = kzalloc_node(BITS_TO_LONGS_SIZE(cap),
 				 GFP_KERNEL, node);
@@ -120,7 +120,7 @@ int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, int node)
 		goto err_look;
 
 	vec->cap = cap;
-	vec->next_key = 0;
+	vec->next_key = first_key;
 
 	spin_lock_init(&vec->lock);
 
@@ -199,7 +199,7 @@ int ntrdma_kvec_resize_larger(struct ntrdma_kvec *vec, u32 cap, int node)
 
 	vec_src = *vec;
 
-	rc = ntrdma_kvec_init(&vec_dst, cap, node);
+	rc = ntrdma_kvec_init(&vec_dst, cap, node, 0);
 	if (rc)
 		goto err_dst;
 
