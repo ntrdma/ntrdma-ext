@@ -161,6 +161,10 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (is_deinit)
 		goto deinit;
 
+	if (attr->qp_type == IB_QPT_GSI || attr->qp_type == IB_QPT_SMI)
+		reserved_key = attr->qp_type;
+
+
 	rc = ntrdma_res_init(&qp->res, dev, &dev->qp_vec,
 			ntrdma_qp_enable,
 			ntrdma_qp_disable,
@@ -1531,10 +1535,10 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 
 	/* sync the ring buffer for the device */
 	ntc_buf_sync_dev(dev->ntc,
-			 qp->recv_wqe_buf_addr,
-			 qp->recv_wqe_buf_size,
-			 DMA_TO_DEVICE,
-			 IOAT_DEV_ACCESS);
+			qp->recv_wqe_buf_addr,
+			qp->recv_wqe_buf_size,
+			DMA_TO_DEVICE,
+			IOAT_DEV_ACCESS);
 
 	for (;;) {
 		ntrdma_qp_recv_prod_put(qp, end, base);
@@ -1738,8 +1742,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	dst = qp->peer_send_wqe_buf_dma_addr + off;
 
 	ntc_req_memcpy(dev->ntc, req,
-		       dst, src, len,
-		       true, NULL, NULL);
+			dst, src, len,
+			true, NULL, NULL);
 
 	/* send the prod idx */
 	ntc_req_imm32(dev->ntc, req,

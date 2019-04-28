@@ -169,6 +169,7 @@ struct ntrdma_qp_init_attr {
 	u32 recv_wqe_sg_cap;
 	u32 send_wqe_cap;
 	u32 send_wqe_sg_cap;
+	u32 qp_type;
 };
 
 int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,

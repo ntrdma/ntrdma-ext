@@ -31,12 +31,13 @@
  */
 
 #include <linux/module.h>
-
 #include <linux/in6.h>
 #include <linux/slab.h>
+#include <linux/random.h>
 
 #include <rdma/ib_user_verbs.h>
 #include <linux/ntc_trace.h>
+#include <rdma/ib_mad.h>
 
 #include "ntrdma_dev.h"
 #include "ntrdma_cmd.h"
@@ -45,24 +46,34 @@
 #include "ntrdma_pd.h"
 #include "ntrdma_qp.h"
 #include "ntrdma_wr.h"
+#include "ntrdma_eth.h"
+
+#define NTRDMA_PKEY_DEFAULT 0xffff
+#define NTRDMA_GIB_TBL_LEN 8
+#define NTRDMA_PKEY_TBL_LEN 2
+
+struct net_device *ntrdma_get_netdev(struct ib_device *ibdev,
+						 u8 port_num)
+{
+	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
+	struct net_device *ndev = ntrdma_get_net(dev);
+
+	dev_hold(ndev);
+
+	return ndev;
+}
 
 /* not implemented / not required? */
 static int ntrdma_get_port_immutable(struct ib_device *ibdev,
 				     u8 port,
 				     struct ib_port_immutable *imm)
 {
-	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
-
-	ntrdma_dbg(dev, "get immutable %u\n", port);
-
-	/* These values do not appear to have any impact on the prototype, but
-	 * specific values and actual capabilities may be a requirement for
-	 * integration with other technologies enabled by the ofed framework.
-	 */
-	imm->pkey_tbl_len = 0;
-	imm->gid_tbl_len = 0;
-	imm->core_cap_flags = 0;
-	imm->max_mad_size = 0;
+	imm->pkey_tbl_len = NTRDMA_PKEY_TBL_LEN;
+	imm->gid_tbl_len = NTRDMA_GIB_TBL_LEN;
+	imm->core_cap_flags =
+			RDMA_CORE_CAP_PROT_ROCE |
+			RDMA_CORE_PORT_IBA_ROCE_UDP_ENCAP;
+	imm->max_mad_size = IB_MGMT_MAD_SIZE;
 
 	return 0;
 }
@@ -73,8 +84,12 @@ static int ntrdma_query_pkey(struct ib_device *ibdev,
 			     u16 index,
 			     u16 *pkey)
 {
-	pr_debug("not implemented, returning %d\n", -ENOSYS);
-	return -ENOSYS;
+	if (index > NTRDMA_PKEY_TBL_LEN)
+		return -EINVAL;
+
+	*pkey = NTRDMA_PKEY_DEFAULT;
+
+	return 0;
 }
 
 /* not implemented / not required? */
@@ -166,22 +181,20 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 static int ntrdma_query_port(struct ib_device *ibdev,
 			     u8 port, struct ib_port_attr *ibattr)
 {
-	/* TODO: These values do not appear to have any impact on the prototype,
-	 * but specific values and actual capabilities may be a requirement for
-	 * integration with other technologies enabled by the ofed framework.
-	 */
 	memset(ibattr, 0, sizeof(*ibattr));
 	ibattr->state			= IB_PORT_ACTIVE;
 	ibattr->max_mtu			= IB_MTU_256;
 	ibattr->active_mtu		= IB_MTU_256;
+	ibattr->pkey_tbl_len	= NTRDMA_PKEY_TBL_LEN;
+	ibattr->gid_tbl_len		= 1;
 
 	return 0;
 }
 
 static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
-				      const struct ib_cq_init_attr *ibattr,
-				      struct ib_ucontext *ibuctx,
-				      struct ib_udata *ibudata)
+		const struct ib_cq_init_attr *ibattr,
+		struct ib_ucontext *ibuctx,
+		struct ib_udata *ibudata)
 {
 	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
 	struct ntrdma_cq *cq;
@@ -469,6 +482,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	qp_attr.send_wqe_cap = (!ibqp_attr->cap.max_send_wr) ?
 				1 : ibqp_attr->cap.max_send_wr;
 	qp_attr.send_wqe_sg_cap = ibqp_attr->cap.max_send_sge;
+	qp_attr.qp_type = ibqp_attr->qp_type;
 
 	rc = ntrdma_qp_init(qp, dev, recv_cq, send_cq, &qp_attr);
 	if (rc)
@@ -508,6 +522,7 @@ err_qp:
 					  IB_QP_MIN_RNR_TIMER		| \
 					  IB_QP_SQ_PSN			| \
 					  IB_QP_MAX_DEST_RD_ATOMIC	| \
+					  IB_QP_QKEY			| \
 					  0 )
 
 #define NTRDMA_IBQP_MASK_SUPPORTED	( \
@@ -675,9 +690,9 @@ static void ntrdma_modify_qp_debug(struct ib_qp *ibqp,
 }
 
 static int ntrdma_modify_qp(struct ib_qp *ibqp,
-			    struct ib_qp_attr *ibqp_attr,
-			    int ibqp_mask,
-			    struct ib_udata *ibudata)
+		struct ib_qp_attr *ibqp_attr,
+		int ibqp_mask,
+		struct ib_udata *ibudata)
 {
 	struct ntrdma_dev *dev;
 	struct ntrdma_qp *qp;
@@ -688,33 +703,59 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 
 	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask, ibudata);
 	ntrdma_res_lock(&qp->res);
-	{
-		cur_state = ibqp_mask & IB_QP_CUR_STATE ?
+
+	cur_state = ibqp_mask & IB_QP_CUR_STATE ?
 			ibqp_attr->cur_qp_state : qp->state;
-		new_state = ibqp_mask & IB_QP_STATE ?
+	new_state = ibqp_mask & IB_QP_STATE ?
 			ibqp_attr->qp_state : cur_state;
 
-		ntrdma_dbg(dev, "state %d -> %d\n", cur_state, new_state);
+	ntrdma_dbg(dev, "QP type %d state %d -> %d\n",
+			ibqp->qp_type, cur_state, new_state);
 
-		if (cur_state != qp->state ||
-		    ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED ||
-		    !ib_modify_qp_is_ok(cur_state, new_state,
-					IB_QPT_RC, ibqp_mask,
-					IB_LINK_LAYER_UNSPECIFIED)) {
-			ntrdma_dbg(dev, "invalid modify\n");
-			rc = -EINVAL;
-			goto unlock_exit;
-		}
+	if (cur_state != qp->state) {
+		ntrdma_err(dev,
+				"%s: unexpected current state %d %d\n",
+				__func__, cur_state, qp->state);
+		rc = -EINVAL;
+		goto unlock_exit;
+	}
 
-		if (ibqp_mask & IB_QP_STATE)
-			qp->state = ntrdma_ib_state(new_state);
+	if (ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED) {
+		ntrdma_err(dev, "%s: unsupported QP mask %x\n",
+				__func__,
+				ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED);
+		rc = -EINVAL;
+		goto unlock_exit;
+	}
 
-		if (ibqp_mask & IB_QP_ACCESS_FLAGS)
-			qp->access = ibqp_attr->qp_access_flags;
-			
-		if (ibqp_mask & IB_QP_DEST_QPN)
-			qp->rqp_key = ibqp_attr->dest_qp_num;
-			
+	rc = ib_modify_qp_is_ok(cur_state, new_state,
+			ibqp->qp_type, ibqp_mask,
+			IB_LINK_LAYER_UNSPECIFIED);
+
+	if (!rc) {
+		ntrdma_err(dev, "ib_modify_qp_is_ok failed\n");
+		rc = -EINVAL;
+		goto unlock_exit;
+	}
+
+	if (ibqp_mask & IB_QP_STATE) {
+		ntrdma_vdbg(dev, "qp %p state %d -> %d\n",
+				qp, qp->state,
+				ntrdma_ib_state(new_state));
+
+		qp->state = ntrdma_ib_state(new_state);
+	}
+
+	if (ibqp_mask & IB_QP_ACCESS_FLAGS)
+		qp->access = ibqp_attr->qp_access_flags;
+
+	if (ibqp_mask & IB_QP_DEST_QPN)
+		qp->rqp_key = ibqp_attr->dest_qp_num;
+
+	/* For GSI and MSI QPs we used reserved key 1 and 2 */
+	if (ibqp->qp_type == IB_QPT_GSI || ibqp->qp_type == IB_QPT_SMI)
+		qp->rqp_key = ibqp->qp_type;
+
 	rc = 0;
 
 	mutex_lock(&dev->res_lock);
@@ -751,11 +792,12 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 }
 
 static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
-				 struct ntrdma_send_wqe *wqe,
-				 struct ib_send_wr *ibwr,
-				 int sg_cap)
+		struct ntrdma_send_wqe *wqe,
+		struct ib_send_wr *ibwr,
+		struct ntrdma_qp *qp)
 {
-	int i;
+	int i, j;
+	int sg_cap = qp->send_wqe_sg_cap;
 
 	wqe->ulp_handle = ibwr->wr_id;
 	wqe->flags = ibwr->send_flags;
@@ -819,10 +861,25 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 	}
 
 	wqe->sg_count = ibwr->num_sge;
-	for (i = 0; i < ibwr->num_sge; ++i) {
-		wqe->sg_list[i].addr = ibwr->sg_list[i].addr;
-		wqe->sg_list[i].len = ibwr->sg_list[i].length;
-		wqe->sg_list[i].key = ibwr->sg_list[i].lkey;
+
+	j = 0;
+
+	/* For UD WR GRH header should be added */
+	if (qp->ibqp.qp_type == IB_QPT_GSI ||
+			qp->ibqp.qp_type == IB_QPT_SMI ||
+			qp->ibqp.qp_type == IB_QPT_UD) {
+
+		wqe->sg_count++;
+		wqe->sg_list[0].addr = dev->grh_dma_addr;
+		wqe->sg_list[0].len = sizeof(struct ib_grh);
+		wqe->sg_list[0].key = NTRDMA_RESERVED_DMA_LEKY;
+		j++;
+	}
+
+	for (i = 0; i < ibwr->num_sge; ++i, ++j) {
+		wqe->sg_list[j].addr = ibwr->sg_list[i].addr;
+		wqe->sg_list[j].len = ibwr->sg_list[i].length;
+		wqe->sg_list[j].key = ibwr->sg_list[i].lkey;
 	}
 
 	return 0;
@@ -863,8 +920,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			wqe = ntrdma_qp_send_wqe(qp, pos);
 
 			/* transform work request into the entry */
-			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr,
-						   qp->send_wqe_sg_cap);
+			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr, qp);
 			TRACE("OPCODE %d: dev %p, flags %x, addr %llx, rc = %d\n"
 					, ibwr->opcode, dev, ibwr->send_flags,
 					wqe->rdma_addr, rc);
@@ -1020,15 +1076,15 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	 */
 
 	mr = kmalloc_node(sizeof(*mr) + 2 * count * sizeof(*mr->sg_list),
-			  GFP_KERNEL, dev->node);
+			GFP_KERNEL, dev->node);
 	if (!mr) {
 		rc = -ENOMEM;
 		goto err_mr;
 	}
 
 	rc = ntrdma_mr_init(mr, dev, umem,
-			    pd->key, mr_access_flags,
-			    virt_addr, length, count);
+			pd->key, mr_access_flags,
+			virt_addr, length, count);
 	if (rc)
 		goto err_init;
 
@@ -1109,12 +1165,50 @@ static int ntrdma_dealloc_ucontext(struct ib_ucontext *ibuctx)
 	return 0;
 }
 
+static void ntrdma_set_node_guid(__be64 *guid)
+{
+	prandom_bytes(guid, sizeof(*guid));
+}
+
+enum rdma_link_layer	ntrdma_get_link_layer(struct ib_device *device,
+		u8 port_num)
+{
+	return IB_LINK_LAYER_ETHERNET;
+}
+
+int ntrdma_add_gid(struct ib_device *device, u8 port_num,
+		unsigned int index, const union ib_gid *gid,
+		const struct ib_gid_attr *attr, void **context)
+{
+	return 0;
+}
+
+int ntrdma_del_gid(struct ib_device *device, u8 port_num,
+		unsigned int index, void **context)
+{
+	return 0;
+}
+
 int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 {
 	struct ib_device *ibdev = &dev->ibdev;
 	int rc;
 
+	dev->grh_dma_addr = ntc_buf_map(dev->ntc,
+			&dev->grh,
+			sizeof(dev->grh),
+			DMA_TO_DEVICE,
+			IOAT_DEV_ACCESS);
+
+	if (!dev->grh_dma_addr) {
+		ntrdma_err(dev, "dma map grh_dma_addr failed\n");
+		return -ENOMEM;
+	}
+
 	strlcpy(ibdev->name, "ntrdma_%d", IB_DEVICE_NAME_MAX);
+
+	ntrdma_set_node_guid(&ibdev->node_guid);
+
 	ibdev->owner			= THIS_MODULE;
 	ibdev->node_type		= RDMA_NODE_IB_CA;
 	/* TODO: maybe this should be the number of virtual doorbells */
@@ -1149,12 +1243,13 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 		0ull;
 
 	/* not implemented / not required */
+	ibdev->get_netdev			= ntrdma_get_netdev;
 	ibdev->get_port_immutable	= ntrdma_get_port_immutable;
-	ibdev->query_pkey		= ntrdma_query_pkey;
-	ibdev->query_gid		= ntrdma_query_gid;
-	ibdev->create_ah		= ntrdma_create_ah;
-	ibdev->destroy_ah		= ntrdma_destroy_ah;
-	ibdev->get_dma_mr		= ntrdma_get_dma_mr;
+	ibdev->query_pkey			= ntrdma_query_pkey;
+	ibdev->query_gid			= ntrdma_query_gid;
+	ibdev->create_ah			= ntrdma_create_ah;
+	ibdev->destroy_ah			= ntrdma_destroy_ah;
+	ibdev->get_dma_mr			= ntrdma_get_dma_mr;
 
 	/* userspace context */
 	ibdev->alloc_ucontext		= ntrdma_alloc_ucontext;
@@ -1185,7 +1280,9 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	ibdev->destroy_qp		= ntrdma_destroy_qp;
 	ibdev->post_send		= ntrdma_post_send;
 	ibdev->post_recv		= ntrdma_post_recv;
-
+	ibdev->get_link_layer	= ntrdma_get_link_layer;
+	ibdev->add_gid			= ntrdma_add_gid;
+	ibdev->del_gid			= ntrdma_del_gid;
 
 	rc = ib_register_device(ibdev, NULL);
 	if (rc)
@@ -1199,5 +1296,12 @@ err_ib:
 
 void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev)
 {
+
 	ib_unregister_device(&dev->ibdev);
+
+	ntc_buf_unmap(dev->ntc,
+			dev->grh_dma_addr,
+			sizeof(dev->grh),
+			DMA_TO_DEVICE,
+			IOAT_DEV_ACCESS);
 }
