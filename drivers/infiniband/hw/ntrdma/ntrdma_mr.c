@@ -37,6 +37,7 @@
 #include "ntrdma_pd.h"
 #include "ntrdma_mr.h"
 #include "ntrdma_res.h"
+#include <linux/ntc_trace.h>
 
 struct ntrdma_mr_cmd_cb {
 	struct ntrdma_cmd_cb cb;
@@ -194,6 +195,8 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
 
+	TRACE("mr_enable prep: %d", mr->res.key);
+
 	cmd->mr_create.op = NTRDMA_CMD_MR_CREATE;
 	cmd->mr_create.mr_key = mr->res.key;
 	cmd->mr_create.pd_key = mr->pd_key;
@@ -216,6 +219,8 @@ static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
 	int rc;
+
+	TRACE("mr_enable cmpl: %d", mr->res.key);
 
 	if (!rsp || rsp->hdr.status) {
 		rc = -EIO;

@@ -36,6 +36,7 @@
 #include "ntrdma_util.h"
 #include "ntrdma_res.h"
 #include "ntrdma_cmd.h"
+#include <linux/ntc_trace.h>
 
 int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 {
@@ -109,18 +110,18 @@ void ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 	struct ntrdma_res *res;
 	int rc;
 
+	TRACE("resources enabled");
+
 	mutex_lock(&dev->res_lock);
-	{
-		list_for_each_entry(res, &dev->res_list, obj.dev_entry) {
-			rc = res->enable(res);
-			if (unlikely(rc)) {
-				ntrdma_err(dev, "NTRDMA: async res enable failed (%ps)\n",
-						res->enable);
-			}
+	list_for_each_entry(res, &dev->res_list, obj.dev_entry) {
+		rc = res->enable(res);
+		if (unlikely(rc)) {
+			ntrdma_err(dev, "NTRDMA: async res enable failed (%ps)\n",
+					res->enable);
 		}
-		ntrdma_dev_cmd_submit(dev);
-		ntrdma_dev_cmd_finish(dev);
 	}
+	ntrdma_dev_cmd_submit(dev);
+	ntrdma_dev_cmd_finish(dev);
 
 	dev->res_enable = 1;
 
