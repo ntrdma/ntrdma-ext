@@ -573,8 +573,8 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			ntrdma_vdbg(dev, "rsp cmpl pos %d\n", pos);
 			rc = cb->rsp_cmpl(cb, &dev->cmd_send_rsp_buf[pos], req);
-			if (rc)
-				; /* FIXME: command failed, now what? */
+			WARN(rc, "%ps failed rc = %d", cb->rsp_cmpl, rc);
+			/* FIXME: command failed, now what? */
 		}
 
 		if (pos != start) {
@@ -602,8 +602,8 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			ntrdma_vdbg(dev, "cmd prep pos %d\n", pos);
 			rc = cb->cmd_prep(cb, &dev->cmd_send_buf[pos], req);
-			if (rc)
-				; /* FIXME: command failed, now what? */
+			WARN(rc, "%ps failed rc = %d", cb->cmd_prep, rc);
+			/* FIXME: command failed, now what? */
 		}
 
 		if (pos != start) {
@@ -746,7 +746,9 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	u32 i, count;
 	int rc;
 
-	ntrdma_vdbg(dev, "called\n");
+	ntrdma_vdbg(dev,
+			"called mr len %llx  mr addr %llx mr key %x sg_count %d\n",
+			cmd->mr_len, cmd->mr_addr, cmd->mr_key, cmd->sg_count);
 
 	rsp->hdr.op = cmd->op;
 	rsp->mr_key = cmd->mr_key;
@@ -778,6 +780,13 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	for (i = 0; i < count; ++i) {
 		u64 remote_phys_addr = ntc_peer_addr(dev->ntc,
 				rmr->sg_list[i].addr);
+
+		ntrdma_vdbg(dev,
+				"sg %d addr %llx(%llx) len %llx %p\n",
+				i, rmr->sg_list[i].addr,
+				remote_phys_addr,
+				cmd->sg_list[i].len,
+				&cmd->sg_list[i]);
 
 		rmr->sg_list[i].addr =
 				ntc_resource_map(dev->ntc,
@@ -863,14 +872,15 @@ err_rmr:
 }
 
 static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
-				     struct ntrdma_cmd_mr_append *cmd,
-				     struct ntrdma_rsp_mr_status *rsp)
+		struct ntrdma_cmd_mr_append *cmd,
+		struct ntrdma_rsp_mr_status *rsp)
 {
 	struct ntrdma_rmr *rmr;
 	u32 i, pos, count;
 	int rc;
 
-	ntrdma_vdbg(dev, "called\n");
+	ntrdma_vdbg(dev, "called sg count %d sg pos %d\n",
+			cmd->sg_count, cmd->sg_pos);
 
 	rsp->hdr.op = cmd->op;
 	rsp->mr_key = cmd->mr_key;
@@ -990,7 +1000,9 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	u64 peer_send_cqe_buf_phys_addr;
 	u64 peer_send_cons_phys_addr;
 
-	ntrdma_vdbg(dev, "called\n");
+	ntrdma_vdbg(dev,
+			"called qp_key %d vbell %d\n",
+			 cmd->qp_key, cmd->cmpl_vbell_idx);
 
 	rsp->hdr.op = cmd->op;
 	rsp->qp_key = cmd->qp_key;
@@ -1154,7 +1166,8 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	struct ntrdma_rqp *rqp;
 	int rc;
 
-	ntrdma_vdbg(dev, "called\n");
+	ntrdma_vdbg(dev, "enter state %d qp key %d\n",
+			cmd->state, cmd->qp_key);
 
 	rsp->hdr.op = cmd->op;
 	rsp->qp_key = cmd->qp_key;
@@ -1163,12 +1176,17 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	if (cmd->access > MAX_SUM_ACCESS_FLAGS ||
 			(cmd->state >= NTRDMA_QPS_ERROR &&
 					cmd->state <= NTRDMA_QPS_SEND_READY)) {
+		ntrdma_err(dev,
+				"Sanity failure %d %d\n",
+				cmd->access, cmd->state);
+
 		rc = -EINVAL;
 		goto err_sanity;
 	}
 
 	rqp = ntrdma_dev_rqp_look(dev, cmd->qp_key);
 	if (!rqp) {
+		ntrdma_err(dev, "ntrdma_dev_rqp_look\n");
 		rc = -EINVAL;
 		goto err_rqp;
 	}
@@ -1267,18 +1285,18 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 		/* Process commands */
 
 		ntrdma_ring_consume(*dev->cmd_recv_prod_buf,
-				    dev->cmd_recv_cons,
-				    dev->cmd_recv_cap,
-				    &start, &end, &base);
+				dev->cmd_recv_cons,
+				dev->cmd_recv_cap,
+				&start, &end, &base);
+
 		ntrdma_vdbg(dev, "cmd start %d end %d\n", start, end);
 		for (pos = start; pos < end; ++pos) {
 			ntrdma_vdbg(dev, "cmd recv pos %d\n", pos);
 			rc = ntrdma_cmd_recv(dev,
-					     &dev->cmd_recv_buf[pos],
-					     &dev->cmd_recv_rsp_buf[pos],
-					     req);
-			if (rc)
-				; /* FIXME: command failed, now what? */
+					&dev->cmd_recv_buf[pos],
+					&dev->cmd_recv_rsp_buf[pos],
+					req);
+			WARN(rc, "ntrdma_cmd_recv failed and unhandled FIXME\n");
 		}
 
 		if (pos != start) {

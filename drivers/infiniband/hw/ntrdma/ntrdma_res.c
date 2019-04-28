@@ -115,7 +115,10 @@ void ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 
 		list_for_each_entry(res, &dev->res_list, obj.dev_entry) {
 			rc = res->enable(res);
-			/* FIXME: unchecked */
+			if (unlikely(rc)) {
+				ntrdma_err(dev, "NTRDMA: async res enable failed (%ps)\n",
+						res->enable);
+			}
 		}
 
 		ntrdma_dev_cmd_finish(dev);
@@ -279,7 +282,7 @@ int ntrdma_res_add(struct ntrdma_res *res)
 		if (dev->res_enable) {
 			ntrdma_vdbg(dev, "resource commands initiated\n");
 			rc = res->enable(res);
-			/* FIXME: unchecked */
+			WARN(rc, "%ps failed and unhandled", res->enable);
 			ntrdma_dev_cmd_submit(dev);
 		} else {
 			ntrdma_vdbg(dev, "no commands\n");
@@ -306,7 +309,10 @@ void ntrdma_res_del(struct ntrdma_res *res)
 	{
 		if (dev->res_enable) {
 			rc = res->disable(res);
-			/* FIXME: unchecked */
+			if (unlikely(rc)) {
+				ntrdma_err(dev, "NTRDMA: res disable failed (%ps)\n",
+						res->disable);
+			}
 			ntrdma_dev_cmd_submit(dev);
 		} else {
 			ntrdma_res_done_cmds(res);

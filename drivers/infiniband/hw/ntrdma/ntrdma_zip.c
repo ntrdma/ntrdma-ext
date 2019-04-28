@@ -98,14 +98,18 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 		/* Get a reference to the source memory region */
 		if (!mr) {
 			if (src_i == src_sg_count) {
-				/* out of bounds src work request */
+				ntrdma_err(dev,
+						"Error out of bounds src work request %d\n",
+						src_i);
 				rc = -EINVAL;
 				goto err;
 			}
 
 			mr = ntrdma_dev_mr_look(dev, src_sg_list[src_i].key);
 			if (!mr) {
-				/* invalid mr key for source */
+				ntrdma_err(dev,
+						"Error invalid mr key for source SG list %x sg idx %d/%d\n",
+						src_sg_list[src_i].key, src_i, src_sg_count);
 				rc = -EINVAL;
 				goto err;
 			}
@@ -119,29 +123,35 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 			mr_off -= mr->local_dma[mr_i].len;
 
 			if (++mr_i == mr->sg_count) {
-				/* out of bounds of source memory region */
+				ntrdma_err(dev,
+						"out of bounds of source memory region, sg_count %d mr_i %d\n",
+						mr->sg_count, mr_i);
 				rc = -EINVAL;
 				goto err;
 			}
 
 			ntc_buf_sync_dev(dev->ntc,
-				 mr->local_dma[mr_i].addr,
-				 mr->local_dma[mr_i].len,
-				 DMA_BIDIRECTIONAL,
-				 IOAT_DEV_ACCESS);
+					mr->local_dma[mr_i].addr,
+					mr->local_dma[mr_i].len,
+					DMA_BIDIRECTIONAL,
+					IOAT_DEV_ACCESS);
 		}
 
 		/* Get a reference to the destination memory region */
 		if (!rmr) {
 			if (dst_i == dst_sg_count) {
-				/* out of bounds dst work request */
+				ntrdma_err(dev,
+						"Error out of bounds dst work request %d\n",
+						dst_i);
 				rc = -EINVAL;
 				goto err;
 			}
 
 			rmr = ntrdma_dev_rmr_look(dev, dst_sg_list[dst_i].key);
 			if (!rmr) {
-				/* invalid rmr key for destination */
+				ntrdma_err(dev,
+						"Error invalid rmr key for destination %u\n",
+						dst_sg_list[dst_i].key);
 				rc = -EINVAL;
 				goto err;
 			}
@@ -155,7 +165,9 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 			rmr_off -= rmr->sg_list[rmr_i].len;
 
 			if (++rmr_i == rmr->sg_count) {
-				/* out of bounds of destination memory region */
+				ntrdma_err(dev,
+						"Error out of bounds of destination memory region %d\n",
+						rmr_i);
 				rc = -EINVAL;
 				goto err;
 			}
@@ -193,6 +205,9 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 		if (total_len > total_len + (u32)len) {
 			/* total len would overflow u32 */
 			rc = -EINVAL;
+			ntrdma_err(dev,
+					"Error total len would overflow u32 %u\n",
+					total_len);
 			goto err;
 		}
 
@@ -247,7 +262,8 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 		if (!mr) {
 			mr = ntrdma_dev_mr_look(dev, dst_sg_list[sg_i].key);
 			if (!mr) {
-				/* invalid mr key */
+				ntrdma_err(dev, "Invalid MR key %u\n",
+						dst_sg_list[sg_i].key);
 				rc = -EINVAL;
 				goto err;
 			}
@@ -261,7 +277,9 @@ int ntrdma_zip_sync(struct ntrdma_dev *dev,
 			mr_off -= mr->local_dma[mr_i].len;
 
 			if (++mr_i == mr->sg_count) {
-				/* out of bounds of the memory region */
+				ntrdma_err(dev,
+						"out of bounds of the memory region sg_count %d\n",
+						mr->sg_count);
 				rc = -EINVAL;
 				goto err;
 			}

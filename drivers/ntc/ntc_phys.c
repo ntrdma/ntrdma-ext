@@ -73,11 +73,9 @@ static u64 ntc_phys_res_map(struct ntc_dev *ntc, u64 phys_addr, u64 size,
 
 	struct device *dev = ntc_map_dev(ntc, dma_dev);
 
-	WARN_ON(size == 0 || phys_addr == 0);
-	if (size == 0 || phys_addr == 0) {
-		dev_err(&ntc->dev,
-				"%s size %llu, add %llu\n",
-				__func__, size, phys_addr);
+	if (WARN(size == 0 || phys_addr == 0,
+			"size %#llx addr %#llx",
+			size, phys_addr)) {
 		return 0;
 	}
 
@@ -101,9 +99,11 @@ static void ntc_phys_res_unmap(struct ntc_dev *ntc, u64 dma_addr, u64 size,
 {
 	struct device *dev = ntc_map_dev(ntc, dma_dev);
 
-	WARN_ON(size == 0 || dma_addr == 0);
-	if (size == 0 || dma_addr == 0)
+	if (WARN(size == 0 || dma_addr == 0,
+			"size %#llx dma addr %#llx",
+			size, dma_addr)) {
 		return;
+	}
 
 	dma_unmap_resource(dev, (dma_addr_t)dma_addr,
 			(size_t)size, dir, 0);

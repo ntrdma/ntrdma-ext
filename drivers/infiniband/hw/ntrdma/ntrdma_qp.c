@@ -460,6 +460,8 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 	ntrdma_vdbg(dev, "called\n");
 
 	if (!rsp || rsp->hdr.status) {
+		ntrdma_err(dev, "rsp %p status %d\n",
+				rsp, rsp->hdr.status);
 		rc = -EIO;
 		goto err;
 	}
@@ -1565,8 +1567,12 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* verify the qp state and lock for producing sends */
 	rc = ntrdma_qp_send_prod_start(qp);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev,
+				"ntrdma_qp_send_prod_start failed rc = %d qp %d(%p)\n",
+				rc,qp->res.key, qp);
 		return;
+	}
 
 	/* get the next producing range in the send ring */
 	ntrdma_qp_send_prod_get(qp, &start, &end, &base);
@@ -1582,15 +1588,21 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* sending requires a connected rqp */
 	rqp = ntrdma_dev_rqp_look(dev, qp->rqp_key);
-	if (!rqp)
+	if (!rqp) {
+		ntrdma_err(dev, "ntrdma_dev_rqp_look failed %d key %d\n",
+				rc, qp->rqp_key);
 		goto err_rqp;
+	}
 	/* FIXME: need to complete the send with error */
 
 
 	/* connected rqp must be ready to receive */
 	rc = ntrdma_rqp_recv_cons_start(rqp);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "ntrdma_rqp_recv_cons_start failed %d\n",
+				rc);
 		goto err_recv;
+	}
 
 	/* get the next consuming range in the recv ring */
 	ntrdma_rqp_recv_cons_get(rqp, &recv_pos, &recv_end, &recv_base);
@@ -1624,8 +1636,14 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 			recv_wqe = ntrdma_rqp_recv_wqe(rqp, recv_pos++);
 
 			if (recv_wqe->op_status) {
-				if (!wqe->op_status)
+				if (!wqe->op_status) {
+					ntrdma_err(dev,
+							"wqe->op_status %d recv_wqe->op_status %d recv_pos %u\n",
+							wqe->op_status,
+							recv_wqe->op_status,
+							recv_pos);
 					wqe->op_status = recv_wqe->op_status;
+				}
 
 				qp->send_error = true;
 				rqp->recv_error = true;
@@ -1639,6 +1657,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		}
 
 		if (wqe->op_status) {
+			ntrdma_err(dev, "op status %d\n",
+					wqe->op_status);
 			qp->send_error = true;
 			rqp->recv_error = true;
 			break;
@@ -1661,6 +1681,10 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						     false);
 			}
 			if (rc) {
+				ntrdma_err(dev,
+						"ntrdma_zip_rdma failed %d qp %d\n",
+						rc, qp->res.key);
+
 				/* FIXME: use rc to indicate the real error */
 				wqe->op_status = NTRDMA_WC_ERR_RDMA_RANGE;
 				qp->send_error = true;
@@ -1756,8 +1780,12 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	/* verify the rqp state and lock for consuming sends */
 	rc = ntrdma_rqp_send_cons_start(rqp);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev,
+				"ntrdma_rqp_send_cons_start failed rc = %d qp_key %d(%p)\n",
+				rc, rqp->qp_key, rqp);
 		return;
+	}
 
 	ntrdma_rqp_send_vbell_clear(dev, rqp);
 
@@ -1778,14 +1806,18 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	/* sending requires a connected qp */
 	qp = ntrdma_dev_qp_look(dev, rqp->qp_key);
-	if (!qp)
+	if (!qp) {
+		ntrdma_err(dev, "ntrdma_dev_qp_look failed\n");
 		goto err_qp;
+	}
 	/* FIXME: need to complete the send with error */
 
 	/* connected qp must be ready to receive */
 	rc = ntrdma_qp_recv_cons_start(qp);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "ntrdma_qp_recv_cons_start failed\n");
 		goto err_recv;
+	}
 	/* FIXME: need to complete the send with error */
 
 	/* get the next consuming range in the recv ring */
@@ -1800,7 +1832,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		if (ntrdma_wr_code_is_send(wqe->op_code)) {
 			if (ntrdma_wr_status_no_recv(wqe->op_status)) {
 				ntrdma_send_fail(cqe, wqe, wqe->op_status);
-
+				ntrdma_err(dev, "Error %s %d\n",
+						__func__, __LINE__);
 				qp->send_error = true;
 				rqp->recv_error = true;
 				break;
@@ -1814,6 +1847,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 				qp->send_error = true;
 				rqp->recv_error = true;
+				ntrdma_err(dev, "Error %s %d\n",
+						__func__, __LINE__);
 				break;
 			}
 
@@ -1825,6 +1860,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 				rqp->send_error = true;
 				qp->recv_error = true;
+				ntrdma_err(dev, "Error %s %d\n",
+						__func__, __LINE__);
 				break;
 			}
 
@@ -1842,6 +1879,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 				qp->send_error = true;
 				rqp->recv_error = true;
+				ntrdma_err(dev, "Error %s %d\n",
+						__func__, __LINE__);
 				break;
 			}
 		} else {
@@ -1857,6 +1896,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 			qp->send_error = true;
 			rqp->recv_error = true;
+			ntrdma_err(dev, "Error wqe op status %d  pos %u\n",
+					wqe->op_status, pos);
 			break;
 		}
 
@@ -1873,9 +1914,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 						     recv_wqe->sg_count);
 			}
 
-			if (rc) {
-				/* FIXME: handle send sync error */
-			}
+			WARN(rc, "ntrdma_zip_sync failed rc = %d", rc);
+			/* FIXME: handle send sync error */
 
 			if (ntrdma_wr_code_is_send(wqe->op_code))
 				ntrdma_recv_done(recv_cqe, recv_wqe, wqe);
@@ -1893,9 +1933,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					     wqe->sg_count, 1,
 					     true);
 
-			if (rc) {
-				/* FIXME: handle rdma read error */
-			}
+			WARN_ON(rc);
+			/* FIXME: handle rdma read error */
 
 			ntrdma_send_done(cqe, wqe, rdma_len);
 		}
@@ -1963,6 +2002,7 @@ err_recv:
 	ntrdma_qp_put(qp);
 err_qp:
 	ntrdma_rqp_send_cons_done(rqp);
+	ntrdma_err(dev, "%s Failed\n", __func__);
 }
 
 static void ntrdma_qp_work_cb(unsigned long ptrhld)
