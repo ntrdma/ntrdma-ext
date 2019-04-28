@@ -144,6 +144,7 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 	ibattr->max_sge			= 0x100;
 	ibattr->max_sge_rd		= 0x100;
 	ibattr->page_size_cap		= PAGE_SIZE;
+	ibattr->device_cap_flags	= IB_DEVICE_LOCAL_DMA_LKEY;
 
 	return 0;
 }
@@ -999,6 +1000,8 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 
 	ibdev->uverbs_abi_ver		= 1;
 	ibdev->phys_port_cnt		= 1;
+	ibdev->local_dma_lkey = NTRDMA_RESERVED_DMA_LEKY;
+
 
 	ibdev->uverbs_cmd_mask		=
 		(1ull << IB_USER_VERBS_CMD_GET_CONTEXT)			|
