@@ -187,6 +187,8 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 		       NAPI_POLL_WEIGHT);
 
 	rc = register_netdev(net);
+	netif_tx_disable(net);
+
 	if (rc)
 		goto err_register;
 
