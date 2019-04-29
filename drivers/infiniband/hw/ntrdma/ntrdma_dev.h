@@ -199,13 +199,14 @@ struct ntrdma_dev {
 #define ntrdma_cmd_recv_work_dev(__ws) \
 	container_of(__ws, struct ntrdma_dev, cmd_recv_work)
 
-#define ntrdma_dbg(dev, args...) \
-	dev_dbg(&(dev)->ntc->dev, ## args)
+#define ntrdma_dbg(__dev, __args...) \
+	dev_dbg(&(__dev)->ntc->dev, ## __args)
 
-#define ntrdma_err(dev, args...) \
-	dev_err(&(dev)->ntc->dev, ## args)
+#define ntrdma_err(__dev, __fmt, __args...) \
+	dev_err(&(__dev)->ntc->dev, "%s: %d: " \
+			__fmt, __func__, __LINE__, ## __args)
 
-#define ntrdma_vdbg(dev, args...) \
-	dev_vdbg(&(dev)->ntc->dev, ## args)
+#define ntrdma_vdbg(__dev, __args...) \
+	dev_vdbg(&(__dev)->ntc->dev, ## __args)
 
 #endif
