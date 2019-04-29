@@ -60,6 +60,8 @@ struct ntrdma_req;
 #define NTRDMA_CMD_QP_DELETE		(NTRDMA_CMD_QP + 1)
 #define NTRDMA_CMD_QP_MODIFY		(NTRDMA_CMD_QP + 2)
 
+#define CMD_TIMEOUT_MSEC 5000 /*5 sec*/
+
 struct ntrdma_rsp_hdr {
 	u32				op;
 	u32				status;

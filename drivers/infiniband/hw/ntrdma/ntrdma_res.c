@@ -237,6 +237,8 @@ int ntrdma_res_init(struct ntrdma_res *res,
 	res->disable = disable;
 	res->reset = reset;
 
+	res->timeout = msecs_to_jiffies(CMD_TIMEOUT_MSEC);
+
 	mutex_init(&res->lock);
 	init_completion(&res->cmds_done);
 
@@ -310,7 +312,13 @@ int ntrdma_res_add(struct ntrdma_res *res)
 	mutex_unlock(&dev->res_lock);
 
 	ntrdma_vdbg(dev, "wait for commands\n");
-	ntrdma_res_wait_cmds(res);
+	rc = ntrdma_res_wait_cmds(res);
+	WARN(!rc,
+			"ntrdma res add(%ps) cmd timeout after %lu msec",
+			res->enable,
+			res->timeout);
+	/* TODO handle timeout */
+
 	ntrdma_vdbg(dev, "done waiting\n");
 	ntrdma_res_unlock(res);
 
@@ -346,7 +354,13 @@ void ntrdma_res_del(struct ntrdma_res *res)
 	}
 	mutex_unlock(&dev->res_lock);
 
-	ntrdma_res_wait_cmds(res);
+	rc = ntrdma_res_wait_cmds(res);
+	WARN(!rc,
+			"ntrdma res del(%ps) cmd timeout after %lu msec",
+			res->disable,
+			res->timeout);
+	/* TODO handle timeout */
+
 	ntrdma_res_unlock(res);
 
 	ntrdma_res_put(res);
