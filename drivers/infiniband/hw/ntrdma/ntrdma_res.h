@@ -76,6 +76,7 @@ struct ntrdma_res {
 	struct mutex			lock;
 	/* Wait on commands affecting the remote resource */
 	struct completion		cmds_done;
+	unsigned long			timeout;
 };
 
 #define ntrdma_res_dev(res) ntrdma_obj_dev(&(res)->obj)
@@ -113,9 +114,9 @@ static inline void ntrdma_res_done_cmds(struct ntrdma_res *res)
 	complete_all(&res->cmds_done);
 }
 
-static inline void ntrdma_res_wait_cmds(struct ntrdma_res *res)
+static inline unsigned long ntrdma_res_wait_cmds(struct ntrdma_res *res)
 {
-	wait_for_completion(&res->cmds_done);
+	return wait_for_completion_timeout(&res->cmds_done, res->timeout);
 }
 
 static inline void ntrdma_res_get(struct ntrdma_res *res)

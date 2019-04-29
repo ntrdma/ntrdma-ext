@@ -49,7 +49,6 @@
 #define NTRDMA_RES_VBELL		1
 #define NTRDMA_RRES_VBELL		0
 #define MAX_CMDS 16
-#define CMD_TIMEOUT_MSEC 5000 /*5 sec*/
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev);
 static void ntrdma_cmd_send_work_cb(struct work_struct *ws);

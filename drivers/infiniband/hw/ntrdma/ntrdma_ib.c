@@ -767,7 +767,13 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 
 		mutex_unlock(&dev->res_lock);
 
-		ntrdma_res_wait_cmds(&qp->res);
+		rc = ntrdma_res_wait_cmds(&qp->res);
+
+		WARN(!rc,
+				"ntrdma qp modify cmd timeout after %lu msec",
+				qp->res.timeout);
+		/* TODO handle timeout */
+
 	} else {
 		mutex_unlock(&dev->res_lock);
 	}
