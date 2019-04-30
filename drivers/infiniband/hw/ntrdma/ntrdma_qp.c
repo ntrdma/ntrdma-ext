@@ -1639,9 +1639,11 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 			wqe->recv_key = recv_pos + recv_base;
 
 			if (recv_pos == recv_end) {
-				ntrdma_dbg(dev, "send but no recv pos %u end %u base %u "
-					   "prod %u cons %u\n", recv_pos, recv_end, recv_base,
-					   *rqp->recv_prod_buf, rqp->recv_cons);
+				ntrdma_info_ratelimited(dev,
+						"send but no recv pos %u end %u base %u prod %u cons %u\n",
+						recv_pos, recv_end, recv_base,
+						*rqp->recv_prod_buf, rqp->recv_cons);
+
 #ifdef CONFIG_NTRDMA_RETRY_RECV
 				--pos;
 				tasklet_schedule(&qp->send_work);
