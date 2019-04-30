@@ -217,7 +217,7 @@ struct ntrdma_dev {
 				DEFAULT_RATELIMIT_INTERVAL,					\
 				DEFAULT_RATELIMIT_BURST);					\
 				if (__ratelimit(&_rs))						\
-					ntrdma_info(dev, fmt, ## __args);		\
+					ntrdma_info(__dev, __fmt, ## __args);		\
 	} while (0)
 
 #define ntrdma_vdbg(__dev, __args...) \
