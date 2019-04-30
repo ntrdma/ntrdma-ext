@@ -38,6 +38,7 @@
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
 #include <linux/types.h>
+#include <linux/ratelimit.h>
 
 #include <linux/ntc.h>
 
@@ -205,6 +206,19 @@ struct ntrdma_dev {
 #define ntrdma_err(__dev, __fmt, __args...) \
 	dev_err(&(__dev)->ntc->dev, "%s: %d: " \
 			__fmt, __func__, __LINE__, ## __args)
+
+#define ntrdma_info(__dev, __fmt, __args...) \
+	dev_info(&(__dev)->ntc->dev, "%s: %d: " \
+			__fmt, __func__, __LINE__, ## __args)
+
+#define ntrdma_info_ratelimited(__dev, __fmt, __args...)	\
+	do {													\
+		static DEFINE_RATELIMIT_STATE(_rs,					\
+				DEFAULT_RATELIMIT_INTERVAL,					\
+				DEFAULT_RATELIMIT_BURST);					\
+				if (__ratelimit(&_rs))						\
+					ntrdma_info(dev, fmt, ## __args);		\
+	} while (0)
 
 #define ntrdma_vdbg(__dev, __args...) \
 	dev_vdbg(&(__dev)->ntc->dev, ## __args)
