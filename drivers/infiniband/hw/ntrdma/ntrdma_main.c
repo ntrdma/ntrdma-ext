@@ -31,6 +31,8 @@
  */
 
 #include <linux/init.h>
+#include <linux/kobject.h>
+#include <linux/sysfs.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 
@@ -45,6 +47,46 @@ MODULE_AUTHOR("Allen Hubbe");
 MODULE_DESCRIPTION("RDMA Driver for PCIe NTB and DMA");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(DRIVER_VERSION);
+
+static int sysfs_link_disable;
+
+static ssize_t link_disable_show(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	return sprintf(buf, "%d\n", sysfs_link_disable);
+}
+
+static ssize_t link_disable_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct ntc_dev *ntc = (struct ntc_dev *)dev;
+
+	int rc = sscanf(buf, "%du", &sysfs_link_disable);
+
+	pr_devel("sysfs entry was set by user to %d rc %d\n",
+			sysfs_link_disable, rc);
+
+	if (ntc && rc > 0) {
+		rc = (!sysfs_link_disable) ? ntc_link_enable(ntc) :
+				ntc_link_disable(ntc);
+
+		if (rc)
+			pr_err("could not set link state (%d) by ntc, rc %d\n",
+				sysfs_link_disable, rc);
+	}
+	return count;
+}
+
+static struct device_attribute attr = {
+	.attr = {
+		.name = "link_disable",
+		.mode = 0660,/*S_IWUSR | S_IRUGO,*/
+	},
+	.show = link_disable_show,
+	.store = link_disable_store,
+};
 
 static int ntrdma_probe(struct ntc_driver *self,
 			struct ntc_dev *ntc)
@@ -66,6 +108,11 @@ static int ntrdma_probe(struct ntc_driver *self,
 
 	ntc_link_enable(ntc);
 
+	rc = device_create_file((struct device *)ntc, &attr);
+	if (rc)
+		pr_err("failed to create sysfs entry rc = %d\n", rc);
+
+
 	return 0;
 
 err_init:
@@ -76,8 +123,8 @@ err_init:
 static void ntrdma_remove(struct ntc_driver *self, struct ntc_dev *ntc)
 {
 	struct ntrdma_dev *dev = ntc_get_ctx(ntc);
-
 	pr_devel("remove ntc %s\n", dev_name(&ntc->dev));
+	device_remove_file((struct device *)ntc, &attr);
 	ntrdma_dev_ib_deinit(dev);
 	ntc_link_disable(ntc);
 	ntrdma_dev_deinit(dev);
