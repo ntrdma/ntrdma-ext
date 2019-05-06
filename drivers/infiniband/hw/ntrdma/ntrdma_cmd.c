@@ -585,7 +585,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			ntrdma_vdbg(dev, "rsp cmpl pos %d\n", pos);
 
-			TRACE("CMD: respond received for %ps pos %u",
+			TRACE("CMD: respond received for %ps pos %u\n",
 				cb->rsp_cmpl, pos);
 
 			rc = cb->rsp_cmpl(cb, &dev->cmd_send_rsp_buf[pos], req);
@@ -1030,6 +1030,9 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	ntrdma_vdbg(dev,
 			"called qp_key %d vbell %d\n",
 			 cmd->qp_key, cmd->cmpl_vbell_idx);
+
+	TRACE("peer QP %d create received, recv cap: %d send cap %d\n",
+			cmd->qp_key, cmd->recv_wqe_cap, cmd->send_wqe_cap);
 
 	rsp->hdr.op = cmd->op;
 	rsp->qp_key = cmd->qp_key;

@@ -204,7 +204,7 @@ struct ntrdma_dev {
 	dev_dbg(&(__dev)->ntc->dev, ## __args)
 
 #define ntrdma_err(__dev, __fmt, __args...) \
-	dev_err(&(__dev)->ntc->dev, "%s: %d: " \
+	dev_err(&(__dev)->ntc->dev, "%s: %d: ERROR: " \
 			__fmt, __func__, __LINE__, ## __args)
 
 #define ntrdma_info(__dev, __fmt, __args...) \

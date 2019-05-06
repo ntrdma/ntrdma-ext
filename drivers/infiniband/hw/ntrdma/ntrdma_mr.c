@@ -195,7 +195,7 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
 
-	TRACE("mr_enable prep: %d", mr->res.key);
+	TRACE("mr_enable prep: %d\n", mr->res.key);
 
 	cmd->mr_create.op = NTRDMA_CMD_MR_CREATE;
 	cmd->mr_create.mr_key = mr->res.key;
@@ -220,7 +220,7 @@ static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr *mr = mrcb->mr;
 	int rc;
 
-	TRACE("mr_enable cmpl: %d", mr->res.key);
+	TRACE("mr_enable cmpl: %d\n", mr->res.key);
 
 	if (!rsp || rsp->hdr.status) {
 		rc = -EIO;

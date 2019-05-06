@@ -122,7 +122,7 @@ void ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 	struct ntrdma_res *res;
 	int rc;
 
-	TRACE("resources enabled");
+	TRACE("resources enabled\n");
 
 	mutex_lock(&dev->res_lock);
 	list_for_each_entry(res, &dev->res_list, obj.dev_entry) {

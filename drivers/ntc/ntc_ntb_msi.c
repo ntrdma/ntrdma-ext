@@ -1035,8 +1035,8 @@ static int ntc_ntb_req_prep_flags(struct ntc_dev *ntc, bool fence)
 }
 
 static int ntc_ntb_req_memcpy(struct ntc_dev *ntc, void *req,
-			      u64 dst, u64 src, u64 len, bool fence,
-			      void (*cb)(void *cb_ctx), void *cb_ctx)
+		u64 dst, u64 src, u64 len, bool fence,
+		void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct dma_chan *chan = req;
 	struct dma_async_tx_descriptor *tx;
@@ -1672,8 +1672,9 @@ struct ntb_client ntc_ntb_client = {
 
 static int __init ntc_init(void)
 {
-	pr_info("%s: %s %s\n", DRIVER_NAME,
+	pr_info("%s: %s %s init\n", DRIVER_NAME,
 		DRIVER_DESCRIPTION, DRIVER_VERSION);
+
 	if (debugfs_initialized())
 		ntc_dbgfs = debugfs_create_dir(KBUILD_MODNAME, NULL);
 	ntb_register_client(&ntc_ntb_client);
@@ -1685,5 +1686,8 @@ static void __exit ntc_exit(void)
 {
 	ntb_unregister_client(&ntc_ntb_client);
 	debugfs_remove_recursive(ntc_dbgfs);
+
+	pr_info("%s: %s %s exit\n", DRIVER_NAME,
+			DRIVER_DESCRIPTION, DRIVER_VERSION);
 }
 module_exit(ntc_exit);
