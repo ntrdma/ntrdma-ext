@@ -290,7 +290,7 @@ static struct bus_type ntc_bus = {
 
 static int __init ntc_driver_init(void)
 {
-	pr_info("%s: %s %s\n", DRIVER_NAME,
+	pr_info("%s: %s %s init\n", DRIVER_NAME,
 		DRIVER_DESCRIPTION, DRIVER_VERSION);
 	return bus_register(&ntc_bus);
 }
@@ -299,6 +299,8 @@ module_init(ntc_driver_init);
 static void __exit ntc_driver_exit(void)
 {
 	bus_unregister(&ntc_bus);
+	pr_info("%s: %s %s exit\n", DRIVER_NAME,
+			DRIVER_DESCRIPTION, DRIVER_VERSION);
 }
 module_exit(ntc_driver_exit);
 

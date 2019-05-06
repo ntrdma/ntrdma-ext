@@ -585,107 +585,111 @@ static void ntrdma_modify_qp_debug(struct ib_qp *ibqp,
 		int ibqp_mask,
 		struct ib_udata *ibudata)
 {
+	struct ntrdma_dev *dev;
+	struct ntrdma_qp *qp;
+
+	qp = ntrdma_ib_qp(ibqp);
+	dev = ntrdma_qp_dev(qp);
+
 	if (ibqp_mask & IB_QP_STATE) {
-		pr_debug("%s: IB_QP_STATE %d\n",
-				__func__, ibqp_attr->qp_state);
+		ntrdma_vdbg(dev, "IB_QP_STATE %d\n",
+				ibqp_attr->qp_state);
 	}
 
 	if (ibqp_mask & IB_QP_CUR_STATE) {
-		pr_debug("%s: IB_QP_CUR_STATE %d\n",
-				__func__, ibqp_attr->cur_qp_state);
+		ntrdma_vdbg(dev, "IB_QP_CUR_STATE %d\n",
+				ibqp_attr->cur_qp_state);
 	}
 
 	if (ibqp_mask & IB_QP_EN_SQD_ASYNC_NOTIFY) {
-		pr_debug("%s: IB_QP_EN_SQD_ASYNC_NOTIFY %d\n",
-				__func__, ibqp_attr->en_sqd_async_notify);
+		ntrdma_vdbg(dev, "IB_QP_EN_SQD_ASYNC_NOTIFY %d\n",
+				ibqp_attr->en_sqd_async_notify);
 	}
 
 	if (ibqp_mask & IB_QP_ACCESS_FLAGS) {
-		pr_debug("%s: IB_QP_ACCESS_FLAGS %d\n",
-				__func__, ibqp_attr->qp_access_flags);
+		ntrdma_vdbg(dev, "IB_QP_ACCESS_FLAGS %d\n",
+				ibqp_attr->qp_access_flags);
 	}
 
 	if (ibqp_mask & IB_QP_PKEY_INDEX) {
-		pr_debug("%s: IB_QP_PKEY_INDEX %d\n",
-				__func__, ibqp_attr->pkey_index);
+		ntrdma_vdbg(dev, "IB_QP_PKEY_INDEX %d\n",
+				ibqp_attr->pkey_index);
 	}
 
 	if (ibqp_mask & IB_QP_PORT) {
-		pr_debug("%s: IB_QP_PORT %d\n",
-				__func__, ibqp_attr->port_num);
+		ntrdma_vdbg(dev, "IB_QP_PORT %d\n",
+				ibqp_attr->port_num);
 	}
 
 	if (ibqp_mask & IB_QP_QKEY) {
-		pr_debug("%s: IB_QP_QKEY %d\n",
-				__func__, ibqp_attr->qkey);
+		ntrdma_vdbg(dev, "IB_QP_QKEY %d\n",
+				ibqp_attr->qkey);
 	}
 
 	if (ibqp_mask & IB_QP_AV) {
-		pr_debug("%s: IB_QP_AV\n",
-				__func__);
+		ntrdma_vdbg(dev, "IB_QP_AV\n");
 	}
 
 	if (ibqp_mask & IB_QP_PATH_MTU) {
-		pr_debug("%s: IB_QP_PATH_MTU %d\n",
-				__func__, ibqp_attr->path_mtu);
+		ntrdma_vdbg(dev, "IB_QP_PATH_MTU %d\n",
+				ibqp_attr->path_mtu);
 	}
 
 	if (ibqp_mask & IB_QP_TIMEOUT) {
-		pr_debug("%s: IB_QP_TIMEOUT %d\n",
-				__func__, ibqp_attr->timeout);
+		ntrdma_vdbg(dev, "IB_QP_TIMEOUT %d\n",
+				ibqp_attr->timeout);
 	}
 
 	if (ibqp_mask & IB_QP_RETRY_CNT) {
-		pr_debug("%s: IB_QP_RETRY_CNT %d\n",
-				__func__, ibqp_attr->retry_cnt);
+		ntrdma_vdbg(dev, "IB_QP_RETRY_CNT %d\n",
+				ibqp_attr->retry_cnt);
 	}
 
 	if (ibqp_mask & IB_QP_RNR_RETRY) {
-		pr_debug("%s: IB_QP_RNR_RETRY %d\n",
-				__func__, ibqp_attr->rnr_retry);
+		ntrdma_vdbg(dev, "IB_QP_RNR_RETRY %d\n",
+				ibqp_attr->rnr_retry);
 	}
 
 	if (ibqp_mask & IB_QP_RQ_PSN) {
-		pr_debug("%s: IB_QP_RQ_PSN %d\n",
-				__func__, ibqp_attr->rq_psn);
+		ntrdma_vdbg(dev, "IB_QP_RQ_PSN %d\n",
+				ibqp_attr->rq_psn);
 	}
 
 	if (ibqp_mask & IB_QP_MAX_QP_RD_ATOMIC) {
-		pr_debug("%s: IB_QP_MAX_QP_RD_ATOMIC %d\n",
-				__func__, ibqp_attr->max_rd_atomic);
+		ntrdma_vdbg(dev, "IB_QP_MAX_QP_RD_ATOMIC %d\n",
+				ibqp_attr->max_rd_atomic);
 	}
 
 	if (ibqp_mask & IB_QP_ALT_PATH)
-		pr_debug("%s: IB_QP_ALT_PATH\n", __func__);
+		ntrdma_vdbg(dev, "IB_QP_ALT_PATH\n");
 
 	if (ibqp_mask & IB_QP_MIN_RNR_TIMER) {
-		pr_debug("%s: IB_QP_MIN_RNR_TIMER %d\n",
-				__func__, ibqp_attr->min_rnr_timer);
+		ntrdma_vdbg(dev, "IB_QP_MIN_RNR_TIMER %d\n",
+				ibqp_attr->min_rnr_timer);
 	}
 
 	if (ibqp_mask & IB_QP_SQ_PSN) {
-		pr_debug("%s: IB_QP_SQ_PSN %d\n",
-				__func__, ibqp_attr->sq_psn);
+		ntrdma_vdbg(dev, "IB_QP_SQ_PSN %d\n",
+				ibqp_attr->sq_psn);
 	}
 
 	if (ibqp_mask & IB_QP_MAX_DEST_RD_ATOMIC) {
-		pr_debug("%s: IB_QP_MAX_DEST_RD_ATOMIC %d\n",
-				__func__, ibqp_attr->max_dest_rd_atomic);
+		ntrdma_vdbg(dev, "IB_QP_MAX_DEST_RD_ATOMIC %d\n",
+				ibqp_attr->max_dest_rd_atomic);
 	}
 
 	if (ibqp_mask & IB_QP_PATH_MIG_STATE) {
-		pr_debug("%s: IB_QP_PATH_MIG_STATE %d\n",
-				__func__, ibqp_attr->path_mig_state);
+		ntrdma_vdbg(dev, "IB_QP_PATH_MIG_STATE %d\n",
+				ibqp_attr->path_mig_state);
 	}
 
 	if (ibqp_mask & IB_QP_CAP) {
-		pr_debug("%s: IB_QP_CAP\n",
-				__func__);
+		ntrdma_vdbg(dev, "IB_QP_CAP\n");
 	}
 
 	if (ibqp_mask & IB_QP_DEST_QPN) {
-		pr_debug("%s: IB_QP_DEST_QPN %d\n",
-				__func__, ibqp_attr->dest_qp_num);
+		ntrdma_vdbg(dev, "IB_QP_DEST_QPN %d\n",
+				ibqp_attr->dest_qp_num);
 	}
 }
 
@@ -905,7 +909,8 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	rc = ntrdma_qp_send_post_start(qp);
 	if (rc) {
 		ntrdma_err(dev,
-				"ntrdma_qp_send_post_start failed %d\n", rc);
+				"ntrdma_qp_send_post_start failed %d qp %d\n",
+				rc, qp->res.key);
 		goto out;
 	}
 
@@ -914,9 +919,9 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 		ntrdma_qp_send_post_get(qp, &pos, &end, &base);
 
 		if (pos == end) {
-			/* posting too many oustanding requests */
 			ntrdma_err(dev,
-					"posting too many sends\n");
+					"posting too many sends QP %d\n",
+					qp->res.key);
 			rc = -EINVAL;
 			break;
 		}
@@ -927,9 +932,12 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 			/* transform work request into the entry */
 			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr, qp);
-			TRACE("OPCODE %d: dev %p, flags %x, addr %llx, rc = %d\n"
+
+			TRACE("OPCODE %d: dev %p, flags %x, addr %llx, rc = %d QP %d num sges %d pos %d\n"
 					, ibwr->opcode, dev, ibwr->send_flags,
-					wqe->rdma_addr, rc);
+					wqe->rdma_addr, rc, qp->res.key,
+					ibwr->num_sge, pos);
+
 			if (rc)
 				break;
 
@@ -1106,10 +1114,10 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	ntrdma_dbg(dev, "count %x\n", mr->sg_count);
 
 	for (i = 0; i < count; ++i) {
-		ntrdma_dbg(dev, "local sgl[%d] dma %#llx len %#llx\n",
+		ntrdma_vdbg(dev, "local sgl[%d] dma %#llx len %#llx\n",
 				i, mr->local_dma[i].addr,
 				mr->local_dma[i].len);
-		ntrdma_dbg(dev, "remote sgl[%d] dma %#llx len %#llx\n",
+		ntrdma_vdbg(dev, "remote sgl[%d] dma %#llx len %#llx\n",
 				i, mr->remote_dma[i].addr,
 				mr->remote_dma[i].len);
 	}

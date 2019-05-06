@@ -135,7 +135,7 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 			mr = ntrdma_dev_mr_look(dev, src_sg_list[src_i].key);
 			if (!mr) {
 				ntrdma_err(dev,
-						"Error invalid mr key for source SG list %x sg idx %d/%d\n",
+						"Error invalid mr key for source SG list: key %x sg idx %d/%d\n",
 						src_sg_list[src_i].key, src_i, src_sg_count);
 				rc = -EINVAL;
 				goto err;

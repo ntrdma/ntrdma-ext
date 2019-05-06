@@ -143,6 +143,7 @@ struct ntc_driver ntrdma_driver = {
 
 static int __init ntrdma_init(void)
 {
+	pr_info("NTRDMA module init\n");
 	ntrdma_debugfs_init();
 	ntc_register_driver(&ntrdma_driver);
 	return 0;
@@ -153,5 +154,6 @@ static void __exit ntrdma_exit(void)
 {
 	ntc_unregister_driver(&ntrdma_driver);
 	ntrdma_debugfs_deinit();
+	pr_info("NTRDMA module exit\n");
 }
 module_exit(ntrdma_exit);
