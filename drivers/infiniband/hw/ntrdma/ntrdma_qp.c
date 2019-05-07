@@ -1549,9 +1549,16 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 		src = qp->recv_wqe_buf_addr + off;
 		dst = qp->peer_recv_wqe_buf_dma_addr + off;
 
-		ntc_req_memcpy(dev->ntc, req,
-			       dst, src, len,
-			       true, NULL, NULL);
+		rc = ntc_req_memcpy(dev->ntc, req,
+				dst, src, len,
+				true, NULL, NULL);
+
+		if (rc) {
+			ntrdma_err(dev,
+					"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
+					src, dst, len, rc);
+			break;
+		}
 
 		ntrdma_qp_recv_prod_get(qp, &start, &end, &base);
 		if (start == end)
@@ -1713,10 +1720,10 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						"ntrdma_zip_rdma failed %d qp %d\n",
 						rc, qp->res.key);
 
-				/* FIXME: use rc to indicate the real error */
 				wqe->op_status = NTRDMA_WC_ERR_RDMA_RANGE;
 				qp->send_error = true;
 				rqp->recv_error = true;
+				break;
 			}
 
 			wqe->rdma_len = rdma_len;
@@ -1747,10 +1754,20 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	src = qp->send_wqe_buf_addr + off;
 	dst = qp->peer_send_wqe_buf_dma_addr + off;
 
-	ntc_req_memcpy(dev->ntc, req,
+	rc = ntc_req_memcpy(dev->ntc, req,
 			dst, src, len,
 			true, NULL, NULL);
 
+	if (rc) {
+		ntrdma_err(dev,
+				"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
+				src, dst, len, rc);
+
+		qp->send_error = true;
+		rqp->recv_error = true;
+
+		goto err_memcpy;
+	}
 	/* send the prod idx */
 	ntc_req_imm32(dev->ntc, req,
 		      qp->peer_send_prod_dma_addr,
@@ -1766,6 +1783,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	ntc_req_submit(dev->ntc, req);
 
 	/* release lock for state change or producing later sends */
+err_memcpy:
 	ntrdma_qp_send_prod_done(qp);
 	return;
 
@@ -2008,9 +2026,17 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	src = rqp->send_cqe_buf_addr + off;
 	dst = rqp->peer_send_cqe_buf_dma_addr + off;
 
-	ntc_req_memcpy(dev->ntc, req,
-		       dst, src, len,
-		       true, NULL, NULL);
+	rc = ntc_req_memcpy(dev->ntc, req,
+			dst, src, len,
+			true, NULL, NULL);
+
+	if (rc) {
+		ntrdma_err(dev,
+				"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
+				src, dst, len, rc);
+
+		goto err_qp;
+	}
 
 	/* send the cons idx */
 	ntc_req_imm32(dev->ntc, req,

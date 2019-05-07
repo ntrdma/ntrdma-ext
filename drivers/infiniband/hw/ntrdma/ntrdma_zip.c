@@ -223,9 +223,16 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 					src_sg_list[src_i].len - src_off,
 					mr->local_dma[mr_i].len - mr_off);
 			len = min_t(size_t, dst_len, src_len);
-			ntc_req_memcpy(dev->ntc, req,
+			rc = ntc_req_memcpy(dev->ntc, req,
 					dst, src, len,
 					false, NULL, NULL);
+
+			if (rc) {
+				ntrdma_err(dev,
+						"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
+						src, dst, len, rc);
+				goto err;
+			}
 		} else {
 			struct dma_res_unmap_ctx *ctx;
 			u64 peer_phys = ntc_peer_addr(dev->ntc,
@@ -266,9 +273,19 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
 			ctx->dma_addr = dst;
 			ctx->len = dst_len;
 
-			ntc_req_memcpy(dev->ntc, req,
+			rc = ntc_req_memcpy(dev->ntc, req,
 					dst, src, len,
 					false, dma_res_unmap_cb, ctx);
+
+			if (rc) {
+				ntrdma_err(dev,
+						"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
+						src, dst, len, rc);
+
+				dma_res_unmap_cb(ctx);
+				goto err;
+			}
+
 		}
 
 		dev_vdbg(&dev->ntc->dev, "request memcpy dst %llx src %llx len %zu\n",
