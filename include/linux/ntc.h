@@ -79,7 +79,7 @@ struct ntc_ctx_ops {
 	int (*hello)(void *ctx, int phase,
 			 void *in_buf, size_t in_size,
 			 void *out_buf, size_t out_size);
-	void (*enable)(void *ctx);
+	int (*enable)(void *ctx);
 	void (*disable)(void *ctx);
 	void (*quiesce)(void *ctx);
 	void (*reset)(void *ctx);
@@ -450,7 +450,7 @@ int ntc_ctx_hello(struct ntc_dev *ntc, int phase,
  * Notify the driver context that the link is active.  The driver may begin
  * issuing requests.
  */
-void ntc_ctx_enable(struct ntc_dev *ntc);
+int ntc_ctx_enable(struct ntc_dev *ntc);
 
 /**
  * ntc_ctx_disable() - notify driver that the link is not active

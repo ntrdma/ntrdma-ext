@@ -896,8 +896,11 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 out:
 	if (dev->link_is_up != link_up) {
 		dev->link_is_up = link_up;
-		if (link_up)
-			ntc_ctx_enable(&dev->ntc);
+		if (link_up) {
+			err = ntc_ctx_enable(&dev->ntc);
+			if (err)
+				ntc_ntb_error(dev);
+		}
 		else
 			ntc_ctx_disable(&dev->ntc);
 	}

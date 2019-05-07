@@ -117,7 +117,7 @@ void ntrdma_dev_res_deinit(struct ntrdma_dev *dev)
 	ntrdma_kvec_deinit(&dev->mr_vec);
 }
 
-void ntrdma_dev_res_enable(struct ntrdma_dev *dev)
+int ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 {
 	struct ntrdma_res *res;
 	int rc;
@@ -133,13 +133,14 @@ void ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 		}
 	}
 	ntrdma_dev_cmd_submit(dev);
-	ntrdma_dev_cmd_finish(dev);
+	rc = ntrdma_dev_cmd_finish(dev);
 
-	dev->res_enable = 1;
+	if (likely(!rc))
+		dev->res_enable = 1;
 
 	mutex_unlock(&dev->res_lock);
 
-	return;
+	return rc;
 }
 
 void ntrdma_dev_res_disable(struct ntrdma_dev *dev)

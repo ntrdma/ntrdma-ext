@@ -106,10 +106,10 @@ int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase);
 int ntrdma_dev_res_init(struct ntrdma_dev *dev);
 void ntrdma_dev_res_deinit(struct ntrdma_dev *dev);
 
-void ntrdma_dev_enable(struct ntrdma_dev *dev);
+int ntrdma_dev_enable(struct ntrdma_dev *dev);
 void ntrdma_dev_eth_enable(struct ntrdma_dev *dev);
 void ntrdma_dev_cmd_enable(struct ntrdma_dev *dev);
-void ntrdma_dev_res_enable(struct ntrdma_dev *dev);
+int ntrdma_dev_res_enable(struct ntrdma_dev *dev);
 
 void ntrdma_dev_disable(struct ntrdma_dev *dev);
 void ntrdma_dev_eth_disable(struct ntrdma_dev *dev);

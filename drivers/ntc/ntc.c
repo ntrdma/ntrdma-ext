@@ -167,10 +167,11 @@ int ntc_ctx_hello(struct ntc_dev *ntc, int phase,
 }
 EXPORT_SYMBOL(ntc_ctx_hello);
 
-void ntc_ctx_enable(struct ntc_dev *ntc)
+int ntc_ctx_enable(struct ntc_dev *ntc)
 {
 	const struct ntc_ctx_ops *ctx_ops;
 	void *ctx;
+	int ret = 0;
 
 	dev_dbg(&ntc->dev, "enable\n");
 
@@ -179,7 +180,9 @@ void ntc_ctx_enable(struct ntc_dev *ntc)
 	ctx_ops = ntc->ctx_ops;
 
 	if (ctx_ops)
-		ctx_ops->enable(ctx);
+		ret = ctx_ops->enable(ctx);
+
+	return ret;
 }
 EXPORT_SYMBOL(ntc_ctx_enable);
 

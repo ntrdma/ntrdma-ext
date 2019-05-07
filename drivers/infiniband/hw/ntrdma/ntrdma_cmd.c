@@ -518,19 +518,21 @@ void ntrdma_dev_cmd_submit(struct ntrdma_dev *dev)
 	schedule_work(&dev->cmd_send_work);
 }
 
-void ntrdma_dev_cmd_finish(struct ntrdma_dev *dev)
+int ntrdma_dev_cmd_finish(struct ntrdma_dev *dev)
 {
 	int ret;
 
 	ret = wait_event_timeout(dev->cmd_send_cond,
 			ntrdma_cmd_done(dev), CMD_TIMEOUT_MSEC);
 
-	if (!ret)
+	if (!ret) {
 		ntrdma_err(dev,
 				"TIMEOUT: waiting for all pending commands to complete, after %d msec\n",
 				CMD_TIMEOUT_MSEC);
+		return -ETIME;
+	}
+	return 0;
 
-	/*TODO: Move to reset*/
 }
 
 static inline void ntrdma_cmd_send_vbell_clear(struct ntrdma_dev *dev)
