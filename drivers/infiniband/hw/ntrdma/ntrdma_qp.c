@@ -1710,6 +1710,9 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						     1, wqe->sg_count,
 						     false);
 			} else {
+				if (qp->ibqp.qp_type == IB_QPT_GSI) {
+					recv_wqe->sg_list[0].addr += sizeof(struct ib_grh);
+				}
 				rc = ntrdma_zip_rdma(dev, req, &rdma_len,
 						     recv_wqe->sg_list, wqe->sg_list,
 						     recv_wqe->sg_count, wqe->sg_count,

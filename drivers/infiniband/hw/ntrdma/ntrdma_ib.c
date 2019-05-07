@@ -806,7 +806,7 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		struct ib_send_wr *ibwr,
 		struct ntrdma_qp *qp)
 {
-	int i, j;
+	int i;
 	int sg_cap = qp->send_wqe_sg_cap;
 
 	wqe->ulp_handle = ibwr->wr_id;
@@ -872,24 +872,10 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 
 	wqe->sg_count = ibwr->num_sge;
 
-	j = 0;
-
-	/* For UD WR GRH header should be added */
-	if (qp->ibqp.qp_type == IB_QPT_GSI ||
-			qp->ibqp.qp_type == IB_QPT_SMI ||
-			qp->ibqp.qp_type == IB_QPT_UD) {
-
-		wqe->sg_count++;
-		wqe->sg_list[0].addr = dev->grh_dma_addr;
-		wqe->sg_list[0].len = sizeof(struct ib_grh);
-		wqe->sg_list[0].key = NTRDMA_RESERVED_DMA_LEKY;
-		j++;
-	}
-
-	for (i = 0; i < ibwr->num_sge; ++i, ++j) {
-		wqe->sg_list[j].addr = ibwr->sg_list[i].addr;
-		wqe->sg_list[j].len = ibwr->sg_list[i].length;
-		wqe->sg_list[j].key = ibwr->sg_list[i].lkey;
+	for (i = 0; i < ibwr->num_sge; ++i) {
+		wqe->sg_list[i].addr = ibwr->sg_list[i].addr;
+		wqe->sg_list[i].len = ibwr->sg_list[i].length;
+		wqe->sg_list[i].key = ibwr->sg_list[i].lkey;
 	}
 
 	return 0;
@@ -1208,17 +1194,6 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	struct ib_device *ibdev = &dev->ibdev;
 	int rc;
 
-	dev->grh_dma_addr = ntc_buf_map(dev->ntc,
-			&dev->grh,
-			sizeof(dev->grh),
-			DMA_TO_DEVICE,
-			IOAT_DEV_ACCESS);
-
-	if (!dev->grh_dma_addr) {
-		ntrdma_err(dev, "dma map grh_dma_addr failed\n");
-		return -ENOMEM;
-	}
-
 	strlcpy(ibdev->name, "ntrdma_%d", IB_DEVICE_NAME_MAX);
 
 	ntrdma_set_node_guid(&ibdev->node_guid);
@@ -1312,10 +1287,4 @@ void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev)
 {
 
 	ib_unregister_device(&dev->ibdev);
-
-	ntc_buf_unmap(dev->ntc,
-			dev->grh_dma_addr,
-			sizeof(dev->grh),
-			DMA_TO_DEVICE,
-			IOAT_DEV_ACCESS);
 }
