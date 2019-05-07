@@ -204,6 +204,8 @@ struct ntc_ntb_dev {
 	struct mutex			link_lock;
 
 	struct dentry *dbgfs;
+	wait_queue_head_t	reset_done;
+	uint				reset_cnt;
 };
 
 #define ntc_ntb_down_cast(__ntc) \
@@ -495,6 +497,7 @@ static void ntc_ntb_ping_stop(struct ntc_ntb_dev *dev)
 
 static inline void ntc_ntb_link_set_state(struct ntc_ntb_dev *dev, int state)
 {
+
 	dev->link_state = state;
 	ntc_ntb_ping_send(dev, state);
 }
@@ -513,6 +516,12 @@ static inline void ntc_ntb_error(struct ntc_ntb_dev *dev)
 {
 	dev_err(&dev->ntc.dev, "link error\n");
 
+	if (!(dev->link_state > NTC_NTB_LINK_RESET)) {
+		pr_info(
+				"NTC: link reset call rejected , current link state %d\n",
+				dev->link_state);
+		return;
+	}
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_QUIESCE);
 	schedule_work(&dev->link_work);
 }
@@ -553,7 +562,8 @@ static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 
 	reset_peer_irq(dev);
 	memset(dev->info_peer_on_self, 0, sizeof(*dev->info_peer_on_self));
-
+	dev->reset_cnt++;
+	wake_up(&dev->reset_done);
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_START);
 }
 
@@ -958,16 +968,38 @@ static int ntc_ntb_link_enable(struct ntc_dev *ntc)
 
 	return rc;
 }
-
-static int ntc_ntb_link_reset(struct ntc_dev *ntc)
+#define RESET_TIMEOUT (1000) /*1 sec*/
+static int ntc_ntb_link_reset_sync(struct ntc_dev *ntc)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+	uint tmp_reset_cnt;
+	int ret;
 
 	dev_dbg(&dev->ntc.dev, "link reset requested by upper layer\n");
 
+	if (!(dev->link_state > NTC_NTB_LINK_RESET)) {
+		dev_dbg(&dev->ntc.dev,
+				"link reset skip, current state %d\n",
+				dev->link_state);
+		return 0;
+	}
+
 	mutex_lock(&dev->link_lock);
 	ntc_ntb_error(dev);
+	tmp_reset_cnt = dev->reset_cnt;
 	mutex_unlock(&dev->link_lock);
+
+	ret = wait_event_timeout(dev->reset_done,
+			dev->reset_cnt - tmp_reset_cnt,
+			RESET_TIMEOUT);
+
+	if (unlikely(!ret)) {
+		dev_err(&dev->ntc.dev,
+				"link reset timeout after %d current state %d",
+				RESET_TIMEOUT, dev->link_state);
+	}
+
+	dev_dbg(&dev->ntc.dev, "link reset done\n");
 
 	return 0;
 }
@@ -1272,7 +1304,7 @@ static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.map_dev			= ntc_ntb_map_dev,
 	.link_disable		= ntc_ntb_link_disable,
 	.link_enable		= ntc_ntb_link_enable,
-	.link_reset			= ntc_ntb_link_reset,
+	.link_reset			= ntc_ntb_link_reset_sync,
 	.peer_addr			= ntc_ntb_peer_addr,
 	.req_create			= ntc_ntb_req_create,
 	.req_cancel			= ntc_ntb_req_cancel,
@@ -1455,6 +1487,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 		  ntc_ntb_link_work_cb);
 
 	mutex_init(&dev->link_lock);
+	init_waitqueue_head(&dev->reset_done);
 
 	/* ready for context events */
 	rc = ntb_set_ctx(dev->ntb, dev,
