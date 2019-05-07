@@ -314,14 +314,17 @@ int ntrdma_res_add(struct ntrdma_res *res)
 
 	ntrdma_vdbg(dev, "wait for commands\n");
 	rc = ntrdma_res_wait_cmds(res);
-	WARN(!rc,
+	ntrdma_res_unlock(res);
+
+	if (!rc) {
+		ntrdma_err(dev,
 			"ntrdma res add(%ps) cmd timeout after %lu msec",
 			res->enable,
 			res->timeout);
-	/* TODO handle timeout */
+		ntrdma_unrecoverable_err(dev);
+	}
 
 	ntrdma_vdbg(dev, "done waiting\n");
-	ntrdma_res_unlock(res);
 
 	return 0;
 }
@@ -356,15 +359,16 @@ void ntrdma_res_del(struct ntrdma_res *res)
 	mutex_unlock(&dev->res_lock);
 
 	rc = ntrdma_res_wait_cmds(res);
-	WARN(!rc,
+	ntrdma_res_unlock(res);
+	ntrdma_res_put(res);
+
+	if (!rc) {
+		ntrdma_err(dev,
 			"ntrdma res del(%ps) cmd timeout after %lu msec",
 			res->disable,
 			res->timeout);
-	/* TODO handle timeout */
-
-	ntrdma_res_unlock(res);
-
-	ntrdma_res_put(res);
+		ntrdma_unrecoverable_err(dev);
+	}
 }
 
 int ntrdma_rres_init(struct ntrdma_rres *rres,

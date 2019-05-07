@@ -221,3 +221,14 @@ void ntrdma_dev_reset(struct ntrdma_dev *dev)
 	ntrdma_dev_vbell_reset(dev);
 }
 
+void _ntrdma_unrecoverable_err(struct ntrdma_dev *dev,
+		const char *f)
+{
+	ntrdma_err(dev, "unrecoverable error called by %s ", f);
+	ntrdma_err(dev, "disabling NTB link...\n");
+	ntc_link_disable(dev->ntc);
+	ntrdma_err(dev, "NTB link disabled, resetting NTC state machine\n");
+	ntc_link_reset(dev->ntc);
+	ntrdma_err(dev, "NTC state machine reset finished\n");
+}
+
