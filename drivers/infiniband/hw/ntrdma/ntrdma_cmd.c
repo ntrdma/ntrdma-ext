@@ -647,9 +647,15 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			dst = dev->peer_cmd_recv_buf_dma_addr + off;
 			src = dev->cmd_send_buf_dma_addr + off;
 
-			ntc_req_memcpy(dev->ntc, req,
+			rc = ntc_req_memcpy(dev->ntc, req,
 					dst, src, len,
 					true, NULL, NULL);
+
+			if (rc) {
+				ntrdma_err(dev,
+						"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
+						src, dst, len, rc);
+			}
 
 			/* update the producer index on the peer */
 
@@ -1357,10 +1363,15 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			TRACE("CMD: send reply for %d cmds to pos %d\n",
 						(pos - start), start);
 
-			ntc_req_memcpy(dev->ntc, req,
+			rc = ntc_req_memcpy(dev->ntc, req,
 					dst, src, len,
 					true, NULL, NULL);
 
+			if (rc) {
+				ntrdma_err(dev,
+						"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
+						src, dst, len, rc);
+			}
 			/* update the producer index on the peer */
 
 			ntc_req_imm32(dev->ntc, req,
