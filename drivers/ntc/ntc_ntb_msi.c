@@ -1008,6 +1008,8 @@ static int ntc_ntb_req_submit(struct ntc_dev *ntc, void *req)
 	struct dma_chan *chan = req;
 	struct dma_async_tx_descriptor *tx;
 	dma_cookie_t cookie;
+	struct dma_tx_state txstate;
+	static int i;
 
 	dev_vdbg(&ntc->dev, "submit request\n");
 
@@ -1019,7 +1021,17 @@ static int ntc_ntb_req_submit(struct ntc_dev *ntc, void *req)
 	if (dma_submit_error(cookie))
 		return -EIO;
 
+	/* locked area per DMA engine*/
+	i++;
 	dma_async_issue_pending(chan);
+
+	/*
+	 *  We do not really care about the status but still calling
+	 * tx status func to clear the ioat ring.
+	 */
+
+	if (!(i & 0xff))
+		chan->device->device_tx_status(chan, cookie, &txstate);
 
 	return 0;
 }
