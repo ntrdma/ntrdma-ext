@@ -186,6 +186,7 @@ struct ntrdma_dev {
 
 	/* virtual ethernet device */
 	struct ntrdma_eth		*eth;
+	bool	is_cmd_prep;
 };
 
 #define ntrdma_ib_dev(__ibdev) \

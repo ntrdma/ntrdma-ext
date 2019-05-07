@@ -109,6 +109,8 @@ struct ntrdma_eth {
 
 	struct ntrdma_vbell		vbell;
 	u32				vbell_idx;
+	bool	is_hello_done;
+	bool	is_hello_prep;
 };
 
 #define ntrdma_napi_eth(__napi) \

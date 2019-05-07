@@ -98,6 +98,7 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	dev->cmd_recv_rsp_buf_addr = 0;
 	dev->cmd_recv_rsp_buf_size = 0;
 	dev->is_cmd_hello_done = false;
+	dev->is_cmd_prep = false;
 
 	/* assigned in ready phase */
 	dev->peer_cmd_send_rsp_buf_dma_addr = 0;
@@ -170,6 +171,8 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	}
 	return 0;
 deinit:
+	WARN(dev->is_cmd_hello_done, "Deinit while cmd hello not undone");
+	WARN(dev->is_cmd_prep, "Deinit while cmd prep not unprep");
 	ntc_buf_unmap(dev->ntc,
 			dev->cmd_send_rsp_buf_addr,
 			dev->cmd_send_rsp_buf_size,
@@ -245,6 +248,10 @@ static inline int ntrdma_dev_cmd_hello_done_undone(struct ntrdma_dev *dev,
 
 	return 0;
 undone:
+	if (!dev->is_cmd_hello_done)
+		return 0;
+
+	dev->is_cmd_hello_done = false;
 	ntc_resource_unmap(dev->ntc,
 			dev->peer_cmd_recv_prod_dma_addr,
 			sizeof(*dev->cmd_recv_prod_buf),
@@ -264,9 +271,7 @@ err_peer_cmd_recv_buf_dma_addr:
 
 void ntrdma_dev_cmd_deinit(struct ntrdma_dev *dev)
 {
-	if (dev->is_cmd_hello_done)
-		ntrdma_dev_cmd_hello_done_undone(dev, NULL, true);
-
+	ntrdma_dev_cmd_reset(dev);
 	ntrdma_dev_cmd_init_deinit(dev, 0, 0, 0, true);
 }
 
@@ -396,9 +401,13 @@ static inline int ntrdma_dev_cmd_hello_prep_unperp(struct ntrdma_dev *dev,
 		rc = -EIO;
 		goto err_recv_rsp_buf_addr;
 	}
+	dev->is_cmd_prep = true;
 
 	return 0;
 deinit:
+	if (!dev->is_cmd_prep)
+		return 0;
+	dev->is_cmd_prep = false;
 	ntc_buf_unmap(dev->ntc,
 			dev->cmd_recv_rsp_buf_addr,
 			dev->cmd_recv_rsp_buf_size,
@@ -469,6 +478,7 @@ int ntrdma_dev_cmd_hello_done(struct ntrdma_dev *dev,
 
 void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev)
 {
+	ntrdma_dev_cmd_hello_done_undone(dev, NULL, true);
 	ntrdma_dev_cmd_hello_prep_unperp(dev, NULL, true);
 }
 
