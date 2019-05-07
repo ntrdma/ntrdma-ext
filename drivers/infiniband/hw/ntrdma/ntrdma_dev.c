@@ -55,11 +55,11 @@ static int ntrdma_ntc_hello(void *ctx, int phase,
 	return ntrdma_dev_hello(dev, phase);
 }
 
-static void ntrdma_ntc_enable(void *ctx)
+static int ntrdma_ntc_enable(void *ctx)
 {
 	struct ntrdma_dev *dev = ctx;
 
-	ntrdma_dev_enable(dev);
+	return ntrdma_dev_enable(dev);
 }
 
 static void ntrdma_ntc_disable(void *ctx)
@@ -192,11 +192,15 @@ void ntrdma_dev_deinit(struct ntrdma_dev *dev)
 	ntrdma_dev_vbell_deinit(dev);
 }
 
-void ntrdma_dev_enable(struct ntrdma_dev *dev)
+int ntrdma_dev_enable(struct ntrdma_dev *dev)
 {
+	int rc;
+
 	ntrdma_dev_eth_enable(dev);
 	ntrdma_dev_cmd_enable(dev);
-	ntrdma_dev_res_enable(dev);
+	rc = ntrdma_dev_res_enable(dev);
+
+	return rc;
 }
 
 void ntrdma_dev_disable(struct ntrdma_dev *dev)
