@@ -1744,6 +1744,10 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	ntrdma_qp_send_prod_put(qp, pos, base);
 
+	if (unlikely(pos == start)) {
+		goto done;
+	}
+
 	/* sync the ring buffer for the device */
 	ntc_buf_sync_dev(dev->ntc,
 			 qp->send_wqe_buf_addr,
@@ -1786,6 +1790,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	ntc_req_submit(dev->ntc, req);
 
 	/* release lock for state change or producing later sends */
+done:
 err_memcpy:
 	ntrdma_qp_send_prod_done(qp);
 	return;
