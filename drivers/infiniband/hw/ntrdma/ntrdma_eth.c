@@ -175,6 +175,8 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	eth->peer_rx_cqe_buf_dma_addr = 0;
 	eth->peer_rx_cons_buf_dma_addr = 0;
 	eth->peer_vbell_idx = 0;
+	eth->is_hello_done = false;
+	eth->is_hello_prep = false;
 
 	spin_lock_init(&eth->rx_prod_lock);
 	spin_lock_init(&eth->rx_cmpl_lock);
@@ -196,6 +198,8 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 deinit:
 	eth = dev->eth;
 	net = eth->napi.dev;
+	WARN(eth->is_hello_done, "eth deinit without hello undone");
+	WARN(eth->is_hello_prep, "eth deinit without hello unprep");
 	unregister_netdev(net);
 err_register:
 	netif_napi_del(&eth->napi);
@@ -237,6 +241,7 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 
 void ntrdma_dev_eth_deinit(struct ntrdma_dev *dev)
 {
+	ntrdma_dev_eth_reset(dev);
 	ntrdma_dev_eth_init_deinit(dev, 0, 0, true);
 }
 
@@ -376,9 +381,14 @@ static inline int ntrdma_dev_eth_hello_prep_unperp(struct ntrdma_dev *dev,
 	}
 
 	*eth->tx_prod_buf = peer_info->rx_idx;
+	eth->is_hello_prep = true;
 
 	return 0;
 unprep:
+	if (!eth->is_hello_prep)
+		return 0;
+
+	eth->is_hello_prep = false;
 	ntc_buf_free(dev->ntc,
 		     sizeof(*eth->tx_prod_buf),
 		     eth->tx_prod_buf,
@@ -488,13 +498,18 @@ static inline int ntrdma_dev_eth_hello_done_undone(struct ntrdma_dev *dev,
 		goto err_peer_tx_prod_buf_dma_addr;
 	}
 
+	eth->is_hello_done = true;
+
 	dev_dbg(ntc_map_dev(dev->ntc, 0),
 			"Mapping physical addr %llx to dma addr %llx\n",
 			peer_tx_prod_buf_phys_addr,
 			eth->peer_tx_prod_buf_dma_addr);
 	return 0;
 undone:
+	if (!eth->is_hello_done)
+		return 0;
 
+	eth->is_hello_done = false;
 	WARN(eth->link == true,
 			"OMG!!! eth hello undone while eth link is up");
 
