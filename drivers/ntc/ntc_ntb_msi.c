@@ -526,10 +526,26 @@ static inline void ntc_ntb_error(struct ntc_ntb_dev *dev)
 	schedule_work(&dev->link_work);
 }
 
+static void ntc_ntb_link_update(struct ntc_ntb_dev *dev, bool link_up)
+{
+	int err = 0;
+
+	if (dev->link_is_up == link_up)
+		return;
+
+	dev->link_is_up = link_up;
+	if (link_up) {
+		err = ntc_ctx_enable(&dev->ntc);
+		if (err)
+			ntc_ntb_error(dev);
+	} else
+		ntc_ctx_disable(&dev->ntc);
+}
+
 static inline void ntc_ntb_quiesce(struct ntc_ntb_dev *dev)
 {
 	dev_dbg(&dev->ntc.dev, "link quiesce\n");
-
+	ntc_ntb_link_update(dev, false);
 	ntc_ctx_quiesce(&dev->ntc);
 
 	/* TODO: cancel and wait for any outstanding dma requests */
@@ -777,22 +793,10 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	switch (dev->link_state) {
 	case NTC_NTB_LINK_QUIESCE:
 		ntc_ntb_quiesce(dev);
-
-		if (dev->link_state != NTC_NTB_LINK_RESET)
-			goto out;
-
+		/* no break */
 	case NTC_NTB_LINK_RESET:
-		switch (link_event) {
-		default:
-			goto out;
-		case NTC_NTB_LINK_RESET:
-		case NTC_NTB_LINK_START:
-			ntc_ntb_reset(dev);
-		}
-
-		if (dev->link_state != NTC_NTB_LINK_START)
-			goto out;
-
+		ntc_ntb_reset(dev);
+		/* no break */
 	case NTC_NTB_LINK_START:
 		switch (link_event) {
 		default:
@@ -904,16 +908,8 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	}
 
 out:
-	if (dev->link_is_up != link_up) {
-		dev->link_is_up = link_up;
-		if (link_up) {
-			err = ntc_ctx_enable(&dev->ntc);
-			if (err)
-				ntc_ntb_error(dev);
-		}
-		else
-			ntc_ctx_disable(&dev->ntc);
-	}
+	ntc_ntb_link_update(dev, link_up);
+
 }
 
 static void ntc_ntb_link_work_cb(struct work_struct *ws)
@@ -977,15 +973,18 @@ static int ntc_ntb_link_reset_sync(struct ntc_dev *ntc)
 
 	dev_dbg(&dev->ntc.dev, "link reset requested by upper layer\n");
 
-	if (!(dev->link_state > NTC_NTB_LINK_RESET)) {
+	mutex_lock(&dev->link_lock);
+
+	if (dev->link_state > NTC_NTB_LINK_START)
+		ntc_ntb_error(dev);
+
+	if (dev->link_state == NTC_NTB_LINK_START) {
+		mutex_unlock(&dev->link_lock);
 		dev_dbg(&dev->ntc.dev,
-				"link reset skip, current state %d\n",
-				dev->link_state);
+				"link reset requested by upper layer but already reseted\n");
 		return 0;
 	}
 
-	mutex_lock(&dev->link_lock);
-	ntc_ntb_error(dev);
 	tmp_reset_cnt = dev->reset_cnt;
 	mutex_unlock(&dev->link_lock);
 
@@ -997,9 +996,12 @@ static int ntc_ntb_link_reset_sync(struct ntc_dev *ntc)
 		dev_err(&dev->ntc.dev,
 				"link reset timeout after %d current state %d",
 				RESET_TIMEOUT, dev->link_state);
+		return -ETIME;
 	}
 
-	dev_dbg(&dev->ntc.dev, "link reset done\n");
+	dev_dbg(&dev->ntc.dev,
+			"link reset done, state %d\n",
+			dev->link_state);
 
 	return 0;
 }
