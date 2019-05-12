@@ -528,10 +528,14 @@ static inline struct device *ntc_map_dev(struct ntc_dev *ntc,
  *
  * Return: Zero on success, otherwise an error number.
  */
-static inline int ntc_link_disable(struct ntc_dev *ntc)
+static inline int _ntc_link_disable(struct ntc_dev *ntc, const char *f)
 {
+	pr_info("NTC link disable by upper layer (%s)\n",
+			f);
+
 	return ntc->dev_ops->link_disable(ntc);
 }
+#define ntc_link_disable(_ntc) _ntc_link_disable(_ntc, __func__)
 
 /**
  * ntc_link_enable() - enable the link
@@ -555,10 +559,19 @@ static inline int ntc_link_enable(struct ntc_dev *ntc)
  *
  * Return: Zero on success, otherwise an error number.
  */
-static inline int ntc_link_reset(struct ntc_dev *ntc)
+static inline int _ntc_link_reset(struct ntc_dev *ntc, const char *f)
 {
-	return ntc->dev_ops->link_reset(ntc);
+	int ret;
+
+	pr_info("NTC link resetting by upper layer (%s)...\n",
+			f);
+	ret = ntc->dev_ops->link_reset(ntc);
+	pr_info("NTC link reset done (%s)\n", f);
+
+	return ret;
 }
+
+#define ntc_link_reset(_ntc) _ntc_link_reset(_ntc, __func__)
 
 /**
  * ntc_peer_addr() - transform a channel-mapped address into a peer address

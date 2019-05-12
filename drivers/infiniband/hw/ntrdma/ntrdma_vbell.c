@@ -226,7 +226,7 @@ void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev)
 
 void ntrdma_dev_vbell_reset(struct ntrdma_dev *dev)
 {
-	ntrdma_dbg(dev, "not implemented\n");
+	ntrdma_dbg(dev, "vbell reset not implemented\n");
 }
 
 #ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
