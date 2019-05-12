@@ -183,13 +183,13 @@ void ntrdma_dev_hello_deinit(struct ntrdma_dev *dev)
 
 void ntrdma_dev_deinit(struct ntrdma_dev *dev)
 {
-	/* Prevent callbacks from the lower layer */
-	ntc_clear_ctx(dev->ntc);
+	ntrdma_info(dev, "Starting dev deinit...\n");
 	ntrdma_debugfs_dev_del(dev);
 	ntrdma_dev_eth_deinit(dev);
 	ntrdma_dev_res_deinit(dev);
 	ntrdma_dev_cmd_deinit(dev);
 	ntrdma_dev_vbell_deinit(dev);
+	ntrdma_info(dev, "Dev deinit finished\n");
 }
 
 int ntrdma_dev_enable(struct ntrdma_dev *dev)
@@ -205,12 +205,13 @@ int ntrdma_dev_enable(struct ntrdma_dev *dev)
 
 void ntrdma_dev_disable(struct ntrdma_dev *dev)
 {
+	ntrdma_dev_cmd_disable(dev);
 	ntrdma_dev_eth_disable(dev);
 }
 
 void ntrdma_dev_quiesce(struct ntrdma_dev *dev)
 {
-	ntrdma_dbg(dev, "not implemented\n");
+	ntrdma_dev_cmd_quiesce(dev);
 }
 
 void ntrdma_dev_reset(struct ntrdma_dev *dev)
