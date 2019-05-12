@@ -1286,6 +1286,6 @@ err_ib:
 
 void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev)
 {
-
+	pr_info("NTRDMA IB dev deinit\n");
 	ib_unregister_device(&dev->ibdev);
 }

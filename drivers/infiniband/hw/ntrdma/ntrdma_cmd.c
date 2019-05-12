@@ -825,8 +825,11 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	rc = ntrdma_rmr_init(rmr, dev, cmd->pd_key, cmd->access,
 			cmd->mr_addr, cmd->mr_len, cmd->sg_cap,
 			cmd->mr_key);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "rmr init failed, rc %d\n",
+						rc);
 		goto err_init;
+	}
 
 	count = cmd->sg_count;
 
@@ -852,6 +855,10 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 				IOAT_DEV_ACCESS);
 
 		if (unlikely(!rmr->sg_list[i].addr)) {
+			ntrdma_err(dev,
+					"rmr sg_list %d res map failed,addr %#llx len %llu\n",
+					i, remote_phys_addr,
+					cmd->sg_list[i].len);
 			rc = -EIO;
 			goto err_map;
 		}
@@ -900,6 +907,8 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 
 	rmr = ntrdma_dev_rmr_look(dev, cmd->mr_key);
 	if (!rmr) {
+		ntrdma_err(dev, "rmr lock failed for key %d\n",
+				cmd->mr_key);
 		rc = -EINVAL;
 		goto err_rmr;
 	}
@@ -949,6 +958,8 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 
 	rmr = ntrdma_dev_rmr_look(dev, cmd->mr_key);
 	if (!rmr) {
+		ntrdma_err(dev, "rmr look failed for lock %d\n",
+				cmd->mr_key);
 		rc = -EINVAL;
 		goto err_rmr;
 	}
@@ -981,6 +992,10 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 				IOAT_DEV_ACCESS);
 
 		if (unlikely(!rmr->sg_list[i].addr)) {
+			ntrdma_err(dev,
+					"sg list %d res map failed addr %#llx len %llu\n",
+					i, remote_phys_addr,
+					rmr->sg_list[i].len);
 			rc = -EIO;
 			goto err_map;
 		}
@@ -1100,6 +1115,10 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 					IOAT_DEV_ACCESS);
 
 	if (unlikely(!attr.peer_send_cqe_buf_dma_addr)) {
+		ntrdma_err(dev,
+				"cqe buf dma res map failed %#llx len %zd\n",
+				peer_send_cqe_buf_phys_addr,
+				cmd->send_wqe_cap * sizeof(struct ntrdma_cqe));
 		rc = -EIO;
 		goto err_peer_send_cqe_buf_dma_addr;
 	}
@@ -1112,6 +1131,9 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 					IOAT_DEV_ACCESS);
 
 	if (unlikely(!attr.peer_send_cons_dma_addr)) {
+		ntrdma_err(dev,
+				"send cons dma addr map failed, addr %#llx\n",
+				peer_send_cons_phys_addr);
 		rc = -EIO;
 		goto err_peer_send_cons_dma_addr;
 	}
@@ -1139,8 +1161,10 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	rsp->send_vbell_idx = rqp->send_vbell_idx;
 
 	rc = ntrdma_rqp_add(rqp);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "rqp add failed rc = %d\n", rc);
 		goto err_add;
+	}
 
 	rsp->hdr.status = 0;
 	return 0;
@@ -1188,6 +1212,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 
 	rqp = ntrdma_dev_rqp_look(dev, cmd->qp_key);
 	if (!rqp) {
+		ntrdma_err(dev, "rqp look failed key %d\n", cmd->qp_key);
 		rc = -EINVAL;
 		goto err_rqp;
 	}
@@ -1245,7 +1270,8 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 
 	rqp = ntrdma_dev_rqp_look(dev, cmd->qp_key);
 	if (!rqp) {
-		ntrdma_err(dev, "ntrdma_dev_rqp_look\n");
+		ntrdma_err(dev, "ntrdma_dev_rqp_look failed key %d\n",
+				cmd->qp_key);
 		rc = -EINVAL;
 		goto err_rqp;
 	}
@@ -1299,7 +1325,7 @@ static int ntrdma_cmd_recv(struct ntrdma_dev *dev, union ntrdma_cmd *cmd,
 						 &rsp->qp_modify);
 	}
 
-	ntrdma_dbg(dev, "unhandled recv cmd op %u\n", cmd->op);
+	ntrdma_err(dev, "unhandled recv cmd op %u\n", cmd->op);
 
 	return -EINVAL;
 }
