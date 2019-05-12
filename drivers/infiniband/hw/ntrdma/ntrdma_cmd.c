@@ -81,8 +81,7 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 
 	/* recv work */
 	mutex_init(&dev->cmd_recv_lock);
-	INIT_WORK(&dev->cmd_recv_work,
-		  ntrdma_cmd_recv_work_cb);
+
 	ntrdma_vbell_init(&dev->cmd_recv_vbell,
 			  ntrdma_cmd_recv_vbell_cb, dev);
 	dev->cmd_recv_vbell_idx = recv_vbell_idx;
@@ -111,8 +110,6 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	INIT_LIST_HEAD(&dev->cmd_post_list);
 	init_waitqueue_head(&dev->cmd_send_cond);
 	mutex_init(&dev->cmd_send_lock);
-	INIT_WORK(&dev->cmd_send_work,
-		  ntrdma_cmd_send_work_cb);
 	ntrdma_vbell_init(&dev->cmd_send_vbell,
 			  ntrdma_cmd_send_vbell_cb, dev);
 	dev->cmd_send_vbell_idx = send_vbell_idx;
@@ -169,10 +166,17 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 		rc = -EIO;
 		goto err_send_rsp_buf_addr;
 	}
+
+	INIT_WORK(&dev->cmd_send_work,
+			ntrdma_cmd_send_work_cb);
+	INIT_WORK(&dev->cmd_recv_work,
+			ntrdma_cmd_recv_work_cb);
 	return 0;
 deinit:
 	WARN(dev->is_cmd_hello_done, "Deinit while cmd hello not undone");
 	WARN(dev->is_cmd_prep, "Deinit while cmd prep not unprep");
+	cancel_work_sync(&dev->cmd_send_work);
+	cancel_work_sync(&dev->cmd_recv_work);
 	ntc_buf_unmap(dev->ntc,
 			dev->cmd_send_rsp_buf_addr,
 			dev->cmd_send_rsp_buf_size,
@@ -191,8 +195,6 @@ err_send_rsp_buf:
 err_send_buf_addr:
 	kfree(dev->cmd_send_buf);
 err_send_buf:
-	cancel_work_sync(&dev->cmd_send_work);
-	cancel_work_sync(&dev->cmd_recv_work);
 	return rc;
 }
 
@@ -271,7 +273,6 @@ err_peer_cmd_recv_buf_dma_addr:
 
 void ntrdma_dev_cmd_deinit(struct ntrdma_dev *dev)
 {
-	ntrdma_dev_cmd_reset(dev);
 	ntrdma_dev_cmd_init_deinit(dev, 0, 0, 0, true);
 }
 
@@ -474,6 +475,11 @@ int ntrdma_dev_cmd_hello_done(struct ntrdma_dev *dev,
 			       struct ntrdma_cmd_hello_prep *peer_prep)
 {
 	return ntrdma_dev_cmd_hello_done_undone(dev, peer_prep, false);
+}
+void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
+{
+	cancel_work_sync(&dev->cmd_send_work);
+	cancel_work_sync(&dev->cmd_recv_work);
 }
 
 void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev)
@@ -705,6 +711,11 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 static void ntrdma_cmd_send_work_cb(struct work_struct *ws)
 {
 	struct ntrdma_dev *dev = ntrdma_cmd_send_work_dev(ws);
+
+	if (!dev->cmd_ready) {
+		pr_info("cmd not ready yet to send\n");
+		return;
+	}
 
 	ntrdma_cmd_send_work(dev);
 }
@@ -1411,6 +1422,11 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 static void ntrdma_cmd_recv_work_cb(struct work_struct *ws)
 {
 	struct ntrdma_dev *dev = ntrdma_cmd_recv_work_dev(ws);
+
+	if (!dev->cmd_ready) {
+		pr_info("cmd not ready yet to recv\n");
+		return;
+	}
 
 	ntrdma_cmd_recv_work(dev);
 }
