@@ -241,7 +241,6 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 
 void ntrdma_dev_eth_deinit(struct ntrdma_dev *dev)
 {
-	ntrdma_dev_eth_reset(dev);
 	ntrdma_dev_eth_init_deinit(dev, 0, 0, true);
 }
 
