@@ -889,6 +889,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 				err = ntc_ntb_hello(dev);
 				if (err < 0) {
 					ntc_ntb_error(dev);
+					return;
 				}
 			}
 		}
