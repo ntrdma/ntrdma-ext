@@ -560,6 +560,9 @@ static inline void reset_peer_irq(struct ntc_ntb_dev *dev)
 	if (use_msi)
 		return;
 
+	if (!dev->peer_irq_dma_addr[0])
+		return;
+
 	max_irqs = ntb_db_vector_count(dev->ntb);
 
 	ntc_resource_unmap(&dev->ntc,
