@@ -1597,6 +1597,11 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* verify the qp state and lock for producing sends */
 	rc = ntrdma_qp_send_prod_start(qp);
 	if (rc) {
+		/* TODO: rc can be EAGAIN if state is not ready or rc can be
+		 * EINVAL in case send_status is error, Check if need to re-arm
+		 * the tasklet in case of EAGAIN since nothing is done in this
+		 * case and no return value is returned (it does not arm on the
+		 * state change)*/
 		ntrdma_err(dev,
 				"ntrdma_qp_send_prod_start failed rc = %d qp %d(%p)\n",
 				rc,qp->res.key, qp);
@@ -1623,11 +1628,14 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		goto err_rqp;
 	}
 	/* FIXME: need to complete the send with error */
+	/* TODO: Which send?, Need to close the connection and destroy qp and rqp!
+	 * there is no rpq if key is larger than rqp size (fatal error)*/
 
 
 	/* connected rqp must be ready to receive */
 	rc = ntrdma_rqp_recv_cons_start(rqp);
 	if (rc) {
+		/* TODO: If EINVAL (not ready or recv error) need to destroy connection */
 		ntrdma_err(dev, "ntrdma_rqp_recv_cons_start failed %d\n",
 				rc);
 		goto err_recv;
@@ -1690,6 +1698,9 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		}
 
 		if (wqe->op_status) {
+		/* TODO: in this case who is responsible to change status / re-try / reset ???:
+		 * lines 1668, 1686 is set above but no action made,
+		 * line 1735 below same, more in the rqp send work */
 			ntrdma_err(dev, "op status %d qp %d\n",
 					wqe->op_status,
 					qp->res.key);
@@ -1737,7 +1748,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 			break;
 		}
 	}
-
+	/* TODO: if ended by break do we want to continue from here? */
 	ntrdma_rqp_recv_cons_put(rqp, recv_pos, recv_base);
 	ntrdma_rqp_recv_cons_done(rqp);
 	ntrdma_rqp_put(rqp);
@@ -1760,7 +1771,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	len = (pos - start) * qp->send_wqe_size;
 	src = qp->send_wqe_buf_addr + off;
 	dst = qp->peer_send_wqe_buf_dma_addr + off;
-
+	/* TODO: return value is ignored! */
 	rc = ntc_req_memcpy(dev->ntc, req,
 			dst, src, len,
 			true, NULL, NULL);
@@ -1776,17 +1787,21 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		goto err_memcpy;
 	}
 	/* send the prod idx */
+	/* TODO: return value is ignored! */
 	ntc_req_imm32(dev->ntc, req,
 		      qp->peer_send_prod_dma_addr,
 		      qp->send_prod,
 		      true, NULL, NULL);
 
 	/* update the vbell and signal the peer */
+	/* TODO: return value is ignored! */
 	ntrdma_dev_vbell_peer(dev, req,
 			      qp->peer_send_vbell_idx);
+	/* TODO: return value is ignored! */
 	ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
 
 	/* submit the request */
+	/* TODO: return value is ignored! */
 	ntc_req_submit(dev->ntc, req);
 
 	/* release lock for state change or producing later sends */
@@ -1840,6 +1855,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					"ntrdma_rqp_send_cons_start failed rc = %d qp_key %d(%p)\n",
 					rc, rqp->qp_key, rqp);
 		} else {
+			/* TODO: Check if need to re-arm the tasklet since nothing
+			 * is done in this case and no return value is returned
+			 * (it is change to this state only in the init (probe))*/
 			TRACE("ntrdma_rqp_send_cons_start failed qp_key %d(%p)\n",
 					rqp->qp_key, rqp);
 		}
@@ -1857,6 +1875,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		if (rc == -EAGAIN)
 			tasklet_schedule(&rqp->send_work);
 		ntrdma_rqp_send_cons_done(rqp);
+		/* TODO: if not EAGAIN ??? */
 		return;
 	}
 
@@ -1870,7 +1889,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				rqp->qp_key);
 		goto err_qp;
 	}
-	/* FIXME: need to complete the send with error */
+	/* FIXME: need to complete the send with error??? */
 
 	/* connected qp must be ready to receive */
 	rc = ntrdma_qp_recv_cons_start(qp);
@@ -1879,7 +1898,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				rqp->qp_key);
 		goto err_recv;
 	}
-	/* FIXME: need to complete the send with error */
+	/* FIXME: need to complete the send with error??? */
 
 	/* get the next consuming range in the recv ring */
 	ntrdma_qp_recv_cons_get(qp, &recv_pos, &recv_end, &recv_base);
@@ -2018,12 +2037,13 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			break;
 		}
 	}
-
+	/* TODO: What to do if went out of the loop with break on error?? */
 	ntrdma_qp_recv_cons_put(qp, recv_pos, recv_base);
 	ntrdma_qp_recv_cons_done(qp);
 
 	if (cue_recv)
 		ntrdma_cq_cue(qp->recv_cq);
+	/* TODO: What if not? */
 
 	ntrdma_qp_put(qp);
 
@@ -2055,6 +2075,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	}
 
 	/* send the cons idx */
+	/* TODO: return code? */
 	ntc_req_imm32(dev->ntc, req,
 		      rqp->peer_send_cons_dma_addr,
 		      rqp->send_cons,
@@ -2068,6 +2089,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			       NTB_DEFAULT_VEC(dev->ntc));
 	}
 	/* submit the request */
+	/* TODO: return cpde? */
 	ntc_req_submit(dev->ntc, req);
 
 	/* release lock for state change or consuming later sends */
