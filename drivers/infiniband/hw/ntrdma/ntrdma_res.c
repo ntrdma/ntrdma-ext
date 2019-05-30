@@ -316,7 +316,7 @@ int ntrdma_res_add(struct ntrdma_res *res)
 	rc = ntrdma_res_wait_cmds(res);
 	ntrdma_res_unlock(res);
 
-	if (!rc) {
+	if (rc) {
 		ntrdma_err(dev,
 			"ntrdma res add(%ps) cmd timeout after %lu msec",
 			res->enable,
@@ -362,7 +362,7 @@ void ntrdma_res_del(struct ntrdma_res *res)
 	ntrdma_res_unlock(res);
 	ntrdma_res_put(res);
 
-	if (!rc) {
+	if (rc) {
 		ntrdma_err(dev,
 			"ntrdma res del(%ps) cmd timeout after %lu msec",
 			res->disable,

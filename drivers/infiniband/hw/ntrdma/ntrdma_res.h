@@ -116,7 +116,11 @@ static inline void ntrdma_res_done_cmds(struct ntrdma_res *res)
 
 static inline unsigned long ntrdma_res_wait_cmds(struct ntrdma_res *res)
 {
-	return wait_for_completion_timeout(&res->cmds_done, res->timeout);
+	int ret = wait_for_completion_timeout(&res->cmds_done, res->timeout);
+
+	if (!ret)
+		return -ETIME;
+	return 0;
 }
 
 static inline void ntrdma_res_get(struct ntrdma_res *res)

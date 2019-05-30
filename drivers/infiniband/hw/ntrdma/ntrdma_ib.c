@@ -773,7 +773,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 
 		rc = ntrdma_res_wait_cmds(&qp->res);
 
-		if (!rc) {
+		if (rc) {
 			ntrdma_err(dev,
 					"ntrdma qp modify cmd timeout after %lu msec",
 					qp->res.timeout);
