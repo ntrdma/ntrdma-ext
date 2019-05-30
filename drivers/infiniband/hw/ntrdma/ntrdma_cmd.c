@@ -289,7 +289,7 @@ void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
 	info->recv_vbell_idx = dev->cmd_recv_vbell_idx;
 }
 
-static inline int ntrdma_dev_cmd_hello_prep_unperp(struct ntrdma_dev *dev,
+static inline int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
 			      struct ntrdma_cmd_hello_info *peer_info,
 				  int is_unprep)
 {
@@ -310,8 +310,7 @@ static inline int ntrdma_dev_cmd_hello_prep_unperp(struct ntrdma_dev *dev,
 		goto err_sanity;
 	}
 
-	if (peer_info->send_cap > MAX_CMDS ||
-			peer_info->send_idx > peer_info->send_cap) {
+	if (peer_info->send_cap > MAX_CMDS) {
 		ntrdma_err(dev,
 				"peer info corrupted? cap %d, idx %d\n",
 				peer_info->send_cap, peer_info->send_idx);
@@ -459,7 +458,7 @@ int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
 {
 	int rc;
 
-	rc = ntrdma_dev_cmd_hello_prep_unperp(dev, peer_info, false);
+	rc = ntrdma_dev_cmd_hello_prep_unprep(dev, peer_info, false);
 	if (rc)
 		return rc;
 
@@ -485,7 +484,7 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev)
 {
 	ntrdma_dev_cmd_hello_done_undone(dev, NULL, true);
-	ntrdma_dev_cmd_hello_prep_unperp(dev, NULL, true);
+	ntrdma_dev_cmd_hello_prep_unprep(dev, NULL, true);
 }
 
 void ntrdma_dev_cmd_enable(struct ntrdma_dev *dev)
@@ -1037,7 +1036,7 @@ static int ntrdma_qp_create_sanity(struct ntrdma_dev *dev,
 
 	if (cmd->send_wqe_cap > MAX_WQE_CAP ||
 		cmd->send_wqe_sg_cap > MAX_WQE_SG_CAP ||
-		cmd->send_ring_idx > cmd->send_wqe_cap) {
+		cmd->send_ring_idx >= 2 * cmd->send_wqe_cap) {
 		ntrdma_err(dev, "send wqe_cap %u, wqe_sg_cap %u, idx %u\n",
 				cmd->send_wqe_cap, cmd->send_wqe_sg_cap,
 				cmd->send_ring_idx);
@@ -1046,7 +1045,7 @@ static int ntrdma_qp_create_sanity(struct ntrdma_dev *dev,
 
 	if (cmd->recv_wqe_cap > MAX_WQE_CAP ||
 		cmd->recv_wqe_sg_cap > MAX_WQE_SG_CAP ||
-		cmd->recv_ring_idx > cmd->send_wqe_cap) {
+		cmd->recv_ring_idx >= 2 * cmd->recv_wqe_cap) {
 		ntrdma_err(dev, "recv wqe_cap %u, wqe_sg_cap %u, idx %u\n",
 				cmd->recv_wqe_cap, cmd->recv_wqe_sg_cap,
 				cmd->recv_ring_idx);
