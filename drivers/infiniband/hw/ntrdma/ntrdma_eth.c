@@ -560,6 +560,15 @@ void ntrdma_dev_eth_reset(struct ntrdma_dev *dev)
 	ntrdma_dev_eth_hello_prep_unperp(dev, NULL, NULL, true);
 }
 
+void ntrdma_dev_eth_quiesce(struct ntrdma_dev *dev)
+{
+	struct ntrdma_eth *eth = dev->eth;
+	struct net_device *net = eth->napi.dev;
+
+	netif_tx_disable(net);
+	ntrdma_dev_eth_disable(dev);
+}
+
 static void ntrdma_eth_rx_fill(struct ntrdma_eth *eth)
 {
 	struct ntrdma_dev *dev = eth->dev;
