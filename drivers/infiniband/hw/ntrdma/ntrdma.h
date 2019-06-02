@@ -119,6 +119,7 @@ void ntrdma_dev_res_disable(struct ntrdma_dev *dev);
 void ntrdma_dev_quiesce(struct ntrdma_dev *dev);
 void ntrdma_dev_reset(struct ntrdma_dev *dev);
 void ntrdma_dev_eth_reset(struct ntrdma_dev *dev);
+void ntrdma_dev_eth_quiesce(struct ntrdma_dev *dev);
 void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev);
 void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev);
 void ntrdma_dev_res_reset(struct ntrdma_dev *dev);
