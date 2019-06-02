@@ -147,15 +147,18 @@ void ntrdma_dev_res_disable(struct ntrdma_dev *dev)
 {
 	struct ntrdma_res *res;
 
-	mutex_lock(&dev->res_lock);
-	{
-		dev->res_enable = 0;
+	pr_info("res disable starting ...\n");
 
-		list_for_each_entry_reverse(res, &dev->res_list, obj.dev_entry) {
+	mutex_lock(&dev->res_lock);
+	dev->res_enable = 0;
+
+	list_for_each_entry_reverse(res, &dev->res_list, obj.dev_entry) {
+		if (res->reset)
 			res->reset(res);
-		}
 	}
 	mutex_unlock(&dev->res_lock);
+
+	pr_info("res disable done\n");
 }
 
 void ntrdma_dev_res_reset(struct ntrdma_dev *dev)
