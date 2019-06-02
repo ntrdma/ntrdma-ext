@@ -481,8 +481,41 @@ int ntrdma_dev_cmd_hello_done(struct ntrdma_dev *dev,
 }
 void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 {
+	struct ntrdma_cmd_cb *cb_tmp, *cb;
+
+	pr_info("cmd quiesce starting ...\n");
+
 	cancel_work_sync(&dev->cmd_send_work);
 	cancel_work_sync(&dev->cmd_recv_work);
+
+	/* now lets cancel all posted cmds
+	 * (cmds sent but did not replied)
+	 */
+
+
+	list_for_each_entry_safe(cb, cb_tmp,
+			&dev->cmd_post_list, dev_entry) {
+
+		list_del(&cb->dev_entry);
+		pr_info("cmd quiesce: aborting post %ps\n",
+				cb->rsp_cmpl);
+		cb->rsp_cmpl(cb, NULL, NULL);
+	}
+
+	/* now lets cancel all pending cmds
+	 * (cmds did not sent yet)
+	 */
+
+	list_for_each_entry_safe(cb, cb_tmp,
+			&dev->cmd_pend_list, dev_entry) {
+
+		list_del(&cb->dev_entry);
+		pr_info("cmd quiesce: aborting pend %ps\n",
+				cb->rsp_cmpl);
+		cb->rsp_cmpl(cb, NULL, NULL);
+	}
+
+	pr_info("cmd quiesce done\n");
 }
 
 void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev)

@@ -468,8 +468,14 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 	int rc;
 
 	ntrdma_vdbg(dev, "called\n");
+	if (!rsp) {
+		ntrdma_err(dev, "qp %d modify aborted\n",
+				qp->res.key);
+		ntrdma_res_done_cmds(&qp->res);
+		return -EIO;
+	}
 
-	if (!rsp || rsp->hdr.status) {
+	if (rsp->hdr.status) {
 		ntrdma_err(dev, "rsp %p status %d\n",
 				rsp, rsp->hdr.status);
 		rc = -EIO;
@@ -765,6 +771,7 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 {
 	struct ntrdma_qp *qp = ntrdma_res_qp(res);
 
+	return ; /*FIXME: implement full QP error flow*/
 	spin_lock_bh(&qp->recv_prod_lock);
 	{
 		qp->recv_error = true;
