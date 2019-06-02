@@ -425,21 +425,22 @@ err_key:
 	return rc;
 }
 
+void ntrdma_rres_del_unsafe(struct ntrdma_rres *rres)
+{
+	list_del(&rres->obj.dev_entry);
+
+	ntrdma_vec_lock(rres->vec);
+	ntrdma_vec_set(rres->vec, rres->key, NULL);
+	rres->key = ~0;
+	ntrdma_vec_unlock(rres->vec);
+}
+
 void ntrdma_rres_del(struct ntrdma_rres *rres)
 {
 	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
 
 	mutex_lock(&dev->rres_lock);
-	{
-		list_del(&rres->obj.dev_entry);
-
-		ntrdma_vec_lock(rres->vec);
-		{
-			ntrdma_vec_set(rres->vec, rres->key, NULL);
-			rres->key = ~0;
-		}
-		ntrdma_vec_unlock(rres->vec);
-	}
+	ntrdma_rres_del_unsafe(rres);
 	mutex_unlock(&dev->rres_lock);
 
 	ntrdma_rres_put(rres);

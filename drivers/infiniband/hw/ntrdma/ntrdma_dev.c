@@ -211,13 +211,17 @@ void ntrdma_dev_disable(struct ntrdma_dev *dev)
 
 void ntrdma_dev_quiesce(struct ntrdma_dev *dev)
 {
+	ntrdma_dev_eth_quiesce(dev);
+	/* resource disable should block from new commands to be submitted */
+	ntrdma_dev_res_disable(dev);
+	/* cmd quiesce should block till all in progress commands completed */
 	ntrdma_dev_cmd_quiesce(dev);
 }
 
 void ntrdma_dev_reset(struct ntrdma_dev *dev)
 {
 	ntrdma_dev_eth_reset(dev);
-	ntrdma_dev_res_reset(dev);
+	ntrdma_dev_rres_reset(dev);
 	ntrdma_dev_cmd_reset(dev);
 	ntrdma_dev_vbell_reset(dev);
 }

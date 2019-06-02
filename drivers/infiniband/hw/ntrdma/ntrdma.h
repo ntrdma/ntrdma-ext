@@ -122,6 +122,7 @@ void ntrdma_dev_eth_reset(struct ntrdma_dev *dev);
 void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev);
 void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev);
 void ntrdma_dev_res_reset(struct ntrdma_dev *dev);
+void ntrdma_dev_rres_reset(struct ntrdma_dev *dev);
 void ntrdma_dev_vbell_reset(struct ntrdma_dev *dev);
 void _ntrdma_unrecoverable_err(struct ntrdma_dev *dev, const char *f);
 #define ntrdma_unrecoverable_err(_dev) _ntrdma_unrecoverable_err(_dev, __func__)

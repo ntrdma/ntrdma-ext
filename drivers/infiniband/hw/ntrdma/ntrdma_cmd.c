@@ -934,6 +934,7 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 	}
 
 	ntrdma_rmr_del(rmr);
+	ntrdma_rres_del(&rmr->rres);
 	ntrdma_rmr_put(rmr);
 	ntrdma_rmr_repo(rmr);
 	ntrdma_rmr_deinit(rmr);
@@ -1241,6 +1242,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 			IOAT_DEV_ACCESS);
 
 	ntrdma_rqp_del(rqp);
+	ntrdma_rres_del(&rqp->rres);
 	ntrdma_rqp_put(rqp);
 	ntrdma_rqp_repo(rqp);
 	ntrdma_rqp_deinit(rqp);
