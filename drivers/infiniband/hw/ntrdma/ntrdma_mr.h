@@ -146,7 +146,6 @@ static inline int ntrdma_rmr_add(struct ntrdma_rmr *rmr)
 
 static inline void ntrdma_rmr_del(struct ntrdma_rmr *rmr)
 {
-	ntrdma_rres_del(&rmr->rres);
 	ntrdma_debugfs_rmr_del(rmr);
 }
 

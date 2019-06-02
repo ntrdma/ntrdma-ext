@@ -788,6 +788,7 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 	struct ntrdma_rqp *rqp = ntrdma_rres_rqp(rres);
 
 	ntrdma_rqp_del(rqp);
+	ntrdma_rres_del_unsafe(&rqp->rres);
 	ntrdma_rqp_deinit(rqp);
 	kfree(rqp);
 }
@@ -990,7 +991,6 @@ void ntrdma_rqp_del(struct ntrdma_rqp *rqp)
 
 	tasklet_kill(&rqp->send_work);
 
-	ntrdma_rres_del(&rqp->rres);
 	ntrdma_debugfs_rqp_del(rqp);
 }
 

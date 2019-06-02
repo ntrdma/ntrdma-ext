@@ -167,6 +167,7 @@ void ntrdma_rres_deinit(struct ntrdma_rres *rres);
 
 int ntrdma_rres_add(struct ntrdma_rres *rres);
 void ntrdma_rres_del(struct ntrdma_rres *rres);
+void ntrdma_rres_del_unsafe(struct ntrdma_rres *rres);
 
 static inline void ntrdma_rres_get(struct ntrdma_rres *rres)
 {
