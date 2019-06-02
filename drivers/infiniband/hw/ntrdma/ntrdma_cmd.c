@@ -426,6 +426,7 @@ err_recv_rsp_buf:
 			NTB_DEV_ACCESS);
 	dev->cmd_recv_buf_addr = 0;
 err_recv_buf_addr:
+	*dev->cmd_recv_prod_buf = 0;
 	dev->cmd_recv_prod_buf = NULL;
 	kfree(dev->cmd_recv_buf);
 	dev->cmd_recv_buf = NULL;
@@ -435,6 +436,9 @@ err_recv_buf:
 			(u64)sizeof(*dev->cmd_send_cons_buf),
 			DMA_FROM_DEVICE,
 			IOAT_DEV_ACCESS);
+	*dev->cmd_send_cons_buf = 0;
+	dev->cmd_send_cmpl = 0;
+	dev->cmd_send_prod = 0;
 	dev->cmd_recv_cons = 0;
 	dev->cmd_recv_cap = 0;
 	dev->peer_cmd_send_vbell_idx = 0;
@@ -594,9 +598,17 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				    dev->cmd_send_cap, &start, &end, &base);
 		ntrdma_vdbg(dev, "rsp start %d end %d\n", start, end);
 		for (pos = start; pos < end; ++pos) {
+
+			if (WARN(list_empty(&dev->cmd_post_list),
+					"Corruption pos %d end %d but list is empty cons %u cmpl %u",
+					pos, end, *dev->cmd_send_cons_buf,
+					dev->cmd_send_cmpl)) {
+				break;
+			}
+
 			cb = list_first_entry(&dev->cmd_post_list,
-					      struct ntrdma_cmd_cb,
-					      dev_entry);
+					struct ntrdma_cmd_cb,
+					dev_entry);
 
 			list_del(&cb->dev_entry);
 

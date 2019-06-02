@@ -55,6 +55,15 @@ static inline void ntrdma_ring_produce(u32 prod, u32 cons, u32 cap,
 		else
 			*prod_end = cap;
 	}
+
+	WARN((prod >= (u32)(cap << 1)) ||
+			(cons >= (u32)(cap << 1)),
+			"prod %u and cons %u must be < cap %u",
+			prod, cons, cap);
+	WARN(((int)prod - (int)cons > (int)cap) ||
+			(((int)prod - (int)cons < 0) && ((int)cons - (int)prod < (int)cap)),
+			"the distance between prod %u and cons %u must be < cap %u",
+			prod, cons, cap);
 }
 
 /* Initialize a range of indices for consumption */
