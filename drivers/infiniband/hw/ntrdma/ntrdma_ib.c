@@ -88,8 +88,8 @@ static int ntrdma_query_gid(struct ib_device *ibdev,
 	ntrdma_dbg(dev, "query gid port %u idx %d\n", port_num, index);
 	ntrdma_dbg(dev, "cap eth ah? %d\n",
 		   rdma_cap_eth_ah(ibdev, port_num));
-	ntrdma_dbg(dev, "imm core cap flags %#x",
-		   ibdev->port_immutable[port_num].core_cap_flags);
+	/*ntrdma_dbg(dev, "imm core cap flags %#x",
+		   ibdev->port_immutable[port_num].core_cap_flags);*/
 
 	/* Everything is "link local" since we don't have an interface */
 	addr->s6_addr32[0] = htonl(0xfe800000);
@@ -101,20 +101,19 @@ static int ntrdma_query_gid(struct ib_device *ibdev,
 }
 
 /* not implemented / not required? */
-static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
+static int ntrdma_create_ah(struct ib_ah *ibah,
 				      struct rdma_ah_attr *ah_attr,
 				      u32 flags,
 				      struct ib_udata *udata)
 {
 	pr_debug("not implemented, returning %d\n", -ENOSYS);
-	return ERR_PTR(-ENOSYS);
+	return -ENOSYS;
 }
 
 /* not implemented / not required? */
-static int ntrdma_destroy_ah(struct ib_ah *ibah, u32 flags)
+static void ntrdma_destroy_ah(struct ib_ah *ibah, u32 flags)
 {
 	pr_debug("not implemented, returning %d\n", -ENOSYS);
-	return -ENOSYS;
 }
 
 /* not implemented / not required? */
@@ -165,7 +164,6 @@ static int ntrdma_query_port(struct ib_device *ibdev,
 
 static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 				      const struct ib_cq_init_attr *ibattr,
-				      struct ib_ucontext *ibuctx,
 				      struct ib_udata *ibudata)
 {
 	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
@@ -206,7 +204,8 @@ err_cq:
 	return ERR_PTR(rc);
 }
 
-static int ntrdma_destroy_cq(struct ib_cq *ibcq)
+static int ntrdma_destroy_cq(struct ib_cq *ibcq,
+				struct ib_udata *ibudata)
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
 
@@ -367,23 +366,15 @@ static int ntrdma_req_notify_cq(struct ib_cq *ibcq,
 	return 0;
 }
 
-static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
-				     struct ib_ucontext *ibuctx,
-				     struct ib_udata *ibudata)
+static int ntrdma_alloc_pd(struct ib_pd *ibpd,
+				struct ib_udata *ibudata)
 {
+	struct ib_device *ibdev = ibpd->device;
 	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
-	struct ntrdma_pd *pd;
+	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
 	int rc;
 
 	ntrdma_vdbg(dev, "called\n");
-
-	pd = kmalloc_node(sizeof(*pd), GFP_KERNEL, dev->node);
-	if (!pd) {
-		rc = -ENOMEM;
-		goto err_pd;
-	}
-
-	ntrdma_vdbg(dev, "allocated pd %p\n", pd);
 
 	rc = ntrdma_pd_init(pd, dev, dev->pd_next_key++);
 	if (rc)
@@ -397,19 +388,18 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 
 	ntrdma_dbg(dev, "added pd%d\n", pd->key);
 
-	return &pd->ibpd;
+	return 0;
 
 	// ntrdma_pd_del(pd);
 err_add:
 	ntrdma_pd_deinit(pd);
 err_init:
-	kfree(pd);
-err_pd:
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
-	return ERR_PTR(rc);
+	return rc;
 }
 
-static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
+static void ntrdma_dealloc_pd(struct ib_pd *ibpd,
+				struct ib_udata *ibudata)
 {
 	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
 
@@ -418,9 +408,6 @@ static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 	ntrdma_pd_del(pd);
 	ntrdma_pd_repo(pd);
 	ntrdma_pd_deinit(pd);
-	kfree(pd);
-
-	return 0;
 }
 
 static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
@@ -601,7 +588,8 @@ err_attr:
 	return rc;
 }
 
-static int ntrdma_destroy_qp(struct ib_qp *ibqp)
+static int ntrdma_destroy_qp(struct ib_qp *ibqp,
+				struct ib_udata *udata)
 {
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 
@@ -849,8 +837,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	ntrdma_vdbg(dev, "called\n");
 
-	umem = ntc_umem_get(dev->ntc, pd->ibpd.uobject->context,
-			    start, length, mr_access_flags, false);
+	umem = ntc_umem_get(dev->ntc, ibudata, start, length, mr_access_flags, false);
 
 	if (IS_ERR(umem)) {
 		rc = PTR_ERR(umem);
@@ -905,7 +892,8 @@ err_umem:
 	return ERR_PTR(rc);
 }
 
-static int ntrdma_dereg_mr(struct ib_mr *ibmr)
+static int ntrdma_dereg_mr(struct ib_mr *ibmr,
+				struct ib_udata *udata)
 {
 	struct ntrdma_mr *mr = ntrdma_ib_mr(ibmr);
 	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
@@ -921,31 +909,16 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	return 0;
 }
 
-static struct ib_ucontext *ntrdma_alloc_ucontext(struct ib_device *ibdev,
-						 struct ib_udata *ibudata)
+static int ntrdma_alloc_ucontext(struct ib_ucontext *ibuctx,
+				 struct ib_udata *ibudata)
 {
-	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
-	struct ib_ucontext *ibuctx;
-	int rc;
-
-	ibuctx = kmalloc_node(sizeof(*ibuctx), GFP_KERNEL, dev->node);
-	if (!ibuctx) {
-		rc = -ENOMEM;
-		goto err_ctx;
-	}
-
-	return ibuctx;
-
-	// kfree(ibuctx);
-err_ctx:
-	return ERR_PTR(rc);
+	// Nothing to do here
+	return 0;
 }
 
-static int ntrdma_dealloc_ucontext(struct ib_ucontext *ibuctx)
+static void ntrdma_dealloc_ucontext(struct ib_ucontext *ibuctx)
 {
-	kfree(ibuctx);
-
-	return 0;
+	// Nothing to do here
 }
 
 int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
@@ -1023,7 +996,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	ibdev->ops.post_recv		= ntrdma_post_recv;
 
 
-	rc = ib_register_device(ibdev, "ntrdma_%d", NULL);
+	rc = ib_register_device(ibdev, "ntrdma_%d");
 	if (rc)
 		goto err_ib;
 

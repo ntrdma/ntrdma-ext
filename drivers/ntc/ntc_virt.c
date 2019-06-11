@@ -52,13 +52,13 @@ static void ntc_virt_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
 	rmb(); /* read data in the order it is received out of the channel */
 }
 
-static void *ntc_virt_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
+static void *ntc_virt_umem_get(struct ib_udata *udata,
 			       unsigned long uaddr, size_t size,
 			       int access, int dmasync)
 {
 	access |= IB_ACCESS_SOFTWARE;
 
-	return ib_umem_get(uctx, uaddr, size, access, dmasync);
+	return ib_umem_get(udata, uaddr, size, access, dmasync);
 }
 
 static void ntc_virt_umem_put(struct ntc_dev *ntc, void *umem)

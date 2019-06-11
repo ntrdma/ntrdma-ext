@@ -616,15 +616,6 @@ static inline void ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 			return;
 		}
 
-		rc = ntb_peer_db_addr(dev->ntb,
-				(phys_addr_t *)&peer_irq_addr_base,
-				&size);
-		if ((rc < 0) || (size != sizeof(u32)) ||
-				!IS_ALIGNED(peer_irq_addr_base, INTEL_ALIGN)) {
-			dev_err(&dev->ntc.dev, "Peer DB addr invalid\n");
-			return;
-		}
-
 		db_bits = ntb_db_valid_mask(dev->ntb);
 		for (db_idx = 0; db_idx < max_irqs && db_bits; db_idx++) {
 			/*FIXME This is not generic implementation,
@@ -635,6 +626,15 @@ static inline void ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 			db_bits &= db_bits - 1;
 			dev->peer_irq_num++;
 			dev->peer_irq_data[db_idx] = 1;
+		}
+
+		rc = ntb_peer_db_addr(dev->ntb,
+				(phys_addr_t *)&peer_irq_addr_base,
+				&size, NULL, db_bits);
+		if ((rc < 0) || (size != sizeof(u32)) ||
+				!IS_ALIGNED(peer_irq_addr_base, INTEL_ALIGN)) {
+			dev_err(&dev->ntc.dev, "Peer DB addr invalid\n");
+			return;
 		}
 
 		peer_db_mask = ntb_db_valid_mask(dev->ntb);

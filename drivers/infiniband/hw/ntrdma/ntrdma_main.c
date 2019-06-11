@@ -56,7 +56,7 @@ static int ntrdma_probe(struct ntc_driver *self,
 
 	ntc_link_disable(ntc);
 
-	dev = (void *)ib_alloc_device(sizeof(*dev));
+	dev = ib_alloc_device(ntrdma_dev, ibdev);
 	if (!dev)
 		return -ENOMEM;
 

@@ -683,7 +683,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 	eth->tx_cons = ntrdma_ring_update(pos + 1, base, eth->tx_cap);
 
-	if (!skb->xmit_more) {
+	if (!netdev_xmit_more()) {
 		while (eth->tx_cmpl != eth->tx_cons) {
 			ntrdma_ring_consume(eth->tx_cons,
 					    eth->tx_cmpl,

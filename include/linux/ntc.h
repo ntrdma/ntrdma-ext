@@ -38,6 +38,7 @@
 #include <linux/device.h>
 #include <linux/dma-direction.h>
 #include <linux/rwlock.h>
+#include <rdma/ib_verbs.h>
 
 #define NTB_MAX_IRQS (64)
 
@@ -202,7 +203,7 @@ struct ntc_map_ops {
 	void (*buf_sync_dev)(struct ntc_dev *ntc, u64 addr, u64 size,
 			     enum dma_data_direction dir);
 
-	void *(*umem_get)(struct ntc_dev *ntc, struct ib_ucontext *uctx,
+	void *(*umem_get)(struct ib_udata *udata,
 			  unsigned long uaddr, size_t size,
 			  int access, int dmasync);
 	void (*umem_put)(struct ntc_dev *ntc, void *umem);
@@ -898,8 +899,8 @@ static inline void ntc_buf_sync_dev(struct ntc_dev *ntc, u64 addr, u64 size,
 
 /**
  * ntc_umem_get() - channel-map a user allocated memory buffer
- * @ntc:	Device context.
- * @uctx:	Infiniband user context.
+ * @ntc:        Device context.
+ * @udata:	Userspace memory context.
  * @uaddr:	User allocated memory virtual address.
  * @size:	Size of the user memory buffer.
  * @access:	Infiniband access flags for ib_umem_get().
@@ -922,15 +923,14 @@ static inline void ntc_buf_sync_dev(struct ntc_dev *ntc, u64 addr, u64 size,
  *
  * Return: An object repreenting the memory mapping, or an error pointer.
  *
- * FIXME: Because of uctx, which must really be an ib_ucontext to be passed to
- * ib_umem_get, this can't be used by non-ib drivers.  I wish there was a way
+ * FIXME: I wish there was a way
  * to make this more generic, without rewriting ib_umem_get().
  */
-static inline void *ntc_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
+static inline void *ntc_umem_get(struct ntc_dev *ntc, struct ib_udata *udata,
 				 unsigned long uaddr, size_t size,
 				 int access, int dmasync)
 {
-	return ntc->map_ops->umem_get(ntc, uctx, uaddr,
+	return ntc->map_ops->umem_get(udata, uaddr,
 				      size, access, dmasync);
 }
 
