@@ -124,7 +124,7 @@ static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
 struct ntc_dev_ops {
 	struct device *(*map_dev)(struct ntc_dev *ntc,
 			enum ntc_dma_access dma_dev);
-
+	int (*is_link_up)(struct ntc_dev *ntc);
 	int (*link_disable)(struct ntc_dev *ntc);
 	int (*link_enable)(struct ntc_dev *ntc);
 	int (*link_reset)(struct ntc_dev *ntc);
@@ -150,6 +150,7 @@ struct ntc_dev_ops {
 	int (*max_peer_irqs)(struct ntc_dev *ntc);
 	void *(*local_hello_buf)(struct ntc_dev *ntc, int *size);
 	void *(*peer_hello_buf)(struct ntc_dev *ntc, int *size);
+	u32 (*query_version)(struct ntc_dev *ntc);
 };
 
 static inline int ntc_dev_ops_is_valid(const struct ntc_dev_ops *ops)
@@ -517,6 +518,38 @@ static inline struct device *ntc_map_dev(struct ntc_dev *ntc,
 		return &ntc->dev;
 
 	return ntc->dev_ops->map_dev(ntc, dma_dev);
+}
+
+
+/**
+ * ntc_is_link_up() - check the link
+ * @ntc:	Device context.
+ *
+ * check logical link status
+ *
+ * Return: Zero on success, otherwise an error number.
+ */
+static inline int ntc_is_link_up(struct ntc_dev *ntc)
+{
+	if (!ntc->dev_ops->is_link_up)
+		return 0;
+
+	return ntc->dev_ops->is_link_up(ntc);
+}
+
+/**
+ * ntc_query_version() - check the link
+ * @ntc:	Device context.
+ *
+ * check logical link status
+ *
+ * Return: Zero on success, otherwise an error number.
+ */
+static inline int ntc_query_version(struct ntc_dev *ntc)
+{
+	if (!ntc->dev_ops->query_version)
+		return -EINVAL;
+	return ntc->dev_ops->query_version(ntc);
 }
 
 /**

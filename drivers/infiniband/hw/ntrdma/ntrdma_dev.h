@@ -53,6 +53,14 @@
 #define NTRDMA_DEV_VBELL_START 0x8
 #define NTRDMA_RESERVED_DMA_LEKY 0xFFFF
 
+#define NTRDMA_DEV_MAX_SGE 4096
+#define NTRDMA_DEV_MAX_QP_WR 4096
+#define NTRDMA_DEV_MAX_QP 4096
+#define NTRDMA_DEV_MAX_CQE 0x100
+#define NTRDMA_DEV_MAX_CQ 0x100
+#define NTRDMA_DEV_MAX_MR 0x100
+#define NTRDMA_DEV_MAX_PD 0x100
+
 struct vbell_work_data_s {
 	struct ntrdma_dev *dev;
 	int vec;
@@ -75,6 +83,7 @@ struct ntrdma_dev {
 
 	/* protocol version */
 	u32				version;
+	u32				latest_version;
 
 	/* virtual doorbells synchronization */
 	int				vbell_enable;
@@ -187,6 +196,11 @@ struct ntrdma_dev {
 	/* virtual ethernet device */
 	struct ntrdma_eth		*eth;
 	bool	is_cmd_prep;
+
+	atomic_t qp_num;
+	atomic_t cq_num;
+	atomic_t mr_num;
+	atomic_t pd_num;
 };
 
 #define ntrdma_ib_dev(__ibdev) \

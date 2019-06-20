@@ -142,6 +142,11 @@ int ntrdma_dev_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 
 	ntrdma_debugfs_dev_add(dev);
 
+	atomic_set(&dev->qp_num, 0);
+	atomic_set(&dev->cq_num, 0);
+	atomic_set(&dev->mr_num, 0);
+	atomic_set(&dev->pd_num, 0);
+
 	return 0;
 
 err_hello:
