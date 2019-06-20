@@ -179,6 +179,7 @@ struct ntc_ntb_dev {
 
 	/* negotiated protocol version for ntc */
 	int				version;
+	u32				latest_version;
 
 	/* direct interrupt message */
 	u64				peer_irq_dma_addr[NTB_MAX_IRQS];
@@ -619,6 +620,9 @@ static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 	if (peer_versions->num > MAX_SUPPORTED_VERSIONS)
 		goto err;
 
+	if (versions.num > 0)
+		dev->latest_version = versions.versions[versions.num-1];
+
 	dev->version = ntc_ntb_version_matching(dev, &versions, peer_versions);
 	if (dev->version == NTC_NTB_VERSION_NONE)
 		goto err;
@@ -939,6 +943,13 @@ static struct device *ntc_ntb_map_dev(struct ntc_dev *ntc,
 
 	return ntc_ntb_dma_dev(dev);
 
+}
+
+static int ntc_ntb_is_link_up(struct ntc_dev *ntc)
+{
+	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+
+	return dev->link_is_up;
 }
 
 static int ntc_ntb_link_disable(struct ntc_dev *ntc)
@@ -1305,9 +1316,16 @@ void *ntc_ntb_peer_hello_buf(struct ntc_dev *ntc, int *size)
 	return dev->info_self_on_peer->ctx_buf;
 }
 
+u32 ntc_ntb_query_version(struct ntc_dev *ntc)
+{
+	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+
+	return dev->latest_version;
+}
 
 static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.map_dev			= ntc_ntb_map_dev,
+	.is_link_up			= ntc_ntb_is_link_up,
 	.link_disable		= ntc_ntb_link_disable,
 	.link_enable		= ntc_ntb_link_enable,
 	.link_reset			= ntc_ntb_link_reset_sync,
@@ -1323,6 +1341,7 @@ static struct ntc_dev_ops ntc_ntb_dev_ops = {
 	.max_peer_irqs		= ntc_ntb_max_peer_irqs,
 	.local_hello_buf	= ntc_ntb_local_hello_buf,
 	.peer_hello_buf		= ntc_ntb_peer_hello_buf,
+	.query_version		= ntc_ntb_query_version,
 };
 
 static void ntc_ntb_link_event(void *ctx)
@@ -1460,6 +1479,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* haven't negotiated the version */
 	dev->version = 0;
+	dev->latest_version = 0;
 
 	/* haven't negotiated the msi pair */
 	dev->peer_irq_num = 0;

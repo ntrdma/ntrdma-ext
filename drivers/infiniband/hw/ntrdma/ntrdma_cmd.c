@@ -782,9 +782,6 @@ static int ntrdma_cmd_recv_none(struct ntrdma_dev *dev, u32 cmd_op,
 	return 0;
 }
 
-#define MAX_SUM_ACCESS_FLAGS (1<<7) // enum ibv_access_flags (rdma-core)
-#define IB_MR_LIMIT_BYTES (1024*1024*1024) /* 1GB */
-#define INTEL_ALIGN 16
 static int ntrdma_sanity_mr_create(struct ntrdma_dev *dev,
 				     struct ntrdma_cmd_mr_create *cmd)
 {

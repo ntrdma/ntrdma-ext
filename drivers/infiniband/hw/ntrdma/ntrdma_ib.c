@@ -38,6 +38,7 @@
 #include <rdma/ib_user_verbs.h>
 #include <linux/ntc_trace.h>
 #include <rdma/ib_mad.h>
+#include <rdma/ib_verbs.h>
 
 #include "ntrdma_dev.h"
 #include "ntrdma_cmd.h"
@@ -51,6 +52,9 @@
 #define NTRDMA_PKEY_DEFAULT 0xffff
 #define NTRDMA_GIB_TBL_LEN 8
 #define NTRDMA_PKEY_TBL_LEN 2
+
+#define DELL_VENDOR_ID 0x1028
+#define NOT_SUPPORTED 0
 
 struct net_device *ntrdma_get_netdev(struct ib_device *ibdev,
 						 u8 port_num)
@@ -122,6 +126,13 @@ struct ntrdma_ah {
 };
 
 /* not implemented / not required? */
+/* if required, one needs to implement:
+ * Perform path query to the Subnet Administrator (SA)
+	Out of band connection to the remote node, for example: using socket
+ * Using well-known values, for example: this can be done in a static
+    subnet (which all of the addresses are predefined) or using
+    multicast groups
+ */
 static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
 				      struct rdma_ah_attr *ah_attr,
 				      struct ib_udata *udata)
@@ -158,22 +169,68 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 			       struct ib_device_attr *ibattr,
 			       struct ib_udata *ibudata)
 {
-	/* TODO: These values do not appear to have any impact on the prototype,
-	 * but specific values and actual capabilities may be a requirement for
-	 * integration with other technologies enabled by the ofed framework.
-	 */
+	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
+
 	memset(ibattr, 0, sizeof(*ibattr));
-	ibattr->max_pd			= 0x100;
-	ibattr->max_mr			= 0x100;
-	ibattr->max_mr_size		= 0x80000000;
-	ibattr->max_qp			= 0x100;
-	ibattr->max_qp_wr		= 0x100;
-	ibattr->max_cq			= 0x100;
-	ibattr->max_cqe			= 0x100;
-	ibattr->max_sge			= 0x100;
-	ibattr->max_sge_rd		= 0x100;
-	ibattr->page_size_cap		= PAGE_SIZE;
-	ibattr->device_cap_flags	= IB_DEVICE_LOCAL_DMA_LKEY;
+
+	/* ntrdma versioning */
+	ibattr->fw_ver = dev->latest_version;
+
+	/* from the mlx web, most of the times, its equal to node guid.*/
+	ibattr->sys_image_guid = ibdev->node_guid;
+
+	/* Size (in bytes) of the largest contiguous memory block
+	 * that can be registered by this device
+	 */
+	ibattr->max_mr_size = IB_MR_LIMIT_BYTES; // 1GB currently ntrdma_cmd.c
+
+	/* Memory page size supported by this device */
+	ibattr->page_size_cap = PAGE_SIZE;
+
+	ibattr->vendor_id =  DELL_VENDOR_ID; /* Dell */
+
+	ibattr->hw_ver = ntc_query_version(dev->ntc);
+
+	/* Maximum number of QPs, of UD/UC/RC transport types,
+	 * supported by this device
+	 * Currently no such limit is enforced
+	 */
+	ibattr->max_qp = NTRDMA_DEV_MAX_QP;
+
+	/* limit currently no limit on qp's size which is set
+	 * from the user of verbs
+	 */
+
+	/* Max outstanding wqe on any send/recvieve queue */
+	ibattr->max_qp_wr = NTRDMA_DEV_MAX_QP_WR;
+
+	ibattr->device_cap_flags = IB_DEVICE_LOCAL_DMA_LKEY;
+
+	/* Maximum number of scatter/gather entries per Send
+	 * or Receive Work Request, in a QP other than RD,
+	 * supported by this device
+	 */
+	ibattr->max_sge = NTRDMA_DEV_MAX_SGE;
+
+	/* Maximum number of CQs supported by this device */
+	ibattr->max_cq = NTRDMA_DEV_MAX_CQ;
+
+	/* Maximum number of entries in each CQ supported by this device */
+	ibattr->max_cqe = NTRDMA_DEV_MAX_CQE;
+
+	/* Maximum number of MRs supported by this device */
+	ibattr->max_mr = NTRDMA_DEV_MAX_MR;
+
+	/* Maximum number of PDs  supported by this device */
+	ibattr->max_pd = NTRDMA_DEV_MAX_PD;
+
+	/* Atomic operations aren't supported at all */
+	ibattr->atomic_cap = NOT_SUPPORTED; //IBV_ATOMIC_NONE;
+
+	/* Not supporting srq */
+	ibattr->max_srq = NOT_SUPPORTED;
+	ibattr->max_srq_wr = NOT_SUPPORTED; // outstanding wqe in SRQ
+	ibattr->max_srq_sge = NOT_SUPPORTED; // max sge per SRQ wqe
 
 	return 0;
 }
@@ -181,12 +238,66 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 static int ntrdma_query_port(struct ib_device *ibdev,
 			     u8 port, struct ib_port_attr *ibattr)
 {
+	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
+
 	memset(ibattr, 0, sizeof(*ibattr));
-	ibattr->state			= IB_PORT_ACTIVE;
-	ibattr->max_mtu			= IB_MTU_256;
-	ibattr->active_mtu		= IB_MTU_256;
-	ibattr->pkey_tbl_len	= NTRDMA_PKEY_TBL_LEN;
-	ibattr->gid_tbl_len		= 1;
+
+	ibattr->subnet_prefix = 0;
+
+	/* TODO: it should reflect the state of the logical-link, ntc_ntb_msi,
+	 * once hello phase is finished
+	 */
+	ibattr->state = ntc_is_link_up(dev->ntc) ? IB_PORT_ACTIVE
+			: IB_PORT_DOWN;
+
+	/* dma/pcie fragmentation? */
+	ibattr->max_mtu = IB_MTU_256;
+	ibattr->active_mtu = IB_MTU_256;
+
+	/* ntrdma define */
+	ibattr->gid_tbl_len = NTRDMA_GIB_TBL_LEN; // 1;
+
+	/* ntrdma define */
+	ibattr->pkey_tbl_len = NTRDMA_PKEY_TBL_LEN;
+
+	/*  lid of the Subnet Manager (SM) - do we have a subnet notion?*/
+	ibattr->sm_lid = 0;
+
+	/* port unique id within the subnet */
+	ibattr->lid = 0;
+
+	/* sl of the Subnet Manager (SM) */
+	ibattr->sm_sl = 0;
+
+	/*
+	 * The active link width of this port. There isn't any enumeration
+	 * of this value, and the numeric value can be one of the following:
+	 *	1 - 1x
+	 *	2 - 4x
+	 *	4 - 8x
+	 *	8 - 12x
+	 *
+	 *	we may call
+	 *	u64 (*link_is_up)(struct ntb_dev *ntb,
+	 *  enum ntb_speed *speed, enum ntb_width *width);
+	 *
+	 *  currently leaving at 1x, is this equal to the pcie lanes width?
+	 */
+	ibattr->active_width = IB_WIDTH_1X;
+	/*
+	 * The active link speed of this port. There isn't any enumeration
+	 * of this value, and the numeric value can be one of the following:
+	 * 1 - 2.5 Gbps
+	 * 2 - 5.0 Gbps
+	 * 4 - 10.0 Gbps
+	 * 8 - 10.0 Gbps
+	 * 16 - 14.0 Gbps
+	 * 32 - 25.0 Gbps
+	 *
+	 * u64 (*link_is_up)(struct ntb_dev *ntb,
+	 *		  enum ntb_speed *speed, enum ntb_width *width);
+	 */
+	ibattr->active_speed = IB_SPEED_DDR; //
 
 	return 0;
 }
@@ -200,6 +311,11 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	struct ntrdma_cq *cq;
 	u32 vbell_idx;
 	int rc;
+
+	if (atomic_inc_return(&dev->cq_num) >= NTRDMA_DEV_MAX_CQ) {
+		rc = -ETOOMANYREFS;
+		goto err_cq;
+	}
 
 	cq = kmalloc_node(sizeof(*cq), GFP_KERNEL, dev->node);
 	if (!cq) {
@@ -230,6 +346,7 @@ err_add:
 err_init:
 	kfree(cq);
 err_cq:
+	atomic_dec(&dev->cq_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
@@ -237,14 +354,20 @@ err_cq:
 static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
+	struct ntrdma_dev *dev = NULL;
 
+	if (!cq) {
+		ntrdma_err(dev, "ntrdma_destroy_cq failed, destroying NULL cq\n");
+		return -EFAULT;
+	}
+	dev = ntrdma_cq_dev(cq);
 	/* TODO: what should be done about oustanding work completions? */
 
 	ntrdma_cq_del(cq);
 	ntrdma_cq_repo(cq);
 	ntrdma_cq_deinit(cq);
 	kfree(cq);
-
+	atomic_dec(&dev->cq_num);
 	return 0;
 }
 
@@ -405,6 +528,11 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 
 	ntrdma_vdbg(dev, "called\n");
 
+	if (atomic_inc_return(&dev->pd_num) >= NTRDMA_DEV_MAX_PD) {
+		rc = -ETOOMANYREFS;
+		goto err_pd;
+	}
+
 	pd = kmalloc_node(sizeof(*pd), GFP_KERNEL, dev->node);
 	if (!pd) {
 		rc = -ENOMEM;
@@ -433,6 +561,7 @@ err_add:
 err_init:
 	kfree(pd);
 err_pd:
+	atomic_dec(&dev->pd_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
@@ -440,14 +569,21 @@ err_pd:
 static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 {
 	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
+	struct ntrdma_dev *dev = NULL;
 
+	if (!pd) {
+		ntrdma_err(dev, "ntrdma_dealloc_pd failed, dealloc NULL pd\n");
+		return 0;
+	}
+
+	dev = ntrdma_pd_dev(pd);
 	/* TODO: pd should not have any mr or qp: wait, or fail? */
 
 	ntrdma_pd_del(pd);
 	ntrdma_pd_repo(pd);
 	ntrdma_pd_deinit(pd);
 	kfree(pd);
-
+	atomic_dec(&dev->pd_num);
 	return 0;
 }
 
@@ -462,6 +598,11 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	struct ntrdma_qp *qp;
 	struct ntrdma_qp_init_attr qp_attr;
 	int rc;
+
+	if (atomic_inc_return(&dev->qp_num) >= NTRDMA_DEV_MAX_QP) {
+		rc = -ETOOMANYREFS;
+		goto err_qp;
+	}
 
 	qp = kmalloc_node(sizeof(*qp), GFP_KERNEL, dev->node);
 	if (!qp) {
@@ -483,6 +624,18 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 				1 : ibqp_attr->cap.max_send_wr;
 	qp_attr.send_wqe_sg_cap = ibqp_attr->cap.max_send_sge;
 	qp_attr.qp_type = ibqp_attr->qp_type;
+
+	if (qp_attr.recv_wqe_cap > NTRDMA_DEV_MAX_QP_WR ||
+		qp_attr.send_wqe_cap > NTRDMA_DEV_MAX_QP_WR ||
+		qp_attr.send_wqe_sg_cap > NTRDMA_DEV_MAX_SGE ||
+		qp_attr.recv_wqe_sg_cap > NTRDMA_DEV_MAX_SGE) {
+
+		ntrdma_err(dev, "send_wqe(cap=%u,sg=%u), recv_wqe(cap=%u,sg=%u)\n",
+				 qp_attr.send_wqe_cap, qp_attr.send_wqe_sg_cap,
+				 qp_attr.recv_wqe_cap, qp_attr.recv_wqe_sg_cap);
+		rc = -ETOOMANYREFS;
+		goto err_init;
+	}
 
 	rc = ntrdma_qp_init(qp, dev, recv_cq, send_cq, &qp_attr);
 	if (rc)
@@ -506,6 +659,7 @@ err_add:
 err_init:
 	kfree(qp);
 err_qp:
+	atomic_dec(&dev->qp_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
@@ -790,14 +944,24 @@ unlock_exit:
 
 static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 {
+	struct ntrdma_dev *dev = NULL;
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 
+	if (!qp) {
+		ntrdma_err(dev, "trying to destroy a NULL ptr qp\n");
+		return -EFAULT;
+	}
+
+	dev = ntrdma_qp_dev(qp);
 	/* TODO: what should be done about oustanding work requests? */
 
 	ntrdma_qp_del(qp);
 	ntrdma_qp_repo(qp);
 	ntrdma_qp_deinit(qp);
 	kfree(qp);
+
+	if (dev)
+		atomic_dec(&dev->qp_num);
 
 	return 0;
 }
@@ -1051,6 +1215,11 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	ntrdma_vdbg(dev, "called user addr %llx len %llx:\n",
 			virt_addr, length);
 
+	if (atomic_inc_return(&dev->mr_num) >= NTRDMA_DEV_MAX_MR) {
+		rc = -ETOOMANYREFS;
+		goto err_umem;
+	}
+
 	if (!is_canonical(virt_addr)) {
 		rc = -EINVAL;
 		ntrdma_err(dev, "reg_user_mr with non canonical addr (corrupted?)\n");
@@ -1119,6 +1288,7 @@ err_init:
 err_mr:
 	ntc_umem_put(dev->ntc, umem);
 err_umem:
+	atomic_dec(&dev->mr_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
@@ -1135,7 +1305,7 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	ntrdma_mr_repo(mr);
 	kfree(mr);
 	ntc_umem_put(dev->ntc, umem);
-
+	atomic_dec(&dev->mr_num);
 	return 0;
 }
 

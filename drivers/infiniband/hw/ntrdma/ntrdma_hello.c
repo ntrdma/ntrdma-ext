@@ -141,6 +141,8 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	out = out_buf;
 	ntrdma_buff_supported_versions(&local);
 
+	dev->latest_version = local.versions[local.version_num-1];
+
 	if (!in || (in->version_num > MAX_SUPPORTED_VERSIONS))
 		return -EINVAL;
 
