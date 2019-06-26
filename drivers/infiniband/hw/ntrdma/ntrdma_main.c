@@ -43,49 +43,70 @@
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_RELDATE  "20 October 2015"
 
+#define MAX_LEN 2
+#define IS_UP(buf) (buf[0] == '1')
+#define IS_DOWN(buf) (buf[0] == '0')
+
 MODULE_AUTHOR("Allen Hubbe");
 MODULE_DESCRIPTION("RDMA Driver for PCIe NTB and DMA");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(DRIVER_VERSION);
 
-static int sysfs_link_disable;
-
-static ssize_t link_disable_show(struct device *dev,
+static ssize_t link_show(struct device *dev,
 					struct device_attribute *attr,
 					char *buf)
 {
-	return sprintf(buf, "%d\n", sysfs_link_disable);
+	struct ib_device *ibdev = container_of(dev, struct ib_device, dev);
+	struct ntrdma_dev *ntrdma_dev = ntrdma_ib_dev(ibdev);
+	struct ntc_dev *ntc = ntrdma_dev->ntc;
+
+	return snprintf(buf, MAX_LEN, "%d\n", ntc_is_link_up(ntc));
 }
 
-static ssize_t link_disable_store(struct device *dev,
+static ssize_t link_store(struct device *dev,
 					struct device_attribute *attr,
 					const char *buf, size_t count)
 {
-	struct ntc_dev *ntc = (struct ntc_dev *)dev;
+	int rc = 0;
 
-	int rc = sscanf(buf, "%du", &sysfs_link_disable);
+	struct ib_device *ibdev = container_of(dev, struct ib_device, dev);
+	struct ntrdma_dev *ntrdma_dev = ntrdma_ib_dev(ibdev);
+	struct ntc_dev *ntc = ntrdma_dev->ntc;
 
-	pr_devel("sysfs entry was set by user to %d rc %d\n",
-			sysfs_link_disable, rc);
-
-	if (ntc && rc > 0) {
-		rc = (!sysfs_link_disable) ? ntc_link_enable(ntc) :
-				ntc_link_disable(ntc);
-
-		if (rc)
-			pr_err("could not set link state (%d) by ntc, rc %d\n",
-				sysfs_link_disable, rc);
+	if (!ntc) {
+		pr_err("sysfs: failed to store sysfs link file, ntc is NULL\n");
+		return -ENODEV;
 	}
+
+	if (strnlen(buf, MAX_LEN+1) != MAX_LEN) {
+		pr_err("sysfs: wrong param %s\n", buf);
+		return -EINVAL;
+	}
+
+	if (IS_DOWN(buf) && ntc_is_link_up(ntc)) {
+		pr_debug("sysfs: changed link state to %s\n", buf);
+		rc = ntc_link_disable(ntc);
+	} else if (IS_UP(buf) && !ntc_is_link_up(ntc)) {
+		pr_debug("sysfs: changed link state to %s\n", buf);
+		rc = ntc_link_enable(ntc);
+	} else {
+		pr_err("sysfs: link already %s\n", buf);
+	}
+
+	if (rc)
+		pr_err("sysfs: could not set link state (%s) by ntc, rc %d\n",
+				buf, rc);
+
 	return count;
 }
 
 static struct device_attribute attr = {
 	.attr = {
-		.name = "link_disable",
+		.name = "link",
 		.mode = 0660,/*S_IWUSR | S_IRUGO,*/
 	},
-	.show = link_disable_show,
-	.store = link_disable_store,
+	.show = link_show,
+	.store = link_store,
 };
 
 static int ntrdma_probe(struct ntc_driver *self,
@@ -108,7 +129,7 @@ static int ntrdma_probe(struct ntc_driver *self,
 
 	ntc_link_enable(ntc);
 
-	rc = device_create_file((struct device *)ntc, &attr);
+	rc = device_create_file((struct device *)&dev->ibdev.dev, &attr);
 	if (rc)
 		pr_err("failed to create sysfs entry rc = %d\n", rc);
 
@@ -124,7 +145,7 @@ static void ntrdma_remove(struct ntc_driver *self, struct ntc_dev *ntc)
 {
 	struct ntrdma_dev *dev = ntc_get_ctx(ntc);
 	pr_devel("remove ntc %s\n", dev_name(&ntc->dev));
-	device_remove_file((struct device *)ntc, &attr);
+	device_remove_file((struct device *)&dev->ibdev.dev, &attr);
 	ntrdma_dev_ib_deinit(dev);
 	ntc_link_disable(ntc);
 	ntc_link_reset(dev->ntc);
