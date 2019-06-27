@@ -1382,7 +1382,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 {
 	phys_addr_t mw_base;
 	resource_size_t mw_size;
-	int rc, i, mw_idx;
+	int rc, i, mw_idx, mw_count;
 
 	/* inherit ntb device name and configuration */
 	dev_set_name(&dev->ntc.dev, "%s", dev_name(&dev->ntb->dev));
@@ -1398,17 +1398,22 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	ntb_spad_is_unsafe(dev->ntb);
 
 	/* we'll be using the last memory window if it exists */
-	mw_idx = ntb_mw_count(dev->ntb, NTB_DEF_PEER_IDX);
-	if (mw_idx <= 0) {
-		pr_debug("no mw for new device %s\n",
-			 dev_name(&dev->ntb->dev));
+	mw_count = ntb_mw_count(dev->ntb, NTB_DEF_PEER_IDX);
+	if (mw_count <= 0) {
+		pr_err("no mw for new device %s\n", dev_name(&dev->ntb->dev));
 		rc = -EINVAL;
 		goto err_mw;
 	}
-	--mw_idx;
+	if (mw_count < 2) {
+		pr_err("not enough memory windows for new device %s\n",
+			dev_name(&dev->ntb->dev));
+		rc = -EINVAL;
+		goto err_mw;
+	}
+	mw_idx = mw_count - 1;
 
 	/* clear any garbage translations */
-	for (i = 0; i <= mw_idx; ++i)
+	for (i = 0; i < mw_count; ++i)
 		ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, i);
 
 	/* this is the window we'll translate to local dram */
@@ -1549,7 +1554,7 @@ err_map:
 			  dev->info_peer_on_self_unaligned,
 			  dev->info_peer_on_self_dma);
 err_info:
-	for (i = 0; i <= mw_idx; ++i)
+	for (i = 0; i < mw_count; ++i)
 		ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, i);
 err_mw:
 	return rc;
