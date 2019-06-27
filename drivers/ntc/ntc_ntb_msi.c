@@ -1398,7 +1398,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	ntb_spad_is_unsafe(dev->ntb);
 
 	/* we'll be using the last memory window if it exists */
-	mw_idx = ntb_mw_count(dev->ntb, 0);
+	mw_idx = ntb_mw_count(dev->ntb, NTB_DEF_PEER_IDX);
 	if (mw_idx <= 0) {
 		pr_debug("no mw for new device %s\n",
 			 dev_name(&dev->ntb->dev));
@@ -1408,8 +1408,8 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	--mw_idx;
 
 	/* clear any garbage translations */
-	for (i = 0; i < mw_idx; ++i)
-		ntb_mw_clear_trans(dev->ntb, 0, i);
+	for (i = 0; i <= mw_idx; ++i)
+		ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, i);
 
 	/* this is the window we'll translate to local dram */
 	ntb_peer_mw_get_addr(dev->ntb, mw_idx, &mw_base, &mw_size);
@@ -1426,7 +1426,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	}
 
 	/* FIXME: zero is not a portable address for local dram */
-	rc = ntb_mw_set_trans(dev->ntb, 0, mw_idx, 0, mw_size);
+	rc = ntb_mw_set_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx, 0, mw_size);
 	if (rc) {
 		pr_debug("failed to translate mw for new device %s\n",
 			 dev_name(&dev->ntb->dev));
@@ -1482,7 +1482,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	}
 
 	/* set the ntb translation to the aligned dma memory */
-	rc = ntb_mw_set_trans(dev->ntb, 0, mw_idx - 1,
+	rc = ntb_mw_set_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx - 1,
 			      dev->info_peer_on_self_dma
 			      + dev->info_peer_on_self_off,
 			      dev->info_peer_on_self_size);
@@ -1549,7 +1549,8 @@ err_map:
 			  dev->info_peer_on_self_unaligned,
 			  dev->info_peer_on_self_dma);
 err_info:
-	ntb_mw_clear_trans(dev->ntb, 0, mw_idx);
+	for (i = 0; i <= mw_idx; ++i)
+		ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, i);
 err_mw:
 	return rc;
 }
@@ -1562,9 +1563,9 @@ static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 
 	ntb_link_disable(dev->ntb);
 
-	mw_idx = ntb_mw_count(dev->ntb, 0);
+	mw_idx = ntb_mw_count(dev->ntb, NTB_DEF_PEER_IDX);
 	for (i = 0; i < mw_idx; ++i)
-		ntb_mw_clear_trans(dev->ntb, 0, i);
+		ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, i);
 
 	ntc_ntb_ping_stop(dev);
 
