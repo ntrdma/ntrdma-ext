@@ -71,7 +71,7 @@ struct ntrdma_send_wqe {
 	u32				imm_data;
 	u32				sg_count;
 	int				flags;
-	struct ntrdma_wr_sge		sg_list[];
+	struct ntrdma_wr_snd_sge	snd_sg_list[];
 };
 
 struct ntrdma_recv_wqe {
@@ -79,7 +79,7 @@ struct ntrdma_recv_wqe {
 	u16				op_code;
 	u16				op_status;
 	u32				sg_count;
-	struct ntrdma_wr_sge		sg_list[];
+	struct ntrdma_wr_rcv_sge	rcv_sg_list[];
 };
 
 struct ntrdma_cqe {
@@ -91,21 +91,26 @@ struct ntrdma_cqe {
 	int				flags;
 };
 
-static inline size_t ntrdma_wqe_sg_list_size(u32 sg_cap)
+static inline size_t ntrdma_wqe_snd_sg_list_size(u32 sg_cap)
 {
-	return sg_cap * sizeof(struct ntrdma_wr_sge);
+	return sg_cap * sizeof(struct ntrdma_wr_snd_sge);
+}
+
+static inline size_t ntrdma_wqe_rcv_sg_list_size(u32 sg_cap)
+{
+	return sg_cap * sizeof(struct ntrdma_wr_rcv_sge);
 }
 
 static inline size_t ntrdma_send_wqe_size(u32 sg_cap)
 {
 	return sizeof(struct ntrdma_send_wqe) +
-		ntrdma_wqe_sg_list_size(sg_cap);
+		ntrdma_wqe_snd_sg_list_size(sg_cap);
 }
 
 static inline size_t ntrdma_recv_wqe_size(u32 sg_cap)
 {
 	return sizeof(struct ntrdma_recv_wqe) +
-		ntrdma_wqe_sg_list_size(sg_cap);
+		ntrdma_wqe_rcv_sg_list_size(sg_cap);
 }
 
 static inline bool ntrdma_wr_status_no_recv(u16 op_status)
@@ -172,5 +177,8 @@ static inline bool ntrdma_wr_code_pull_data(u16 op_code)
 {
 	return op_code == NTRDMA_WR_RDMA_READ;
 }
+
+void ntrdma_recv_wqe_sync(struct ntrdma_recv_wqe *wqe);
+void ntrdma_recv_wqe_cleanup(struct ntrdma_recv_wqe *wqe);
 
 #endif

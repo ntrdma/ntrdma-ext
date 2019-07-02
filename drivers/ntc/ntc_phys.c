@@ -14,332 +14,252 @@ MODULE_DESCRIPTION("NTC physical channel-mapped buffer support library");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_VERSION(DRIVER_VERSION);
 
-static void *ntc_phys_buf_alloc(struct ntc_dev *ntc, u64 size,
-				u64 *addr, gfp_t gfp)
+static int ntc_phys_local_buf_alloc(struct ntc_local_buf *buf, gfp_t gfp)
 {
-	struct device *dev = ntc_map_dev(ntc, NTB_DEV_ACCESS);
+	struct device *dev = buf->dma_engine_dev;
+
+	buf->ptr = kmalloc_node(buf->size, gfp, dev_to_node(dev));
+	if (!buf->ptr)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static int ntc_phys_local_buf_map(struct ntc_local_buf *buf)
+{
+	struct device *dev = buf->dma_engine_dev;
+
+	buf->dma_addr = dma_map_single(dev, buf->ptr, buf->size,
+				DMA_TO_DEVICE);
+	if (dma_mapping_error(dev, buf->dma_addr))
+		return -EIO;
+
+	return 0;
+}
+
+static void ntc_phys_local_buf_unmap(struct ntc_local_buf *buf)
+{
+	dma_unmap_single(buf->dma_engine_dev, buf->dma_addr, buf->size,
+			DMA_TO_DEVICE);
+}
+
+static void ntc_phys_local_buf_free(struct ntc_local_buf *buf)
+{
+	if (buf->owned && buf->ptr)
+		kfree(buf->ptr);
+}
+
+static void ntc_phys_local_buf_prepare_to_copy(const struct ntc_local_buf *buf,
+					u64 offset, u64 len)
+{
+	dma_sync_single_for_device(buf->dma_engine_dev, buf->dma_addr + offset,
+				len, DMA_TO_DEVICE);
+}
+
+static int ntc_phys_export_buf_alloc(struct ntc_export_buf *buf)
+{
+	struct device *dev = buf->ntb_dev;
 	dma_addr_t dma_addr;
-	void *buf;
 
-	buf = dma_alloc_coherent(dev, size, &dma_addr, gfp);
+	if (buf->gfp)
+		buf->ptr = kmalloc_node(buf->size, buf->gfp,
+					dev_to_node(dev));
+	if (!buf->ptr)
+		return -ENOMEM;
 
-	/* addr must store at least a platform dma addr */
-	BUILD_BUG_ON(sizeof(*addr) < sizeof(dma_addr));
-	*addr = (u64)dma_addr;
-
-	return buf;
-}
-
-static void ntc_phys_buf_free(struct ntc_dev *ntc, u64 size,
-			      void *buf, u64 addr)
-{
-	struct device *dev = ntc_map_dev(ntc, NTB_DEV_ACCESS);
-
-	dma_free_coherent(dev, size, buf, addr);
-}
-
-static u64 ntc_phys_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
-			    enum dma_data_direction dir,
-				enum ntc_dma_access dma_dev)
-{
-	u64 dma_handle;
-	struct device *dev = ntc_map_dev(ntc, dma_dev);
-
-	/* return value must store at least a platform dma addr */
-	BUILD_BUG_ON(sizeof(u64) < sizeof(dma_addr_t));
-
-	dma_handle = dma_map_single(dev, buf, size, dir);
-
-	if (dma_mapping_error(dev, dma_handle))
-		return 0;
-
-	return dma_handle;
-}
-
-static void ntc_phys_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
-			       enum dma_data_direction dir,
-				   enum ntc_dma_access dma_dev)
-{
-	struct device *dev = ntc_map_dev(ntc, dma_dev);
-
-	dma_unmap_single(dev, addr, size, dir);
-}
-
-static u64 ntc_phys_res_map(struct ntc_dev *ntc, u64 phys_addr, u64 size,
-			    enum dma_data_direction dir,
-				enum ntc_dma_access dma_dev)
-{
-	u64 dma_handle;
-
-	struct device *dev = ntc_map_dev(ntc, dma_dev);
-
-	if (WARN(size == 0 || phys_addr == 0,
-			"size %#llx addr %#llx",
-			size, phys_addr)) {
-		return 0;
+	dma_addr = dma_map_single(dev, buf->ptr, buf->size, DMA_FROM_DEVICE);
+	if (dma_mapping_error(dev, dma_addr)) {
+		if (buf->gfp)
+			kfree(buf->ptr);
+		return -EIO;
 	}
 
-	/* return value must store at least a platform dma addr */
-	BUILD_BUG_ON(sizeof(u64) < sizeof(dma_addr_t));
+	buf->chan_addr = dma_addr;
 
-	dma_handle = dma_map_resource(dev,
-			(phys_addr_t)phys_addr,
-			(size_t)size,
-			dir, 0);
-
-	if (dma_mapping_error(dev, dma_handle))
-		return 0;
-
-	return dma_handle;
+	return 0;
 }
 
-static void ntc_phys_res_unmap(struct ntc_dev *ntc, u64 dma_addr, u64 size,
-			       enum dma_data_direction dir,
-				   enum ntc_dma_access dma_dev)
+static void ntc_phys_export_buf_free(struct ntc_export_buf *buf)
 {
-	struct device *dev = ntc_map_dev(ntc, dma_dev);
+	struct device *dev = buf->ntb_dev;
+	dma_addr_t dma_addr = buf->chan_addr;
 
-	if (WARN(size == 0 || dma_addr == 0,
-			"size %#llx dma addr %#llx",
-			size, dma_addr)) {
-		return;
+	dma_unmap_single(dev, dma_addr, buf->size, DMA_FROM_DEVICE);
+
+	if (buf->gfp && buf->ptr)
+		kfree(buf->ptr);
+}
+
+static const void *ntc_phys_export_buf_const_deref(struct ntc_export_buf *buf,
+						u64 offset, u64 len)
+{
+	struct device *dev = buf->ntb_dev;
+	dma_addr_t dma_addr = buf->chan_addr + offset;
+
+	dma_sync_single_for_cpu(dev, dma_addr, len, DMA_FROM_DEVICE);
+
+	return buf->ptr + offset;
+}
+
+static int ntc_phys_bidir_buf_alloc(struct ntc_bidir_buf *buf)
+{
+	struct device *ntb_dev = buf->ntb_dev;
+	struct device *dma_engine_dev = buf->dma_engine_dev;
+	dma_addr_t ntb_dma_addr;
+	dma_addr_t dma_engine_addr;
+	int rc;
+
+	if (buf->gfp)
+		buf->ptr = kmalloc_node(buf->size, buf->gfp,
+					dev_to_node(ntb_dev));
+	if (!buf->ptr)
+		return -ENOMEM;
+
+	ntb_dma_addr =
+		dma_map_single(ntb_dev, buf->ptr, buf->size, DMA_FROM_DEVICE);
+	if (dma_mapping_error(ntb_dev, ntb_dma_addr)) {
+		rc = -EIO;
+		goto err_ntb_map;
 	}
 
-	dma_unmap_resource(dev, (dma_addr_t)dma_addr,
-			(size_t)size, dir, 0);
-}
-
-static void ntc_phys_buf_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
-				  enum dma_data_direction dir,
-				  enum ntc_dma_access dma_dev)
-{
-	struct device *dev = ntc_map_dev(ntc, dma_dev);
-
-	dma_sync_single_for_cpu(dev, addr, size, dir);
-}
-
-static void ntc_phys_buf_sync_dev(struct ntc_dev *ntc, u64 addr, u64 size,
-				  enum dma_data_direction dir,
-				  enum ntc_dma_access dma_dev)
-{
-	struct device *dev = ntc_map_dev(ntc, dma_dev);
-
-	dma_sync_single_for_device(dev, addr, size, dir);
-}
-
-struct ntrdma_umem {
-	struct ib_umem *ib_umem;
-	struct sg_table remote_sg_head;
-};
-
-static inline void ntc_sgl_clone(struct scatterlist *sgl_src,
-		struct scatterlist *sgl_dst, int count)
-{
-	struct scatterlist *tmp_sg_src;
-	struct scatterlist *tmp_sg_dst;
-	int i;
-
-	tmp_sg_src = sgl_src;
-	tmp_sg_dst = sgl_dst;
-
-	for (i = 0; i < count; i++) {
-		//sg_set_page(tmp_sg_dst, sg_page(tmp_sg_src), PAGE_SIZE, 0);
-		memcpy(tmp_sg_dst, tmp_sg_src, sizeof(struct scatterlist));
-		tmp_sg_src = sg_next(tmp_sg_src);
-		tmp_sg_dst = sg_next(tmp_sg_dst);
+	dma_engine_addr = dma_map_single(dma_engine_dev, buf->ptr, buf->size,
+					DMA_TO_DEVICE);
+	if (dma_mapping_error(dma_engine_dev, dma_engine_addr)) {
+		rc = -EIO;
+		goto err_dma_engine_map;
 	}
 
+	buf->chan_addr = ntb_dma_addr;
+	buf->dma_addr = dma_engine_addr;
+
+	return 0;
+
+ err_dma_engine_map:
+	dma_unmap_single(ntb_dev, ntb_dma_addr, buf->size, DMA_FROM_DEVICE);
+
+ err_ntb_map:
+	if (buf->gfp)
+		kfree(buf->ptr);
+
+	return rc;
 }
 
-static inline struct ntrdma_umem *ntc_phys_umem_get_put(
-		struct ntc_dev *ntc,
-		struct ib_ucontext *uctx,
-		unsigned long uaddr, size_t size,
-		int access, int dmasync,
-		struct ntrdma_umem *umem,
-		int is_put)
+static void ntc_phys_bidir_buf_free(struct ntc_bidir_buf *buf)
 {
-	struct ntrdma_umem *ntrdma_umem;
-	struct ib_umem *ib_umem;
-	int ret;
+	struct device *ntb_dev = buf->ntb_dev;
+	struct device *dma_engine_dev = buf->dma_engine_dev;
+	dma_addr_t ntb_dma_addr = buf->chan_addr;
+	dma_addr_t dma_engine_addr = buf->dma_addr;
 
-	if (is_put)
-		goto is_put;
+	dma_unmap_single(dma_engine_dev, dma_engine_addr, buf->size,
+			DMA_TO_DEVICE);
+	dma_unmap_single(ntb_dev, ntb_dma_addr, buf->size, DMA_FROM_DEVICE);
 
-	ntrdma_umem = kzalloc(sizeof(*ntrdma_umem), GFP_KERNEL);
-	if (!ntrdma_umem)
-		return ERR_PTR(-ENOMEM);
-
-	ib_umem = ib_umem_get(uctx, uaddr, size, access, dmasync);
-	if (IS_ERR(ib_umem)) {
-		pr_err("ib_umem_get failed rc %ld user address %lx size %zu\n",
-				PTR_ERR(ib_umem), uaddr, size);
-		goto err_ib_umem;
-	}
-
-	ntrdma_umem->ib_umem = ib_umem;
-
-	ret = sg_alloc_table(&ntrdma_umem->remote_sg_head,
-			ib_umem_num_pages(ib_umem), GFP_KERNEL);
-
-	if (ret)
-		goto err_sg_alloc;
-
-	/* TODO: this part needs rework as follows:
-	 * The purpose of cloning is to hold different dma mappings
-	 * for the same user memory, to provide few devices
-	 * (dma-engine, NTB) access to memory.
-	 *
-	 * In case no IOMMU is present (on intel), local == remote.
-	 * Another consideration is that the user can use out of
-	 * kernel memory, but get user pages will fail... so a patch
-	 * to the coreOS kernel has been applied which returns a list
-	 * based on pfn and the optimal solution would also require to
-	 * perform dma_map_resource on it.
-	 *
-	 * HACK: Currently ntc_sgl_clone was changed just to memcpy
-	 * the local list to remote.
-	 */
-
-	ntc_sgl_clone(ib_umem->sg_head.sgl, ntrdma_umem->remote_sg_head.sgl,
-			ib_umem->npages);
-
-/*
-	ret = dma_map_sg_attrs(ntc_map_dev(ntc, NTB_DEV_ACCESS),
-			ntrdma_umem->remote_sg_head.sgl,
-			ib_umem->npages,
-			DMA_BIDIRECTIONAL,
-			dmasync?DMA_ATTR_WRITE_BARRIER:0);
-
-
-	if (ret <= 0)
-		goto err_dma_map;
-*/
-	return ntrdma_umem;
-is_put:
-	ntrdma_umem = umem;
-	dma_unmap_sg(ntc_map_dev(ntc, NTB_DEV_ACCESS),
-			ntrdma_umem->remote_sg_head.sgl,
-			ntrdma_umem->ib_umem->npages,
-			DMA_BIDIRECTIONAL);
-//err_dma_map:
-	sg_free_table(&ntrdma_umem->remote_sg_head);
-err_sg_alloc:
-	ib_umem_release(ntrdma_umem->ib_umem);
-	ntrdma_umem->ib_umem = 0;
-	ib_umem = NULL;
-err_ib_umem:
-	kfree(ntrdma_umem);
-	ntrdma_umem = NULL;
-	return NULL;
+	if (buf->gfp && buf->ptr)
+		kfree(buf->ptr);
 }
 
-static void *ntc_phys_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
-			       unsigned long uaddr, size_t size,
-			       int access, int dmasync)
+static void *ntc_phys_bidir_buf_deref(struct ntc_bidir_buf *buf,
+				u64 offset, u64 len)
 {
-	return ntc_phys_umem_get_put(ntc, uctx, uaddr, size,
-			access, dmasync, NULL, false);
+	struct device *ntb_dev = buf->ntb_dev;
+	dma_addr_t ntb_dma_addr = buf->chan_addr + offset;
+
+	dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len, DMA_FROM_DEVICE);
+
+	return buf->ptr + offset;
 }
 
-static void ntc_phys_umem_put(struct ntc_dev *ntc, void *umem)
+static void ntc_phys_bidir_buf_unref(struct ntc_bidir_buf *buf,
+				u64 offset, u64 len)
 {
-	struct ntrdma_umem *ntrdma_umem = umem;
+	struct device *ntb_dev = buf->ntb_dev;
+	dma_addr_t ntb_dma_addr = buf->chan_addr + offset;
 
-	ntc_phys_umem_get_put(ntc, NULL, 0, 0,
-				0, 0, ntrdma_umem, true);
+	dma_sync_single_for_device(ntb_dev, ntb_dma_addr, len, DMA_FROM_DEVICE);
 }
 
-static int ntc_compress_sgl(struct sg_table *sg_head,
-		size_t offset, size_t length,
-		struct ntc_sge *sgl, int count)
+static const void *ntc_phys_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
+						u64 offset, u64 len)
 {
-	struct scatterlist *sg, *next;
-	dma_addr_t dma_addr, next_addr;
-	size_t dma_len;
-	int i, dma_count = 0;
+	struct device *ntb_dev = buf->ntb_dev;
+	dma_addr_t ntb_dma_addr = buf->chan_addr + offset;
 
-	BUILD_BUG_ON(sizeof(u64) < sizeof(dma_addr));
-	BUILD_BUG_ON(sizeof(u64) < sizeof(dma_len));
+	dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len, DMA_FROM_DEVICE);
 
-	for_each_sg(sg_head->sgl, sg, sg_head->nents, i) {
-		/* dma_addr is start addr of the contiguous range */
-		dma_addr = sg_dma_address(sg);
-		/* dma_len accumulates the length of the contiguous range */
-		dma_len = sg_dma_len(sg);
-
-		for (; i + 1 < sg_head->nents; ++i) {
-			next = sg_next(sg);
-			if (!next)
-				break;
-			next_addr = sg_dma_address(next);
-			if (next_addr != dma_addr + dma_len)
-				break;
-			dma_len += sg_dma_len(next);
-			sg = next;
-		}
-
-		if (sgl && dma_count < count) {
-			sgl[dma_count].addr = dma_addr;
-			sgl[dma_count].len = dma_len;
-		}
-
-		++dma_count;
-	}
-
-	if (dma_count && sgl && count > 0) {
-		/* dma_len is start offset in the first page */
-		dma_len = offset;
-		sgl[0].addr += dma_len;
-		sgl[0].len -= dma_len;
-
-		if (dma_count <= count) {
-			/* dma_len is offset from the end of the last page */
-			dma_len = (dma_len + length) & ~PAGE_MASK;
-			dma_len = (PAGE_SIZE - dma_len) & ~PAGE_MASK;
-				sgl[dma_count - 1].len -= dma_len;
-		}
-	}
-
-	return dma_count;
+	return buf->ptr + offset;
 }
 
-static int ntc_phys_umem_sgl(struct ntc_dev *ntc, void *umem,
-			     struct ntc_sge *sgl, int count)
+static void ntc_phys_bidir_buf_prepare_to_copy(const struct ntc_bidir_buf *buf,
+					u64 offset, u64 len)
 {
-	struct ntrdma_umem *ntrdma_umem = umem;
-	struct ib_umem *ibumem = ntrdma_umem->ib_umem;
-	int local_dma_count;
-	int remote_dma_count;
+	dma_sync_single_for_device(buf->dma_engine_dev, buf->dma_addr + offset,
+				len, DMA_TO_DEVICE);
+}
 
-	local_dma_count = ntc_compress_sgl(
-			&ibumem->sg_head,
-			ib_umem_offset(ibumem),
-			ibumem->length, sgl, count);
+static int ntc_phys_remote_buf_map(struct ntc_remote_buf *buf,
+				const struct ntc_remote_buf_desc *desc)
+{
+	struct device *dev = buf->dma_engine_dev;
 
-	remote_dma_count = ntc_compress_sgl(
-			&ntrdma_umem->remote_sg_head,
-			ib_umem_offset(ibumem),
-			ibumem->length, sgl + count, count);
+	buf->ptr = ntc_peer_addr(buf->ntc, desc->chan_addr);
+	if (!buf->ptr)
+		return -EIO;
 
-	WARN(local_dma_count != remote_dma_count,
-		"local_dma_count %d remote_dma_count %d",
-		local_dma_count, remote_dma_count);
+	buf->dma_addr = dma_map_resource(dev, buf->ptr, desc->size,
+					DMA_FROM_DEVICE, 0);
 
-	return local_dma_count;
+	if (dma_mapping_error(dev, buf->dma_addr))
+		return -EIO;
+
+	buf->size = desc->size;
+
+	return 0;
+}
+
+static int ntc_phys_remote_buf_map_phys(struct ntc_remote_buf *buf,
+					phys_addr_t ptr, u64 size)
+{
+	struct device *dev = buf->dma_engine_dev;
+
+	if (!ptr)
+		return -EIO;
+
+	buf->ptr = ptr;
+	buf->dma_addr = dma_map_resource(dev, ptr, size, DMA_FROM_DEVICE, 0);
+
+	if (dma_mapping_error(dev, buf->dma_addr))
+		return -EIO;
+
+	buf->size = size;
+
+	return 0;
+}
+
+static void ntc_phys_remote_buf_unmap(struct ntc_remote_buf *buf)
+{
+	struct device *dev = buf->dma_engine_dev;
+
+	dma_unmap_resource(dev, buf->dma_addr, buf->size, DMA_FROM_DEVICE, 0);
 }
 
 struct ntc_map_ops ntc_phys_map_ops = {
-	.buf_alloc		= ntc_phys_buf_alloc,
-	.buf_free		= ntc_phys_buf_free,
-	.buf_map		= ntc_phys_buf_map,
-	.buf_unmap		= ntc_phys_buf_unmap,
-	.res_map		= ntc_phys_res_map,
-	.res_unmap		= ntc_phys_res_unmap,
-	.buf_sync_cpu	= ntc_phys_buf_sync_cpu,
-	.buf_sync_dev	= ntc_phys_buf_sync_dev,
-	.umem_get		= ntc_phys_umem_get,
-	.umem_put		= ntc_phys_umem_put,
-	.umem_sgl		= ntc_phys_umem_sgl,
+	.local_buf_alloc		= ntc_phys_local_buf_alloc,
+	.local_buf_free			= ntc_phys_local_buf_free,
+	.local_buf_map			= ntc_phys_local_buf_map,
+	.local_buf_unmap		= ntc_phys_local_buf_unmap,
+	.local_buf_prepare_to_copy	= ntc_phys_local_buf_prepare_to_copy,
+	.export_buf_alloc		= ntc_phys_export_buf_alloc,
+	.export_buf_free		= ntc_phys_export_buf_free,
+	.export_buf_const_deref		= ntc_phys_export_buf_const_deref,
+	.bidir_buf_alloc		= ntc_phys_bidir_buf_alloc,
+	.bidir_buf_free			= ntc_phys_bidir_buf_free,
+	.bidir_buf_deref		= ntc_phys_bidir_buf_deref,
+	.bidir_buf_unref		= ntc_phys_bidir_buf_unref,
+	.bidir_buf_const_deref		= ntc_phys_bidir_buf_const_deref,
+	.bidir_buf_prepare_to_copy	= ntc_phys_bidir_buf_prepare_to_copy,
+	.remote_buf_map			= ntc_phys_remote_buf_map,
+	.remote_buf_map_phys		= ntc_phys_remote_buf_map_phys,
+	.remote_buf_unmap		= ntc_phys_remote_buf_unmap,
 };
 EXPORT_SYMBOL(ntc_phys_map_ops);

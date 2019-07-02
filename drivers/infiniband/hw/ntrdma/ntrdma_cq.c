@@ -206,8 +206,8 @@ void ntrdma_cq_cmpl_put(struct ntrdma_cq *cq,
 	poll->poll_put_and_done(poll, pos, base);
 }
 
-struct ntrdma_cqe *ntrdma_cq_cmpl_cqe(struct ntrdma_cq *cq,
-				      struct ntrdma_cqe *abort_cqe, u32 pos)
+const struct ntrdma_cqe *ntrdma_cq_cmpl_cqe(struct ntrdma_cq *cq,
+					struct ntrdma_cqe *abort_cqe, u32 pos)
 {
 	struct ntrdma_poll *poll;
 

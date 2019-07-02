@@ -47,6 +47,7 @@ struct ntc_driver;
 struct ntc_dev;
 
 struct ib_ucontext;
+struct ib_umem;
 
 /**
  * struct ntc_driver_ops - ntc driver operations
@@ -131,21 +132,21 @@ struct ntc_dev_ops {
 	int (*link_enable)(struct ntc_dev *ntc);
 	int (*link_reset)(struct ntc_dev *ntc);
 
-	u64 (*peer_addr)(struct ntc_dev *ntc, u64 dma_addr_local);
+	phys_addr_t (*peer_addr)(struct ntc_dev *ntc, u64 dma_addr_local);
 
 	void *(*req_create)(struct ntc_dev *ntc);
 	void (*req_cancel)(struct ntc_dev *ntc, void *req);
 	int (*req_submit)(struct ntc_dev *ntc, void *req);
 
 	int (*req_memcpy)(struct ntc_dev *ntc, void *req,
-			  u64 dst, u64 src, u64 len, bool fence,
-			  void (*cb)(void *cb_ctx), void *cb_ctx);
+			dma_addr_t dst, dma_addr_t src, u64 len, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx);
 	int (*req_imm32)(struct ntc_dev *ntc, void *req,
-			 u64 dst, u32 val, bool fence,
-			 void (*cb)(void *cb_ctx), void *cb_ctx);
+			dma_addr_t dst, u32 val, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx);
 	int (*req_imm64)(struct ntc_dev *ntc, void *req,
-			 u64 dst, u64 val, bool fence,
-			 void (*cb)(void *cb_ctx), void *cb_ctx);
+			dma_addr_t dst, u64 val, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx);
 	int (*req_signal)(struct ntc_dev *ntc, void *req,
 			  void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
 	int (*clear_signal)(struct ntc_dev *ntc, int vec);
@@ -178,58 +179,85 @@ static inline int ntc_dev_ops_is_valid(const struct ntc_dev_ops *ops)
 		1;
 }
 
-/** struct ntc_sge - ntc memory mapping scatter gather entry
- * @addr		Channel mapped address.
- * @len			Length of entry.
- */
-struct ntc_sge {
-	u64 addr;
-	u64 len;
+struct ntc_local_buf {
+	struct ntc_dev *ntc;
+	struct device *dma_engine_dev;
+	u64 size;
+	bool owned;
+	bool mapped;
+
+	void *ptr;
+	dma_addr_t dma_addr;
+};
+
+struct ntc_export_buf {
+	struct ntc_dev *ntc;
+	struct device *ntb_dev;
+	u64 size;
+	gfp_t gfp;
+
+	void *ptr;
+	u64 chan_addr;
+};
+
+struct ntc_bidir_buf {
+	struct ntc_dev *ntc;
+	struct device *ntb_dev;
+	struct device *dma_engine_dev;
+	u64 size;
+	gfp_t gfp;
+
+	void *ptr;
+	u64 chan_addr;
+	dma_addr_t dma_addr;
+};
+
+struct ntc_remote_buf_desc {
+	u64 chan_addr;
+	u64 size;
+};
+
+struct ntc_remote_buf {
+	struct ntc_dev *ntc;
+	struct device *dma_engine_dev;
+	u64 size;
+
+	phys_addr_t ptr;
+	dma_addr_t dma_addr;
 };
 
 /** struct ntc_map_ops - ntc memory mapping operations
- * @buf_alloc		See ntc_buf_alloc().
- * @buf_free		See ntc_buf_free().
- * @buf_map		See ntc_buf_map().
- * @buf_unmap		See ntc_buf_unmap().
- * @buf_sync_cpu	See ntc_buf_sync_cpu().
- * @buf_sync_dev	See ntc_buf_sync_dev().
- * @umem_get		See ntc_umem_get().
- * @umem_put		See ntc_umem_put().
- * @umem_sgl		See ntc_umem_sgl().
- * @umem_count		See ntc_umem_count().
+ * See usage below.
  */
 struct ntc_map_ops {
-	void *(*buf_alloc)(struct ntc_dev *ntc, u64 size,
-			u64 *dma_addr_local, gfp_t gfp);
-	void (*buf_free)(struct ntc_dev *ntc, u64 size,
-			void *buf, u64 dma_addr_local);
-	u64 (*buf_map)(struct ntc_dev *ntc, void *buf, u64 size,
-		       enum dma_data_direction dir,
-			   enum ntc_dma_access dma_dev);
-	void (*buf_unmap)(struct ntc_dev *ntc, u64 dma_addr_local, u64 size,
-			enum dma_data_direction dir,
-			enum ntc_dma_access dma_dev);
-	u64 (*res_map)(struct ntc_dev *ntc, u64 phys_addr, u64 size,
-			enum dma_data_direction dir,
-			enum ntc_dma_access dma_dev);
-	void (*res_unmap)(struct ntc_dev *ntc, u64 dma_addr_local, u64 size,
-			enum dma_data_direction dir,
-			enum ntc_dma_access dma_dev);
-	void (*buf_sync_cpu)(struct ntc_dev *ntc, u64 dma_addr_local, u64 size,
-			     enum dma_data_direction dir,
-				 enum ntc_dma_access dma_dev);
-	void (*buf_sync_dev)(struct ntc_dev *ntc, u64 dma_addr_local, u64 size,
-			     enum dma_data_direction dir,
-				 enum ntc_dma_access dma_dev);
+	int (*local_buf_alloc)(struct ntc_local_buf *buf, gfp_t gfp);
+	void (*local_buf_free)(struct ntc_local_buf *buf);
+	int (*local_buf_map)(struct ntc_local_buf *buf);
+	void (*local_buf_unmap)(struct ntc_local_buf *buf);
+	void (*local_buf_prepare_to_copy)(const struct ntc_local_buf *buf,
+					u64 offset, u64 len);
 
-	void *(*umem_get)(struct ntc_dev *ntc, struct ib_ucontext *uctx,
-			  unsigned long uaddr, size_t size,
-			  int access, int dmasync);
-	void (*umem_put)(struct ntc_dev *ntc, void *umem);
-	int (*umem_sgl)(struct ntc_dev *ntc, void *umem,
-			struct ntc_sge *sgl, int count);
-	int (*umem_count)(struct ntc_dev *ntc, void *umem);
+	int (*export_buf_alloc)(struct ntc_export_buf *buf);
+	void (*export_buf_free)(struct ntc_export_buf *buf);
+	const void *(*export_buf_const_deref)(struct ntc_export_buf *buf,
+					u64 offset, u64 len);
+
+	int (*bidir_buf_alloc)(struct ntc_bidir_buf *buf);
+	void (*bidir_buf_free)(struct ntc_bidir_buf *buf);
+	void *(*bidir_buf_deref)(struct ntc_bidir_buf *buf,
+				u64 offset, u64 len);
+	void (*bidir_buf_unref)(struct ntc_bidir_buf *buf,
+				u64 offset, u64 len);
+	const void *(*bidir_buf_const_deref)(struct ntc_bidir_buf *buf,
+					u64 offset, u64 len);
+	void (*bidir_buf_prepare_to_copy)(const struct ntc_bidir_buf *buf,
+					u64 offset, u64 len);
+
+	int (*remote_buf_map)(struct ntc_remote_buf *buf,
+			const struct ntc_remote_buf_desc *desc);
+	int (*remote_buf_map_phys)(struct ntc_remote_buf *buf,
+				phys_addr_t ptr, u64 size);
+	void (*remote_buf_unmap)(struct ntc_remote_buf *buf);
 };
 
 /* Virtual mapping ops provided by ntc_virt library module */
@@ -237,24 +265,6 @@ extern struct ntc_map_ops ntc_virt_map_ops;
 
 /* Hardware DMA mapping ops provided by ntc_phys library module */
 extern struct ntc_map_ops ntc_phys_map_ops;
-
-static inline int ntc_map_ops_is_valid(const struct ntc_map_ops *ops)
-{
-	/* commented callbacks are not required: */
-	return
-		ops->buf_alloc				&&
-		ops->buf_free				&&
-
-		ops->buf_map				&&
-		ops->buf_unmap				&&
-		/* ops->buf_sync_cpu			&& */
-		/* ops->buf_sync_dev			&& */
-
-		ops->umem_get				&&
-		ops->umem_put				&&
-		ops->umem_sgl				&&
-		1;
-}
 
 /**
  * struct ntc_driver - driver interested in ntc devices
@@ -618,8 +628,8 @@ static inline int _ntc_link_reset(struct ntc_dev *ntc, const char *f)
  * Transform a channel-mapped address of a remote buffer, mapped by the peer,
  * into a peer address to be used as the destination of a channel request.
  *
- * The peer allocates the buffer with ntc_buf_alloc(), maps a kernel space
- * buffer with ntc_buf_map(), or maps a user space buffer with ntc_umem_get().
+ * The peer allocates and maps the buffer with ntc_export_buf_alloc(),
+ * ntc_bidir_buf_alloc() or ntc_bidir_buf_make_prealloced().
  * Then, the remote peer communicates the channel-mapped address of the buffer
  * across the channel.  The driver on side of the connection must then
  * translate the peer's channel-mapped address into a peer address.  The
@@ -628,7 +638,7 @@ static inline int _ntc_link_reset(struct ntc_dev *ntc, const char *f)
  *
  * Return: The translated peer address.
  */
-static inline u64 ntc_peer_addr(struct ntc_dev *ntc, u64 addr)
+static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc, u64 addr)
 {
 	if (!ntc->dev_ops->peer_addr)
 		return addr;
@@ -723,7 +733,6 @@ static inline int ntc_req_submit(struct ntc_dev *ntc, void *req)
  * peer translated address.  See ntc_peer_addr().
  *
  * The source address refers to a local buffer by its channel-mapped address.
- * See ntc_buf_alloc() and ntc_buf_map().
  *
  * A fence implies that processing of following operations must not proceed
  * until the completion of this memory copy operation (i.e. fence-after, not
@@ -740,12 +749,112 @@ static inline int ntc_req_submit(struct ntc_dev *ntc, void *req)
  * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_memcpy(struct ntc_dev *ntc, void *req,
-				 u64 dst, u64 src, u64 len, bool fence,
-				 void (*cb)(void *cb_ctx), void *cb_ctx)
+				dma_addr_t dst, dma_addr_t src, u64 len,
+				bool fence,
+				void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	return ntc->dev_ops->req_memcpy(ntc, req,
 					dst, src, len, fence,
 					cb, cb_ctx);
+}
+
+static inline bool ntc_segment_valid(u64 buf_size, u64 buf_offset, u64 len)
+{
+	if (unlikely(buf_offset >= buf_size))
+		return false;
+	if (unlikely(len > buf_size))
+		return false;
+	if (unlikely(buf_offset + len > buf_size))
+		return false;
+
+	return true;
+}
+
+static inline int _ntc_request_memcpy(struct ntc_dev *ntc, void *req,
+				dma_addr_t dst_start,
+				u64 dst_size, u64 dst_offset,
+				dma_addr_t src_start,
+				u64 src_size, u64 src_offset,
+				u64 len, bool fence,
+				void (*cb)(void *cb_ctx), void *cb_ctx)
+{
+	return ntc_req_memcpy(ntc, req,
+			dst_start + dst_offset, src_start + src_offset, len,
+			fence, cb, cb_ctx);
+}
+
+static inline int ntc_request_memcpy_with_cb(void *req,
+					const struct ntc_remote_buf *dst,
+					u64 dst_offset,
+					const struct ntc_local_buf *src,
+					u64 src_offset,
+					u64 len,
+					void (*cb)(void *cb_ctx), void *cb_ctx)
+{
+	if (unlikely(len == 0))
+		return 0;
+
+	if (!ntc_segment_valid(src->size, src_offset, len))
+		return -EINVAL;
+
+	if (!ntc_segment_valid(dst->size, dst_offset, len))
+		return -EINVAL;
+
+	if (src->ntc->map_ops->local_buf_prepare_to_copy)
+		src->ntc->map_ops->local_buf_prepare_to_copy(src, src_offset,
+							len);
+
+	return _ntc_request_memcpy(src->ntc, req,
+				dst->dma_addr, dst->size, dst_offset,
+				src->dma_addr, src->size, src_offset,
+				len, false, cb, cb_ctx);
+}
+
+static inline int ntc_request_memcpy_fenced(void *req,
+					const struct ntc_remote_buf *dst,
+					u64 dst_offset,
+					const struct ntc_local_buf *src,
+					u64 src_offset,
+					u64 len)
+{
+	if (!ntc_segment_valid(src->size, src_offset, len))
+		return -EINVAL;
+
+	if (!ntc_segment_valid(dst->size, dst_offset, len))
+		return -EINVAL;
+
+	if (src->ntc->map_ops->local_buf_prepare_to_copy)
+		src->ntc->map_ops->local_buf_prepare_to_copy(src, src_offset,
+							len);
+
+	return _ntc_request_memcpy(src->ntc, req,
+				dst->dma_addr, dst->size, dst_offset,
+				src->dma_addr, src->size, src_offset,
+				len, true, NULL, NULL);
+}
+
+static inline
+int ntc_bidir_request_memcpy_unfenced(void *req,
+				const struct ntc_remote_buf *dst,
+				u64 dst_offset,
+				const struct ntc_bidir_buf *src,
+				u64 src_offset,
+				u64 len)
+{
+	if (!ntc_segment_valid(src->size, src_offset, len))
+		return -EINVAL;
+
+	if (!ntc_segment_valid(dst->size, dst_offset, len))
+		return -EINVAL;
+
+	if (src->ntc->map_ops->bidir_buf_prepare_to_copy)
+		src->ntc->map_ops->bidir_buf_prepare_to_copy(src, src_offset,
+							len);
+
+	return _ntc_request_memcpy(src->ntc, req,
+				dst->dma_addr, dst->size, dst_offset,
+				src->dma_addr, src->size, src_offset,
+				len, false, NULL, NULL);
 }
 
 /**
@@ -772,12 +881,36 @@ static inline int ntc_req_memcpy(struct ntc_dev *ntc, void *req,
  * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_imm32(struct ntc_dev *ntc, void *req,
-				u64 dst, u32 val, bool fence,
+				dma_addr_t dst, u32 val, bool fence,
 				void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	return ntc->dev_ops->req_imm32(ntc, req,
 				       dst, val, fence,
 				       cb, cb_ctx);
+}
+
+static inline int _ntc_request_imm32(struct ntc_dev *ntc, void *req,
+				dma_addr_t dst_start,
+				u64 dst_size, u64 dst_offset,
+				u32 val, bool fence,
+				void (*cb)(void *cb_ctx), void *cb_ctx)
+{
+	if (!ntc_segment_valid(dst_size, dst_offset, sizeof(u32)))
+		return -EINVAL;
+
+	return ntc_req_imm32(ntc, req, dst_start + dst_offset, val,
+			fence, cb, cb_ctx);
+}
+
+static inline int ntc_request_imm32(void *req,
+				const struct ntc_remote_buf *dst,
+				u64 dst_offset,
+				u32 val, bool fence,
+				void (*cb)(void *cb_ctx), void *cb_ctx)
+{
+	return _ntc_request_imm32(dst->ntc, req,
+				dst->dma_addr, dst->size, dst_offset,
+				val, fence, cb, cb_ctx);
 }
 
 /**
@@ -804,12 +937,36 @@ static inline int ntc_req_imm32(struct ntc_dev *ntc, void *req,
  * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_imm64(struct ntc_dev *ntc, void *req,
-				u64 dst, u64 val, bool fence,
+				dma_addr_t dst, u64 val, bool fence,
 				void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	return ntc->dev_ops->req_imm64(ntc, req,
 				       dst, val, fence,
 				       cb, cb_ctx);
+}
+
+static inline int _ntc_request_imm64(struct ntc_dev *ntc, void *req,
+				dma_addr_t dst_start,
+				u64 dst_size, u64 dst_offset,
+				u64 val, bool fence,
+				void (*cb)(void *cb_ctx), void *cb_ctx)
+{
+	if (!ntc_segment_valid(dst_size, dst_offset, sizeof(u64)))
+		return -EINVAL;
+
+	return ntc_req_imm64(ntc, req, dst_start + dst_offset, val,
+			fence, cb, cb_ctx);
+}
+
+static inline int ntc_request_imm64(void *req,
+				const struct ntc_remote_buf *dst,
+				u64 dst_offset,
+				u64 val, bool fence,
+				void (*cb)(void *cb_ctx), void *cb_ctx)
+{
+	return _ntc_request_imm64(dst->ntc, req,
+				dst->dma_addr, dst->size, dst_offset,
+				val, fence, cb, cb_ctx);
 }
 
 /**
@@ -845,246 +1002,1016 @@ static inline int ntc_req_signal(struct ntc_dev *ntc, void *req,
 					cb, cb_ctx, vec);
 }
 
+static inline void ntc_local_buf_clear(struct ntc_local_buf *buf)
+{
+	if (buf->owned)
+		buf->ptr = NULL;
+	buf->dma_addr = 0;
+}
+
 /**
- * ntc_buf_alloc() - allocate a coherent channel-mapped memory buffer
+ * ntc_local_buf_alloc() - allocate a local memory buffer,
+ *                         capable of DMA to the DMA engine.
+ * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
  * @size:	Size of the buffer to allocate.
- * @addr:	OUT - channel-mapped buffer address.
  * @gfp:	Allocation flags from gfp.h.
  *
- * Allocate a coherent channel-mapped memory buffer, to use as the source of a
- * channel request, or the destination of a channel request by the peer.  The
- * channel-mapped address of the buffer is returned as an output parameter.
- *
- * This allocates a coherent buffer that does not need to be explicitly synced,
- * but there may be additional hardware overhead due to maintenaning cache
- * coherency between all local and remote accesses to the buffer.
- *
- * Return: A pointer to the channel-mapped buffer, or NULL.
+ * Return: zero on success, negative error value on failure.
  */
-static inline void *ntc_buf_alloc(struct ntc_dev *ntc, u64 size,
-				  u64 *addr, gfp_t gfp)
+static inline int ntc_local_buf_alloc(struct ntc_local_buf *buf,
+				struct ntc_dev *ntc, u64 size, gfp_t gfp)
 {
-	return ntc->map_ops->buf_alloc(ntc, size, addr, gfp);
+	int rc;
+
+	buf->ntc = ntc;
+	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
+	buf->size = size;
+	buf->owned = true;
+	buf->mapped = true;
+
+	ntc_local_buf_clear(buf);
+
+	if (!buf->ntc->map_ops->local_buf_alloc)
+		return -ENOENT;
+
+	rc = buf->ntc->map_ops->local_buf_alloc(buf, gfp);
+
+	if (rc < 0) {
+		ntc_local_buf_clear(buf);
+		return rc;
+	}
+
+	if (!buf->ntc->map_ops->local_buf_map)
+		return 0;
+
+	rc = buf->ntc->map_ops->local_buf_map(buf);
+
+	if (rc < 0) {
+		if (buf->ntc->map_ops->local_buf_free)
+			buf->ntc->map_ops->local_buf_free(buf);
+		ntc_local_buf_clear(buf);
+	}
+
+	return rc;
 }
 
 /**
- * ntc_buf_free() - free a coherent channel-mapped memory buffer
+ * ntc_local_buf_zalloc() - allocate a local memory buffer,
+ *                          capable of DMA to the DMA engine,
+ *                          and clear the buffer's contents.
+ * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
  * @size:	Size of the buffer to allocate.
- * @buf:	Pointer to the channel-mapped buffer.
- * @addr:	Channel-mapped buffer address.
+ * @gfp:	Allocation flags from gfp.h.
  *
- * Free a coherent channel-mapped memory buffer, allocated by ntc_buf_alloc().
+ * Return: zero on success, negative error value on failure.
  */
-static inline void ntc_buf_free(struct ntc_dev *ntc, u64 size,
-				void *buf, u64 addr)
+static inline int ntc_local_buf_zalloc(struct ntc_local_buf *buf,
+				struct ntc_dev *ntc, u64 size, gfp_t gfp)
 {
-	ntc->map_ops->buf_free(ntc, size, buf, addr);
+	return ntc_local_buf_alloc(buf, ntc, size, gfp | __GFP_ZERO);
 }
 
 /**
- * ntc_buf_map() - channel-map a kernel allocated memory buffer
+ * ntc_local_buf_map_prealloced() - prepare a local memory buffer to be
+ *                                  capable of DMA to the DMA engine.
+ * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
- * @buf:	Pointer to the kernel memory buffer.
+ * @size:	Size of the buffer.
+ * @ptr:	Pointer to the preallocated buffer.
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_local_buf_map_prealloced(struct ntc_local_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, void *ptr)
+{
+	int rc;
+
+	buf->ntc = ntc;
+	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
+	buf->size = size;
+	buf->owned = false;
+	buf->mapped = true;
+
+	ntc_local_buf_clear(buf);
+
+	buf->ptr = ptr;
+
+	if (!buf->ntc->map_ops->local_buf_map)
+		return 0;
+
+	rc = buf->ntc->map_ops->local_buf_map(buf);
+
+	if (rc < 0)
+		ntc_local_buf_clear(buf);
+
+	return rc;
+}
+
+/**
+ * ntc_local_buf_map_dma() - create local memory buffer by DMA address.
+ *
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer.
+ * @dma_addr:	DMA address of the buffer.
+ */
+static inline void ntc_local_buf_map_dma(struct ntc_local_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, dma_addr_t dma_addr)
+{
+	buf->ntc = ntc;
+	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
+	buf->size = size;
+	buf->owned = false;
+	buf->mapped = false;
+	buf->ptr = NULL;
+	buf->dma_addr = dma_addr;
+}
+
+/**
+ * ntc_local_buf_free() - unmap and, if necessary, free the local buffer.
+ *
+ * @buf:	Local buffer.
+ */
+static inline void ntc_local_buf_free(struct ntc_local_buf *buf)
+{
+	if (buf->mapped && buf->ntc->map_ops->local_buf_unmap)
+		buf->ntc->map_ops->local_buf_unmap(buf);
+
+	if (buf->owned && buf->ntc->map_ops->local_buf_free)
+		buf->ntc->map_ops->local_buf_free(buf);
+
+	ntc_local_buf_clear(buf);
+}
+
+/**
+ * ntc_local_buf_disown() - Mark the buffer memory as not owned
+ *                          by the buffer and return pointer to it.
+ *                          This memory must be kfree()-d.
+ *
+ * @buf:	Local buffer.
+ *
+ * After this, the memory will not be freed by ntc_local_buf_free().
+ *
+ * Return:	Pointer to the buffer's memory.
+ */
+static inline void *ntc_local_buf_disown(struct ntc_local_buf *buf)
+{
+	void *ptr = buf->ptr;
+
+	buf->owned = false;
+	ntc_local_buf_free(buf);
+
+	return ptr;
+}
+
+/**
+ * ntc_local_buf_seq_write() - Write out the buffer's contents.
+ * @s:		The first argument of seq_write().
+ * @buf:	Local buffer.
+ *
+ * Return:	The result of seq_write().
+ */
+static inline int ntc_local_buf_seq_write(struct seq_file *s,
+					struct ntc_local_buf *buf)
+{
+	const void *p;
+
+	p = buf->ptr;
+
+	if (!p)
+		return 0;
+
+	return seq_write(s, p, buf->size);
+}
+
+/**
+ * ntc_local_buf_deref() - Retrieve pointer to the buffer's memory.
+ * @buf:	Local buffer.
+ *
+ * Return:	The pointer to the buffer's memory.
+ */
+static inline void *ntc_local_buf_deref(struct ntc_local_buf *buf)
+{
+	return buf->ptr;
+}
+
+/**
+ * ntc_export_buf_valid() - Check whether the buffer is valid.
+ * @buf:	Export buffer.
+ *
+ * Return:	true iff valid.
+ */
+static inline bool ntc_export_buf_valid(struct ntc_export_buf *buf)
+{
+	return !!buf->chan_addr;
+}
+
+static inline void ntc_export_buf_clear(struct ntc_export_buf *buf)
+{
+	if (buf->gfp)
+		buf->ptr = NULL;
+	buf->chan_addr = 0;
+}
+
+/**
+ * ntc_export_buf_alloc() - allocate a memory buffer in an NTB window,
+ *                          to which the peer can write.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer to allocate.
+ * @gfp:	Allocation flags from gfp.h, or zero.
+ * @buf->ptr:	If gfp is zero, buf->ptr must be preset
+ *		to the pointer to preallocated buffer.
+ *		No memory allocation occurs in this case.
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
+				struct ntc_dev *ntc,
+				u64 size, gfp_t gfp)
+{
+	int rc;
+
+	buf->ntc = ntc;
+	buf->ntb_dev = ntc_map_dev(ntc, NTB_DEV_ACCESS);
+	buf->size = size;
+	buf->gfp = gfp;
+
+	ntc_export_buf_clear(buf);
+
+	if (!buf->ntc->map_ops->export_buf_alloc)
+		return -ENOENT;
+
+	rc = buf->ntc->map_ops->export_buf_alloc(buf);
+
+	if (rc < 0)
+		ntc_export_buf_clear(buf);
+
+	return rc;
+}
+
+/**
+ * ntc_export_buf_zalloc() - allocate a memory buffer in an NTB window,
+ *                           to which the peer can write,
+ *                           and clear the buffer's contents.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer to allocate.
+ * @gfp:	Allocation flags from gfp.h, or zero.
+ * @buf->ptr:	If gfp is zero, buf->ptr must be preset
+ *		to the pointer to preallocated buffer.
+ *		No memory allocation occurs in this case.
+ *
+ * Calls ntc_export_buf_alloc().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_export_buf_zalloc(struct ntc_export_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, gfp_t gfp)
+{
+	gfp_t new_gfp;
+	int rc;
+
+	if (gfp)
+		new_gfp = gfp | __GFP_ZERO;
+	else {
+		new_gfp = 0;
+		if (size && buf->ptr)
+			memset(buf->ptr, 0, size);
+	}
+
+	rc = ntc_export_buf_alloc(buf, ntc, size, new_gfp);
+	buf->gfp = gfp;
+
+	return rc;
+}
+
+/**
+ * ntc_export_buf_alloc_init() - allocate a memory buffer in an NTB window,
+ *                               to which the peer can write,
+ *                               and initialize the buffer's contents.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer to allocate.
+ * @gfp:	Allocation flags from gfp.h, or zero.
+ * @buf->ptr:	If gfp is zero, buf->ptr must be preset
+ *		to the pointer to preallocated buffer.
+ *		No memory allocation occurs in this case.
+ * @init_buf:	Pointer to initialization data.
+ * @init_buf_size: Size of initialization data.
+ * @init_buf_offset: Offset of the initialized data in the buffer.
+ *
+ * Calls ntc_export_buf_alloc().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_export_buf_alloc_init(struct ntc_export_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, gfp_t gfp,
+					void *init_buf, u64 init_buf_size,
+					u64 init_buf_offset)
+{
+	int rc;
+
+
+	if (!ntc_segment_valid(size, init_buf_offset, init_buf_size))
+		return -EINVAL;
+
+	rc = ntc_export_buf_alloc(buf, ntc, size, gfp);
+	if (rc < 0)
+		return rc;
+
+	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
+
+	return rc;
+}
+
+/**
+ * ntc_export_buf_zalloc_init() - allocate a memory buffer in an NTB window,
+ *                                to which the peer can write,
+ *                                initialize the buffer's contents,
+ *                                and clear the rest of the buffer.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer to allocate.
+ * @gfp:	Allocation flags from gfp.h, or zero.
+ * @buf->ptr:	If gfp is zero, buf->ptr must be preset
+ *		to the pointer to preallocated buffer.
+ *		No memory allocation occurs in this case.
+ * @init_buf:	Pointer to initialization data.
+ * @init_buf_size: Size of initialization data.
+ * @init_buf_offset: Offset of the initialized data in the buffer.
+ *
+ * Calls ntc_export_buf_alloc().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, gfp_t gfp,
+					void *init_buf, u64 init_buf_size,
+					u64 init_buf_offset)
+{
+	int rc;
+
+	if (!ntc_segment_valid(size, init_buf_offset, init_buf_size))
+		return -EINVAL;
+
+	rc = ntc_export_buf_zalloc(buf, ntc, size, gfp);
+	if (rc < 0)
+		return rc;
+
+	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
+
+	return rc;
+}
+
+/**
+ * ntc_export_buf_free() - unmap and, if necessary, free the buffer
+ *                         created by ntc_export_buf_alloc().
+ * @buf:	Export buffer.
+ */
+static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
+{
+	if (buf->ptr)
+		buf->ntc->map_ops->export_buf_free(buf);
+
+	ntc_export_buf_clear(buf);
+}
+
+/**
+ * ntc_export_buf_disown() - Mark the buffer memory as not owned
+ *                           by the buffer and return pointer to it.
+ *                           This memory must be kfree()-d.
+ *
+ * @buf:	Export buffer.
+ *
+ * After this, the memory will not be freed by ntc_export_buf_free().
+ *
+ * Return:	Pointer to the buffer's memory.
+ */
+static inline void *ntc_export_buf_disown(struct ntc_export_buf *buf)
+{
+	void *ptr = buf->ptr;
+
+	buf->gfp = 0;
+	ntc_export_buf_free(buf);
+
+	return ptr;
+}
+
+/**
+ * ntc_export_buf_make_desc() - Make serializable description of buffer.
+ *
+ * @desc:	OUTPUT buffer description, which can be sent to peer.
+ * @buf:	Export buffer.
+ */
+static inline void ntc_export_buf_make_desc(struct ntc_remote_buf_desc *desc,
+					struct ntc_export_buf *buf)
+{
+	if (buf->ptr) {
+		desc->chan_addr = buf->chan_addr;
+		desc->size = buf->size;
+	} else
+		memset(desc, 0, sizeof(*desc));
+}
+
+/**
+ * ntc_export_buf_make_partial_desc() - Make description for a part of a buffer.
+ *
+ * @desc:	OUTPUT buffer description, which can be sent to peer.
+ * @buf:	Export buffer.
+ * @offset:	Offset in the buffer.
+ * @len:	Length of the part.
+ */
+static inline int
+ntc_export_buf_make_partial_desc(struct ntc_remote_buf_desc *desc,
+				const struct ntc_export_buf *buf,
+				u64 offset, u64 len)
+{
+	if (!buf->ptr)
+		return -EINVAL;
+
+	if (!ntc_segment_valid(buf->size, offset, len))
+		return -EINVAL;
+
+	desc->chan_addr = buf->chan_addr + offset;
+	desc->size = len;
+
+	return 0;
+}
+
+/**
+ * ntc_export_buf_get_part_params() - Retrieve offset & len for part of buffer.
+ *
+ * @desc:	Partial buffer description.
+ * @buf:	Export buffer.
+ * @offset:	OUTPUT offset in the buffer.
+ * @len:	OUTPUT length of the part.
+ *
+ * Returns 0 on success, negative value on failure.
+ */
+static inline int
+ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
+			const struct ntc_remote_buf_desc *desc,
+			u64 *offset, u64 *len)
+{
+	s64 soffset;
+
+	soffset = desc->chan_addr - buf->chan_addr;
+
+	*offset = soffset;
+	*len = desc->size;
+
+	if (soffset < 0)
+		return -EINVAL;
+
+	if (!ntc_segment_valid(buf->size, soffset, desc->size))
+		return -EINVAL;
+
+	if (!buf->ptr)
+		return -EINVAL;
+
+	return 0;
+}
+
+/**
+ * ntc_export_buf_const_deref() - Retrieve const pointer into buffer's memory.
+ * @buf:	Export buffer.
+ * @offset:	Offset to the segment to be accessed.
+ * @len:	Length of the segment to be accessed.
+ *
+ * Any necessary synchronization will be made before returning the pointer.
+ *
+ * Return:	The const pointer into the buffer's memory at the given offset,
+ *		or NULL on error.
+ */
+static inline const void *ntc_export_buf_const_deref(struct ntc_export_buf *buf,
+						u64 offset, u64 len)
+{
+	if (!ntc_segment_valid(buf->size, offset, len))
+		return NULL;
+	if (unlikely(!buf->ptr))
+		return NULL;
+
+	if (buf->ntc->map_ops->export_buf_const_deref)
+		return buf->ntc->map_ops->export_buf_const_deref(buf, offset,
+								len);
+	else
+		return buf->ptr + offset;
+}
+
+/**
+ * ntc_export_buf_seq_write() - Write out the buffer's contents.
+ * @s:		The first argument of seq_write().
+ * @buf:	Export buffer.
+ *
+ * Return:	The result of seq_write().
+ */
+static inline int ntc_export_buf_seq_write(struct seq_file *s,
+					struct ntc_export_buf *buf)
+{
+	const void *p;
+
+	p = ntc_export_buf_const_deref(buf, 0, buf->size);
+
+	if (!p)
+		return 0;
+
+	return seq_write(s, p, buf->size);
+}
+
+/**
+ * ntc_bidir_buf_valid() - Check whether the buffer is valid.
+ * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ *
+ * Return:	true iff valid.
+ */
+static inline bool ntc_bidir_buf_valid(struct ntc_bidir_buf *buf)
+{
+	return !!buf->chan_addr;
+}
+
+static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
+{
+	if (buf->gfp)
+		buf->ptr = NULL;
+	buf->chan_addr = 0;
+}
+
+/**
+ * ntc_bidir_buf_alloc() - allocate a memory buffer in an NTB window,
+ *                         to which the peer can write,
+ *                         and make it capable of DMA to the DMA engine.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer to allocate.
+ * @gfp:	Allocation flags from gfp.h, or zero.
+ * @buf->ptr:	If gfp is zero, buf->ptr must be preset
+ *		to the pointer to preallocated buffer.
+ *		No memory allocation occurs in this case.
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_bidir_buf_alloc(struct ntc_bidir_buf *buf,
+				struct ntc_dev *ntc,
+				u64 size, gfp_t gfp)
+{
+	int rc;
+
+	buf->ntc = ntc;
+	buf->ntb_dev = ntc_map_dev(ntc, NTB_DEV_ACCESS);
+	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
+	buf->size = size;
+	buf->gfp = gfp;
+
+	ntc_bidir_buf_clear(buf);
+
+	if (!buf->ntc->map_ops->bidir_buf_alloc)
+		return -ENOENT;
+
+	rc = buf->ntc->map_ops->bidir_buf_alloc(buf);
+
+	if (rc < 0)
+		ntc_bidir_buf_clear(buf);
+
+	return rc;
+}
+
+/**
+ * ntc_bidir_buf_zalloc() - allocate a memory buffer in an NTB window,
+ *                          to which the peer can write,
+ *                          clear the buffer's contents,
+ *                          and make it capable of DMA to the DMA engine.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer to allocate.
+ * @gfp:	Allocation flags from gfp.h, or zero.
+ * @buf->ptr:	If gfp is zero, buf->ptr must be preset
+ *		to the pointer to preallocated buffer.
+ *		No memory allocation occurs in this case.
+ *
+ * Calls ntc_bidir_buf_alloc().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_bidir_buf_zalloc(struct ntc_bidir_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, gfp_t gfp)
+{
+	gfp_t new_gfp;
+	int rc;
+
+	if (gfp)
+		new_gfp = gfp | __GFP_ZERO;
+	else {
+		new_gfp = 0;
+		if (size && buf->ptr)
+			memset(buf->ptr, 0, size);
+	}
+
+	rc = ntc_bidir_buf_alloc(buf, ntc, size, new_gfp);
+	buf->gfp = gfp;
+
+	return rc;
+}
+
+/**
+ * ntc_bidir_buf_alloc_init() - allocate a memory buffer in an NTB window,
+ *                              to which the peer can write,
+ *                              initialize the buffer's contents,
+ *                              and make it capable of DMA to the DMA engine.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer to allocate.
+ * @gfp:	Allocation flags from gfp.h, or zero.
+ * @buf->ptr:	If gfp is zero, buf->ptr must be preset
+ *		to the pointer to preallocated buffer.
+ *		No memory allocation occurs in this case.
+ * @init_buf:	Pointer to initialization data.
+ * @init_buf_size: Size of initialization data.
+ * @init_buf_offset: Offset of the initialized data in the buffer.
+ *
+ * Calls ntc_bidir_buf_alloc().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_bidir_buf_alloc_init(struct ntc_bidir_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, gfp_t gfp,
+					void *init_buf, u64 init_buf_size,
+					u64 init_buf_offset)
+{
+	int rc;
+
+	if (!ntc_segment_valid(size, init_buf_offset, init_buf_size))
+		return -EINVAL;
+
+	rc = ntc_bidir_buf_alloc(buf, ntc, size, gfp);
+	if (rc < 0)
+		return rc;
+
+	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
+
+	return rc;
+}
+
+/**
+ * ntc_bidir_buf_zalloc_init() - allocate a memory buffer in an NTB window,
+ *                               to which the peer can write,
+ *                               initialize the buffer's contents,
+ *                               clear the rest of the buffer,
+ *                               and make it capable of DMA to the DMA engine.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer to allocate.
+ * @gfp:	Allocation flags from gfp.h, or zero.
+ * @buf->ptr:	If gfp is zero, buf->ptr must be preset
+ *		to the pointer to preallocated buffer.
+ *		No memory allocation occurs in this case.
+ * @init_buf:	Pointer to initialization data.
+ * @init_buf_size: Size of initialization data.
+ * @init_buf_offset: Offset of the initialized data in the buffer.
+ *
+ * Calls ntc_bidir_buf_alloc().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_bidir_buf_zalloc_init(struct ntc_bidir_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, gfp_t gfp,
+					void *init_buf, u64 init_buf_size,
+					u64 init_buf_offset)
+{
+	int rc;
+
+	if (!ntc_segment_valid(size, init_buf_offset, init_buf_size))
+		return -EINVAL;
+
+	rc = ntc_bidir_buf_zalloc(buf, ntc, size, gfp);
+	if (rc < 0)
+		return rc;
+
+	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
+
+	return rc;
+}
+
+/**
+ * ntc_bidir_buf_make_prealloced() - prepare a memory buffer in an NTB window,
+ *                                   to which the peer can write,
+ *                                 and make it capable of DMA to the DMA engine.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @buf->size:	Preset to size of the buffer.
+ * @buf->ptr:	Preset to the pointer to preallocated buffer.
+ *		No memory allocation occurs.
+ *
+ * Calls ntc_bidir_buf_alloc().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_bidir_buf_make_prealloced(struct ntc_bidir_buf *buf,
+						struct ntc_dev *ntc)
+{
+	return ntc_bidir_buf_alloc(buf, ntc, buf->size, 0);
+}
+
+/**
+ * ntc_bidir_buf_free() - unmap and, if necessary, free the buffer
+ *                        created by ntc_bidir_buf_alloc().
+ * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ */
+static inline void ntc_bidir_buf_free(struct ntc_bidir_buf *buf)
+{
+	if (buf->ptr)
+		buf->ntc->map_ops->bidir_buf_free(buf);
+
+	ntc_bidir_buf_clear(buf);
+}
+
+/**
+ * ntc_bidir_buf_free_sgl() - unmap and, if necessary, free each buffer
+ *                            in the array of buffers
+ *                            created by ntc_bidir_buf_alloc().
+ * @sgl:	Array of buffers created by ntc_bidir_buf_alloc().
+ * @count:	Size of the array.
+ */
+static inline void ntc_bidir_buf_free_sgl(struct ntc_bidir_buf *sgl, int count)
+{
+	int i;
+
+	for (i = 0; i < count; i++)
+		ntc_bidir_buf_free(&sgl[i]);
+}
+
+/**
+ * ntc_bidir_buf_make_prealloced_sgl() - prepare memory buffer in an NTB window,
+ *                                       to which the peer can write,
+ *                                       make it capable of DMA to DMA engine --
+ *                                       for each buffer in the array.
+ * @sgl:	Array of buffers to be created.
+ * @count:	Size of the array.
+ * @ntc:	Device context.
+ * @sgl[i]->size: Preset to size of the buffer.
+ * @sgl[i]->ptr: Preset to the pointer to preallocated buffer.
+ *		 No memory allocation occurs.
+ *
+ * Calls ntc_bidir_buf_make_prealloced().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_bidir_buf_make_prealloced_sgl(struct ntc_bidir_buf *sgl,
+						int count, struct ntc_dev *ntc)
+{
+	int i, rc;
+
+	for (i = 0; i < count; i++) {
+		rc = ntc_bidir_buf_make_prealloced(&sgl[i], ntc);
+		if (rc < 0)
+			goto err;
+	}
+
+	return 0;
+ err:
+	ntc_bidir_buf_free_sgl(sgl, i);
+	return rc;
+}
+
+/**
+ * ntc_bidir_buf_make_desc() - Make serializable description of buffer.
+ *
+ * @desc:	OUTPUT buffer description, which can be sent to peer.
+ * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ */
+static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
+					struct ntc_bidir_buf *buf)
+{
+	if (buf->ptr) {
+		desc->chan_addr = buf->chan_addr;
+		desc->size = buf->size;
+	} else
+		memset(desc, 0, sizeof(*desc));
+}
+
+/**
+ * ntc_bidir_buf_deref() - Retrieve pointer into buffer's memory.
+ * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @offset:	Offset to the segment to be accessed.
+ * @len:	Length of the segment to be accessed.
+ *
+ * Any necessary synchronization will be made before returning the pointer.
+ * After finishing the work with the buffer,
+ * ntc_bidir_buf_unref() must be called.
+ *
+ * Return:	The pointer into the buffer's memory at the given offset,
+ *		or NULL on error.
+ */
+static inline void *ntc_bidir_buf_deref(struct ntc_bidir_buf *buf,
+					u64 offset, u64 len)
+{
+	if (!ntc_segment_valid(buf->size, offset, len))
+		return NULL;
+	if (unlikely(!buf->ptr))
+		return NULL;
+
+	if (buf->ntc->map_ops->bidir_buf_deref)
+		return buf->ntc->map_ops->bidir_buf_deref(buf, offset, len);
+	else
+		return buf->ptr + offset;
+}
+
+/**
+ * ntc_bidir_buf_unref() - Finish working with ntc_bidir_buf_deref() pointer.
+ * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @offset:	Offset to the segment to be accessed.
+ * @len:	Length of the segment to be accessed.
+ *
+ * Any necessary synchronization will be made before returning.
+ */
+static inline void ntc_bidir_buf_unref(struct ntc_bidir_buf *buf,
+				u64 offset, u64 len)
+{
+	if (!ntc_segment_valid(buf->size, offset, len))
+		return;
+	if (unlikely(!buf->ptr))
+		return;
+
+	if (buf->ntc->map_ops->bidir_buf_unref)
+		buf->ntc->map_ops->bidir_buf_unref(buf, offset, len);
+}
+
+/**
+ * ntc_bidir_buf_deref() - Retrieve pointer to buffer's memory.
+ * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ *
+ * Any necessary synchronization will be made before returning the pointer.
+ * After finishing the work with the buffer,
+ * ntc_bidir_buf_unref() must be called.
+ *
+ * Return:	The pointer to the buffer's memory, or NULL on error.
+ */
+static inline void *ntc_bidir_buf_full_deref(struct ntc_bidir_buf *buf)
+{
+	return ntc_bidir_buf_deref(buf, 0, buf->size);
+}
+
+/**
+ * ntc_bidir_buf_const_deref() - Retrieve const pointer into buffer's memory.
+ * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @offset:	Offset to the segment to be accessed.
+ * @len:	Length of the segment to be accessed.
+ *
+ * Any necessary synchronization will be made before returning the pointer.
+ *
+ * Return:	The const pointer into the buffer's memory at the given offset,
+ *		or NULL on error.
+ */
+static inline const void *ntc_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
+						u64 offset, u64 len)
+{
+	if (!ntc_segment_valid(buf->size, offset, len))
+		return NULL;
+	if (unlikely(!buf->ptr))
+		return NULL;
+
+	if (buf->ntc->map_ops->bidir_buf_deref)
+		return buf->ntc->map_ops->bidir_buf_const_deref(buf, offset,
+								len);
+	else
+		return buf->ptr + offset;
+}
+
+/**
+ * ntc_bidir_buf_seq_write() - Write out the buffer's contents.
+ * @s:		The first argument of seq_write().
+ * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ *
+ * Return:	The result of seq_write().
+ */
+static inline int ntc_bidir_buf_seq_write(struct seq_file *s,
+					struct ntc_bidir_buf *buf)
+{
+	const void *p;
+
+	p = ntc_bidir_buf_const_deref(buf, 0, buf->size);
+
+	if (!p)
+		return 0;
+
+	return seq_write(s, p, buf->size);
+}
+
+static inline void ntc_remote_buf_desc_clear(struct ntc_remote_buf_desc *desc)
+{
+	memset(desc, 0, sizeof(*desc));
+}
+
+static inline int
+ntc_remote_buf_desc_clip(struct ntc_remote_buf_desc *desc, u64 offset, u64 len)
+{
+	if (!ntc_segment_valid(desc->size, offset, len))
+		return -EINVAL;
+
+	desc->chan_addr += offset;
+	desc->size = len;
+
+	return 0;
+}
+
+static inline void ntc_remote_buf_clear(struct ntc_remote_buf *buf)
+{
+	buf->ptr = 0;
+	buf->dma_addr = 0;
+}
+
+/**
+ * ntc_remote_buf_map() - map a remote buffer via an NTB window,
+ *                        to write to the peer,
+ *                        and make it capable of DMA from the DMA engine.
+ * @buf:	OUTPUT remote buffer.
+ * @ntc:	Device context.
+ * @desc:	The remote buffer description created by
+ *		ntc_export_buf_make_desc() or ntc_bidir_buf_make_desc().
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_remote_buf_map(struct ntc_remote_buf *buf,
+				struct ntc_dev *ntc,
+				const struct ntc_remote_buf_desc *desc)
+{
+	int rc;
+
+	ntc_remote_buf_clear(buf);
+
+	buf->ntc = ntc;
+	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
+
+	if (!buf->ntc->map_ops->remote_buf_map)
+		return -ENOENT;
+
+	rc = buf->ntc->map_ops->remote_buf_map(buf, desc);
+	if (rc < 0)
+		ntc_remote_buf_clear(buf);
+
+	return rc;
+}
+
+/**
+ * ntc_remote_buf_map_phys() - map a remote buffer via an NTB window,
+ *                        to write to the peer,
+ *                        and make it capable of DMA from the DMA engine.
+ * @buf:	OUTPUT remote buffer.
+ * @ntc:	Device context.
+ * @ptr:	The physical (PCIe) address of the remote buffer in NTB window.
  * @size:	Size of the buffer to map.
- * @dir:	Direction of data movement.
  *
- * Channel-map a kernel allocated memory buffer, to use as the source of a
- * channel request, or the destination of a channel request by the peer.  The
- * direction specifies whether the buffer will be used as a source,
- * destination, or both.
- *
- * Data movement and access must be properly synchronized, to be portable.  See
- * ntc_buf_sync_cpu() and ntc_buf_sync_dev().
- *
- * This function is modelled based on dma_map_single(), however the channel may
- * provide a mapping that is different from dma in its implementation.
- *
- * Return: The channel-mapped buffer address, or Zero.
+ * Return: zero on success, negative error value on failure.
  */
-static inline u64 _ntc_buf_map(struct ntc_dev *ntc, void *buf, u64 size,
-			      enum dma_data_direction dir,
-				  enum ntc_dma_access dma_dev,
-				  const char *func)
+static inline int ntc_remote_buf_map_phys(struct ntc_remote_buf *buf,
+					struct ntc_dev *ntc,
+					phys_addr_t ptr, u64 size)
 {
-	u64 dma_addr;
+	int rc;
 
-	WARN_ON(size == 0);
+	ntc_remote_buf_clear(buf);
 
-	dma_addr = ntc->map_ops->buf_map(ntc, buf, size, dir, dma_dev);
+	buf->ntc = ntc;
+	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
 
-	dev_vdbg(ntc_map_dev(ntc, dma_dev),
-			"DMA DEBUG Mapping buffer %p to dma addr %llx size %llx direction %d, by %s\n",
-			buf, dma_addr, size, dir, func);
+	if (!buf->ntc->map_ops->remote_buf_map_phys)
+		return -ENOENT;
 
-	return dma_addr;
-}
+	rc = buf->ntc->map_ops->remote_buf_map_phys(buf, ptr, size);
+	if (rc < 0)
+		ntc_remote_buf_clear(buf);
 
-#define ntc_buf_map(_ntc, _buf, _size, _dir, _dev) \
-	_ntc_buf_map(_ntc, _buf, _size, _dir, _dev, __func__)
-
-static inline u64 _ntc_resource_map(struct ntc_dev *ntc, u64 phys_addr,
-		u64 size, enum dma_data_direction dir,
-		enum ntc_dma_access dma_dev, const char *func)
-{
-	u64 dma_addr;
-
-	WARN_ON(size == 0);
-
-	dma_addr = ntc->map_ops->res_map(ntc, phys_addr, size,
-					dir, dma_dev);
-	dev_vdbg(ntc_map_dev(ntc, dma_dev),
-			"DMA DEBUG Mapping physical addr %llx to dma addr %llx size %llx direction %d, by %s\n",
-			phys_addr, dma_addr, size, dir, func);
-
-	return dma_addr;
-}
-
-#define ntc_resource_map(_ntc, _phys_addr, _size, _dir, _dma_dev) \
-	_ntc_resource_map(_ntc, _phys_addr, _size, _dir, _dma_dev, __func__)
-/**
- * ntc_buf_unmap() - unmap a channel-mapped kernel memory buffer
- * @ntc:	Device context.
- * @addr:	Channel-mapped address of the buffer.
- * @size:	Size of the mapped buffer.
- * @dir:	Direction of data movement.
- *
- * Unmap a channel-mapped memory buffer, previously mapped by ntc_buf_map().
- *
- * Unmapping the buffer implies a final sync of data into the buffer, for use
- * by the cpu.  When unmapping, the driver need not explicitly call
- * ntc_buf_sync_cpu() to sync the data in the buffer.
- */
-static inline void _ntc_buf_unmap(struct ntc_dev *ntc, u64 addr, u64 size,
-				enum dma_data_direction dir,
-				enum ntc_dma_access dma_dev,
-				const char *func)
-{
-	dev_vdbg(ntc_map_dev(ntc, dma_dev),
-			"DMA DEBUG Unmapping dma addr %llx size %llx direction %d, by %s\n",
-			addr, size, dir, func);
-	ntc->map_ops->buf_unmap(ntc, addr, size, dir, dma_dev);
-}
-
-#define ntc_buf_unmap(_ntc, _addr, _size, _dir, _dma_dev) \
-	_ntc_buf_unmap(_ntc, _addr, _size, _dir, _dma_dev, __func__)
-
-static inline void _ntc_resource_unmap(struct ntc_dev *ntc, u64 dma_addr,
-				u64 size,
-				enum dma_data_direction dir,
-				enum ntc_dma_access dma_dev,
-				const char *func)
-{
-	WARN_ON(size == 0);
-
-	dev_vdbg(ntc_map_dev(ntc, dma_dev),
-			"DMA DEBUG Unmapping dma addr %llx size %llx direction %d, by %s\n",
-			dma_addr, size, dir, func);
-	ntc->map_ops->res_unmap(ntc, dma_addr, size, dir, dma_dev);
-}
-#define ntc_resource_unmap(_ntc, _dma_addr, _size, _dir, _dma_dev) \
-	_ntc_resource_unmap(_ntc, _dma_addr, _size, _dir, _dma_dev, __func__)
-
-/**
- * ntc_buf_sync_cpu() - sync a channel-mapped buffer for cpu access
- * @ntc:	Device context.
- * @addr:	Channel-mapped address of the buffer.
- * @size:	Size of the mapped buffer.
- * @dir:	Direction of data movement.
- *
- * Sync a channel-mapped memory buffer, previously mapped by ntc_buf_map(), for
- * cpu access to the data.  This ensures that any data written by the peer into
- * the buffer, before the sync, is available for the cpu, after the sync.
- */
-static inline void ntc_buf_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
-				    enum dma_data_direction dir,
-					enum ntc_dma_access dma_dev)
-{
-	WARN_ON(size == 0);
-
-	if (ntc->map_ops->buf_sync_cpu)
-		ntc->map_ops->buf_sync_cpu(ntc, addr, size, dir, dma_dev);
+	return rc;
 }
 
 /**
- * ntc_buf_sync_dev() - sync a channel-mapped buffer for device access
- * @ntc:	Device context.
- * @addr:	Channel-mapped address of the buffer.
- * @size:	Size of the mapped buffer.
- * @dir:	Direction of data movement.
- *
- * Sync a channel-mapped memory buffer, previously mapped by ntc_buf_map(), for
- * device access to the data.  This ensures that any data written by the by the
- * cpu into the buffer, before the sync, is available for the channel device,
- * after the sync.
+ * ntc_remote_buf_map_phys() - unmap a remote buffer.
+ * @buf:	remote buffer created by
+ *		ntc_remote_buf_map() or ntc_remote_buf_map_phys().
  */
-static inline void ntc_buf_sync_dev(struct ntc_dev *ntc, u64 addr, u64 size,
-				    enum dma_data_direction dir,
-					enum ntc_dma_access dma_dev)
+static inline void ntc_remote_buf_unmap(struct ntc_remote_buf *buf)
 {
-	WARN_ON(size == 0);
+	if (buf->dma_addr)
+		buf->ntc->map_ops->remote_buf_unmap(buf);
 
-	if (ntc->map_ops->buf_sync_dev)
-		ntc->map_ops->buf_sync_dev(ntc, addr, size, dir, dma_dev);
-}
-
-/**
- * ntc_umem_get() - channel-map a user allocated memory buffer
- * @ntc:	Device context.
- * @uctx:	Infiniband user context.
- * @uaddr:	User allocated memory virtual address.
- * @size:	Size of the user memory buffer.
- * @access:	Infiniband access flags for ib_umem_get().
- * @dmasync:	Infiniband dmasync option for ib_umem_get().
- *
- * Channel-map a user allocated memory buffer, to use as the source of a
- * channel request, or the destination of a channel request by the peer.
- *
- * The access flags specify whether the buffer will be used as a source,
- * destination, or both.  The dmasync option specifies that in-flight dma
- * should be flushed when the memory is written, to prevent the write from
- * modifying the contents of the source buffer in the middle of the dma
- * operation.
- *
- * Data movement and access must be properly synchronized, to be portable.  See
- * ntc_buf_sync_cpu() and ntc_buf_sync_dev().
- *
- * This function is modelled based on ib_umem_get(), however the channel may
- * provide a mapping that is different from ib_umem in its implementation.
- *
- * Return: An object repreenting the memory mapping, or an error pointer.
- *
- * FIXME: Because of uctx, which must really be an ib_ucontext to be passed to
- * ib_umem_get, this can't be used by non-ib drivers.  I wish there was a way
- * to make this more generic, without rewriting ib_umem_get().
- */
-static inline void *ntc_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
-				 unsigned long uaddr, size_t size,
-				 int access, int dmasync)
-{
-	return ntc->map_ops->umem_get(ntc, uctx, uaddr,
-				      size, access, dmasync);
-}
-
-/**
- * ntc_umem_put() - unmap a channel-mapped user memory buffer
- * @ntc:	Device context.
- * @umem:	Object representing the memory mapping.
- *
- * Unmap a channel-mapped user memory buffer, previously mapped by
- * ntc_umem_get().
- */
-static inline void ntc_umem_put(struct ntc_dev *ntc, void *umem)
-{
-	ntc->map_ops->umem_put(ntc, umem);
+	ntc_remote_buf_clear(buf);
 }
 
 /**
  * ntc_umem_sgl() - store discontiguous ranges in a scatter gather list
  * @ntc:	Device context.
- * @umem:	Object representing the memory mapping.
- * @sgl:	Scatter gather list to receive the entries.
+ * @ib_umem:	Object representing the memory mapping.
+ * @sgl:	Scatter gather ntc_bidir_buf list to receive the entries.
  * @count:	Capacity of the scatter gather list.
  *
  * Count the number of discontiguous ranges in the channel mapping, so that a
@@ -1092,28 +2019,22 @@ static inline void ntc_umem_put(struct ntc_dev *ntc, void *umem)
  *
  * Return: The number of entries stored in the list, or an error number.
  */
-static inline int ntc_umem_sgl(struct ntc_dev *ntc, void *umem,
-			       struct ntc_sge *sgl, int count)
-{
-	return ntc->map_ops->umem_sgl(ntc, umem, sgl, count);
-}
+int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
+		struct ntc_bidir_buf *sgl, int count);
 
 /**
  * ntc_umem_count() - count discontiguous ranges in the channel mapping
  * @ntc:	Device context.
- * @umem:	Object representing the memory mapping.
+ * @ib_umem:	Object representing the memory mapping.
  *
  * Count the number of discontiguous ranges in the channel mapping, so that a
  * scatter gather list of the exact length can be allocated.
  *
  * Return: The number of discontiguous ranges, or an error number.
  */
-static inline int ntc_umem_count(struct ntc_dev *ntc, void *umem)
+static inline int ntc_umem_count(struct ntc_dev *ntc, struct ib_umem *ib_umem)
 {
-	if (!ntc->map_ops->umem_count)
-		return ntc_umem_sgl(ntc, umem, NULL, 0);
-
-	return ntc->map_ops->umem_count(ntc, umem);
+	return ntc_umem_sgl(ntc, ib_umem, NULL, 0);
 }
 
 /**

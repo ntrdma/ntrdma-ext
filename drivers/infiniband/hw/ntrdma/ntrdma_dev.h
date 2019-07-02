@@ -112,16 +112,14 @@ struct ntrdma_dev {
 	u32				vbell_start;
 	u32				vbell_next;
 	struct ntrdma_vbell_head	*vbell_vec;
-	u32				*vbell_buf;
-	size_t				vbell_buf_size;
-	u64				vbell_buf_addr;
+	struct ntc_bidir_buf		vbell_buf;
 
 	/* peer virtual doorbells */
 
 #ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 	u32				*vbell_peer_seq;
 #endif
-	u64				peer_vbell_buf_dma_addr;
+	struct ntc_remote_buf		peer_vbell_buf;
 	int				peer_vbell_count;
 
 	/* commands to affect remote resources */
@@ -139,15 +137,10 @@ struct ntrdma_dev {
 	u32				cmd_recv_cons;
 
 	/* command recv ring buffers and producer index */
-	union ntrdma_cmd		*cmd_recv_buf;
-	u32				*cmd_recv_prod_buf;
-	u64				cmd_recv_buf_addr;
-	size_t				cmd_recv_buf_size;
-	union ntrdma_rsp		*cmd_recv_rsp_buf;
-	u64				cmd_recv_rsp_buf_addr;
-	size_t				cmd_recv_rsp_buf_size;
-	u64				peer_cmd_send_rsp_buf_dma_addr;
-	u64				peer_cmd_send_cons_dma_addr;
+	struct ntc_export_buf		cmd_recv_buf;
+	struct ntc_local_buf		cmd_recv_rsp_buf;
+	struct ntc_remote_buf		peer_cmd_send_rsp_buf;
+	u64				peer_send_cons_shift;
 	u32				peer_cmd_send_vbell_idx;
 
 	/* command recv work */
@@ -165,15 +158,10 @@ struct ntrdma_dev {
 	u32				cmd_send_cmpl;
 
 	/* command send ring buffers and consumer index */
-	union ntrdma_cmd		*cmd_send_buf;
-	u64				cmd_send_buf_dma_addr;
-	size_t				cmd_send_buf_size;
-	union ntrdma_rsp		*cmd_send_rsp_buf;
-	u32				*cmd_send_cons_buf;
-	u64				cmd_send_rsp_buf_addr;
-	size_t				cmd_send_rsp_buf_size;
-	u64				peer_cmd_recv_buf_dma_addr;
-	u64				peer_cmd_recv_prod_dma_addr;
+	struct ntc_local_buf		cmd_send_buf;
+	struct ntc_bidir_buf		cmd_send_rsp_buf;
+	struct ntc_remote_buf		peer_cmd_recv_buf;
+	u64				peer_recv_prod_shift;
 	u32				peer_cmd_recv_vbell_idx;
 	int				is_cmd_hello_done;
 	/* hello buffers */
@@ -215,6 +203,9 @@ struct ntrdma_dev {
 	atomic_t mr_num;
 	atomic_t pd_num;
 };
+
+inline u32 ntrdma_dev_cmd_send_cons(struct ntrdma_dev *dev);
+inline u32 ntrdma_dev_cmd_recv_prod(struct ntrdma_dev *dev);
 
 #define ntrdma_ib_dev(__ibdev) \
 	container_of(__ibdev, struct ntrdma_dev, ibdev)

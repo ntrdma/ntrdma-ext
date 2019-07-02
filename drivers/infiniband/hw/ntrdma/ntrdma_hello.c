@@ -57,7 +57,7 @@ struct ntrdma_hello_phase2 {
 	u32				phase_magic;
 
 	/* virtual doorbells */
-	u64				vbell_addr;
+	struct ntc_remote_buf_desc	vbell_ntc_buf_desc;
 	u32				vbell_count;
 	u32				vbell_reserved;
 
@@ -158,7 +158,7 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	out->phase_magic = NTRDMA_V1_P2_MAGIC;
 
 	/* virtual doorbells */
-	out->vbell_addr = dev->vbell_buf_addr;
+	ntc_bidir_buf_make_desc(&out->vbell_ntc_buf_desc, &dev->vbell_buf);
 	out->vbell_count = dev->vbell_count;
 	out->vbell_reserved = 0;
 
@@ -197,11 +197,14 @@ int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 		ntrdma_err(dev, "vbell_count %d\n", in->vbell_count);
 		return -EINVAL;
 	}
+	if (in->vbell_count > in->vbell_ntc_buf_desc.size / sizeof(u32)) {
+		ntrdma_err(dev, "vbell_count %d vbell_ntc_buf_desc.size %lld\n",
+			in->vbell_count, in->vbell_ntc_buf_desc.size);
+		return -EINVAL;
+	}
 
-	rc = ntrdma_dev_vbell_enable(dev,
-				     ntc_peer_addr(dev->ntc,
-						   in->vbell_addr),
-				     in->vbell_count);
+	rc = ntrdma_dev_vbell_enable(dev, &in->vbell_ntc_buf_desc,
+				in->vbell_count);
 	if (rc) {
 		ntrdma_err(dev, "failed to enable vbell rc %d\n", rc);
 		return rc;

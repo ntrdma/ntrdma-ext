@@ -51,7 +51,7 @@ struct ntrdma_mr {
 	/* Ntrdma resource bookkeeping structure */
 	struct ntrdma_res		res;
 
-	void				*umem;
+	struct ib_umem			*ib_umem;
 
 	u32				pd_key;
 	u32				access;
@@ -60,9 +60,7 @@ struct ntrdma_mr {
 	u64				len;
 
 	u32				sg_count;
-	struct ntc_sge	*local_dma;
-	struct ntc_sge	*remote_dma;
-	struct ntc_sge	sg_list[];
+	struct ntc_bidir_buf		sg_list[];
 };
 
 #define ntrdma_mr_dev(__mr) ntrdma_res_dev(&(__mr)->res)
@@ -86,20 +84,14 @@ struct ntrdma_rmr {
 	u64				len;
 
 	u32				sg_count;
-	struct ntc_sge			sg_list[];
+	struct ntc_remote_buf		sg_list[];
 };
 
 #define ntrdma_rmr_dev(__rmr) ntrdma_rres_dev(&(__rmr)->rres)
 #define ntrdma_rres_rmr(__rres) \
 	container_of(__rres, struct ntrdma_rmr, rres)
 
-int ntrdma_mr_init(struct ntrdma_mr *mr,
-		   struct ntrdma_dev *dev,
-		   void *umem,
-		   u32 pd_key, u32 access,
-		   u64 addr, u64 len,
-		   u32 sg_count);
-
+int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev);
 void ntrdma_mr_deinit(struct ntrdma_mr *mr);
 
 static inline int ntrdma_mr_add(struct ntrdma_mr *mr)

@@ -41,9 +41,8 @@
 struct ntrdma_poll {
 	struct list_head		cq_entry;
 
-	struct ntrdma_cqe *(*poll_cqe)(struct ntrdma_poll *poll,
-				       struct ntrdma_cqe *abort_cqe,
-				       u32 pos);
+	const struct ntrdma_cqe *(*poll_cqe)(struct ntrdma_poll *poll,
+					struct ntrdma_cqe *abort_cqe, u32 pos);
 
 	int (*poll_start_and_get)(struct ntrdma_poll *poll,
 				  struct ntrdma_qp **qp,
@@ -112,15 +111,10 @@ struct ntrdma_qp {
 	u32				send_cmpl;
 
 	/* send ring buffers and consumer index */
-	u8				*send_wqe_buf;
-	u64				send_wqe_buf_addr;
-	size_t			send_wqe_buf_size;
-	u8				*send_cqe_buf;
-	u32				*send_cons_buf;
-	u64				send_cqe_buf_addr;
-	size_t			send_cqe_buf_size;
-	u64				peer_send_wqe_buf_dma_addr;
-	u64				peer_send_prod_dma_addr;
+	struct ntc_local_buf		send_wqe_buf;
+	struct ntc_bidir_buf		send_cqe_buf;
+	struct ntc_remote_buf		peer_send_wqe_buf;
+	u64				peer_send_prod_shift;
 	u32				peer_send_vbell_idx;
 
 	/* recv ring indices */
@@ -131,13 +125,11 @@ struct ntrdma_qp {
 	u32				recv_cmpl;
 
 	/* recv ring buffers */
-	u8				*recv_wqe_buf;
-	u64				recv_wqe_buf_addr;
-	size_t			recv_wqe_buf_size;
+	struct ntc_local_buf		recv_wqe_buf;
 	u8				*recv_cqe_buf;
 	size_t			recv_cqe_buf_size;
-	u64				peer_recv_wqe_buf_dma_addr;
-	u64				peer_recv_prod_dma_addr;
+	struct ntc_remote_buf		peer_recv_wqe_buf;
+	u64				peer_recv_prod_shift;
 
 	/* at most one poster, producer, or completer at a time */
 	struct mutex	send_post_lock;
@@ -152,6 +144,8 @@ struct ntrdma_qp {
 
 	struct tasklet_struct		send_work;
 };
+
+inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp);
 
 #define ntrdma_qp_dev(__qp) (ntrdma_res_dev(&(__qp)->res))
 #define ntrdma_res_qp(__res) \
@@ -216,8 +210,7 @@ struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,
 				      u32 pos);
 struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
 					   u32 pos);
-struct ntrdma_cqe *ntrdma_qp_send_cqe(struct ntrdma_qp *qp,
-				      u32 pos);
+const struct ntrdma_cqe *ntrdma_qp_send_cqe(struct ntrdma_qp *qp, u32 pos);
 
 int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp);
 void ntrdma_qp_recv_post_done(struct ntrdma_qp *qp);
@@ -265,15 +258,10 @@ struct ntrdma_rqp {
 	u32				send_cons;
 
 	/* send ring buffers and consumer index */
-	u8				*send_wqe_buf;
-	u32				*send_prod_buf;
-	u64				send_wqe_buf_addr;
-	size_t				send_wqe_buf_size;
-	u8				*send_cqe_buf;
-	u64				send_cqe_buf_addr;
-	size_t				send_cqe_buf_size;
-	u64				peer_send_cqe_buf_dma_addr;
-	u64				peer_send_cons_dma_addr;
+	struct ntc_export_buf		send_wqe_buf;
+	struct ntc_local_buf		send_cqe_buf;
+	struct ntc_remote_buf		peer_send_cqe_buf;
+	u64				peer_send_cons_shift;
 	u32				peer_cmpl_vbell_idx;
 
 	/* recv ring indices */
@@ -281,10 +269,7 @@ struct ntrdma_rqp {
 	u32				recv_cons;
 
 	/* recv ring buffers and producer index */
-	u32				*recv_prod_buf;
-	u8				*recv_wqe_buf;
-	u64				recv_wqe_buf_addr;
-	size_t				recv_wqe_buf_size;
+	struct ntc_export_buf		recv_wqe_buf;
 
 	/* allow one consumer at a time */
 	spinlock_t			send_cons_lock;
@@ -295,6 +280,9 @@ struct ntrdma_rqp {
 	u32				send_vbell_idx;
 	struct tasklet_struct		send_work;
 };
+
+inline u32 ntrdma_rqp_send_prod(struct ntrdma_rqp *rqp);
+inline u32 ntrdma_rqp_recv_prod(struct ntrdma_rqp *rqp);
 
 #define ntrdma_rqp_dev(__rqp) \
 	ntrdma_rres_dev(&(__rqp)->rres)
@@ -310,8 +298,8 @@ struct ntrdma_rqp_init_attr {
 	u32 send_wqe_cap;
 	u32 send_wqe_sg_cap;
 	u32 peer_cmpl_vbell_idx;
-	u64 peer_send_cqe_buf_dma_addr;
-	u64 peer_send_cons_dma_addr;
+	struct ntc_remote_buf peer_send_cqe_buf;
+	u64 peer_send_cons_shift;
 };
 
 int ntrdma_rqp_init(struct ntrdma_rqp *rqp, struct ntrdma_dev *dev,
@@ -343,10 +331,10 @@ static inline void ntrdma_rqp_repo(struct ntrdma_rqp *rqp)
 	//ntrdma_rres_repo(&rqp->rres);
 }
 
-struct ntrdma_recv_wqe *ntrdma_rqp_recv_wqe(struct ntrdma_rqp *rqp,
-					    u32 pos);
-struct ntrdma_send_wqe *ntrdma_rqp_send_wqe(struct ntrdma_rqp *rqp,
-					    u32 pos);
+const struct ntrdma_recv_wqe *ntrdma_rqp_recv_wqe(struct ntrdma_rqp *rqp,
+						u32 pos);
+const struct ntrdma_send_wqe *ntrdma_rqp_send_wqe(struct ntrdma_rqp *rqp,
+						u32 pos);
 struct ntrdma_cqe *ntrdma_rqp_send_cqe(struct ntrdma_rqp *rqp,
 				       u32 pos);
 
