@@ -79,8 +79,6 @@ static void *ntc_virt_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
 			       unsigned long uaddr, size_t size,
 			       int access, int dmasync)
 {
-	access |= IB_ACCESS_SOFTWARE;
-
 	return ib_umem_get(uctx, uaddr, size, access, dmasync);
 }
 
@@ -122,7 +120,7 @@ static int ntc_virt_umem_sgl(struct ntc_dev *ntc, void *umem,
 		}
 
 		if (sgl && virt_count < count) {
-			sgl[virt_count].dma_addr_local = (u64)virt_addr;
+			sgl[virt_count].addr = (u64)virt_addr;
 			sgl[virt_count].len = virt_len;
 		}
 
@@ -132,7 +130,7 @@ static int ntc_virt_umem_sgl(struct ntc_dev *ntc, void *umem,
 	if (virt_count && sgl && count > 0) {
 		/* virt_len is start offset in the first page */
 		virt_len = ib_umem_offset(ibumem);
-		sgl[0].dma_addr_local += virt_len;
+		sgl[0].addr += virt_len;
 		sgl[0].len -= virt_len;
 
 		if (virt_count <= count) {
