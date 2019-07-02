@@ -112,8 +112,7 @@ int ntrdma_cq_cmpl_get(struct ntrdma_cq *cq, struct ntrdma_qp **qp,
 		       u32 *pos, u32 *end, u32 *base);
 void ntrdma_cq_cmpl_put(struct ntrdma_cq *cq,
 			u32 pos, u32 base);
-struct ntrdma_cqe *ntrdma_cq_cmpl_cqe(struct ntrdma_cq *cq,
-				      struct ntrdma_cqe *abort_cqe,
-				      u32 pos);
+const struct ntrdma_cqe *ntrdma_cq_cmpl_cqe(struct ntrdma_cq *cq,
+					struct ntrdma_cqe *abort_cqe, u32 pos);
 
 #endif

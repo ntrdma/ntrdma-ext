@@ -167,8 +167,8 @@ struct ntc_ntb_dev {
 	struct dma_chan			*dma;
 
 	/* local ntb window offset to peer dram */
-	u64				peer_dram_base;
-	size_t				peer_dram_size;
+	phys_addr_t			peer_dram_base;
+	resource_size_t			peer_dram_size;
 	dma_addr_t		peer_dram_base_dma;
 
 	/*Peer mw base for initialization*/
@@ -189,8 +189,10 @@ struct ntc_ntb_dev {
 	u32				latest_version;
 
 	/* direct interrupt message */
-	u64				peer_irq_dma_addr[NTB_MAX_IRQS];
+	struct ntc_remote_buf		peer_irq_base;
+	u64				peer_irq_shift[NTB_MAX_IRQS];
 	u32				peer_irq_data[NTB_MAX_IRQS];
+	bool				use_peer_irq_base;
 	int				peer_irq_num;
 
 	/* link state heartbeat */
@@ -563,24 +565,13 @@ static inline void ntc_ntb_quiesce(struct ntc_ntb_dev *dev)
 
 static inline void reset_peer_irq(struct ntc_ntb_dev *dev)
 {
-	int max_irqs;
-
 	if (use_msi)
 		return;
 
-	if (!dev->peer_irq_dma_addr[0])
-		return;
-
-	max_irqs = ntb_db_vector_count(dev->ntb);
-
-	ntc_resource_unmap(&dev->ntc,
-			dev->peer_irq_dma_addr[0],
-			max_irqs * INTEL_DOORBELL_REG_SIZE,
-			DMA_FROM_DEVICE,
-			IOAT_DEV_ACCESS);
-
-	memset(dev->peer_irq_dma_addr, 0, sizeof(dev->peer_irq_dma_addr));
+	if (dev->use_peer_irq_base)
+		ntc_remote_buf_unmap(&dev->peer_irq_base);
 }
+
 static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 {
 	dev_dbg(&dev->ntc.dev, "link reset\n");
@@ -674,21 +665,21 @@ static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 	u32 msi_irqs_num = dev->info_peer_on_self->msi_irqs_num;
 
 	if (use_msi && msi_irqs_num > 0 && msi_irqs_num < NTB_MAX_IRQS) {
+		dev->use_peer_irq_base = false;
 		for (i = 0; i < msi_irqs_num; i++) {
 			dev->peer_irq_data[i] =
 					dev->info_peer_on_self->msi_data[i];
-			dev->peer_irq_dma_addr[i] =
-					dev->peer_dram_base +
+			dev->peer_irq_shift[i] =
 				(((u64)dev->info_peer_on_self->msi_addr_lower[i]) |
 				 (((u64)dev->info_peer_on_self->msi_addr_upper[i]) << 32));
 		}
 	} else {
-		u64 peer_irq_phys_addr_base;
-		u64 peer_irq_dma_addr_base;
+		phys_addr_t peer_irq_phys_addr_base;
 		u64 peer_db_mask;
 		int max_irqs;
 		u64 db_bits;
 
+		dev->use_peer_irq_base = true;
 		dev->peer_irq_num = 0;
 
 		max_irqs = ntb_db_vector_count(dev->ntb);
@@ -701,25 +692,19 @@ static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 		}
 
 		rc = ntb_peer_db_addr(dev->ntb,
-				(phys_addr_t *)&peer_irq_phys_addr_base,
-				&size);
+				&peer_irq_phys_addr_base, &size);
 		if ((rc < 0) || (size != sizeof(u32)) ||
-				!IS_ALIGNED(peer_irq_phys_addr_base, PCIE_ADDR_ALIGN)) {
+			!IS_ALIGNED(peer_irq_phys_addr_base, PCIE_ADDR_ALIGN)) {
 			dev_err(&dev->ntc.dev, "Peer DB addr invalid\n");
 			goto err_ntb_db;
 		}
 
-		peer_irq_dma_addr_base =
-			ntc_resource_map(&dev->ntc,
-				peer_irq_phys_addr_base,
-				max_irqs * INTEL_DOORBELL_REG_SIZE,
-				DMA_FROM_DEVICE,
-				IOAT_DEV_ACCESS);
-
-		if (unlikely(!peer_irq_dma_addr_base)) {
-			rc = -EIO;
+		rc = ntc_remote_buf_map_phys(&dev->peer_irq_base,
+					&dev->ntc,
+					peer_irq_phys_addr_base,
+					max_irqs * INTEL_DOORBELL_REG_SIZE);
+		if (unlikely(rc < 0))
 			goto err_res_map;
-		}
 
 		db_bits = ntb_db_valid_mask(dev->ntb);
 		for (i = 0; i < max_irqs && db_bits; i++) {
@@ -727,9 +712,7 @@ static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 			 * Sky-lake implementation, see intel_ntb3_peer_db_set() */
 			int bit = __ffs(db_bits);
 
-			dev->peer_irq_dma_addr[i] =
-					peer_irq_dma_addr_base +
-					INTEL_DOORBELL_REG_OFFSET(bit);
+			dev->peer_irq_shift[i] = INTEL_DOORBELL_REG_OFFSET(bit);
 			db_bits &= db_bits - 1;
 			dev->peer_irq_num++;
 			dev->peer_irq_data[i] = 1;
@@ -1028,13 +1011,14 @@ static int ntc_ntb_link_reset_sync(struct ntc_dev *ntc)
 	return 0;
 }
 
-static u64 ntc_ntb_peer_addr(struct ntc_dev *ntc, u64 addr)
+static phys_addr_t ntc_ntb_peer_addr(struct ntc_dev *ntc, u64 addr)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
 	if (addr > dev->peer_dram_size) {
-		dev_err(&dev->ntc.dev, "off 0x%llx is larger than memory size %lu\n",
-				addr, dev->peer_dram_size);
-				return 0;
+		dev_err(&dev->ntc.dev,
+			"off 0x%llx is larger than memory size %llu\n",
+			addr, dev->peer_dram_size);
+		return 0;
 	}
 
 	if (!IS_ALIGNED(addr, PCIE_ADDR_ALIGN)) {
@@ -1106,8 +1090,8 @@ static int ntc_ntb_req_prep_flags(struct ntc_dev *ntc, bool fence)
 }
 
 static int ntc_ntb_req_memcpy(struct ntc_dev *ntc, void *req,
-		u64 dst, u64 src, u64 len, bool fence,
-		void (*cb)(void *cb_ctx), void *cb_ctx)
+			dma_addr_t dst, dma_addr_t src, u64 len, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct dma_chan *chan = req;
 	struct dma_async_tx_descriptor *tx;
@@ -1252,8 +1236,8 @@ err_imm:
 }
 
 static int ntc_ntb_req_imm32(struct ntc_dev *ntc, void *req,
-			     u64 dst, u32 val, bool fence,
-			     void (*cb)(void *cb_ctx), void *cb_ctx)
+			dma_addr_t dst, u32 val, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	dev_vdbg(&ntc->dev, "request imm32 dst %llx val %x\n",
 		 dst, val);
@@ -1264,8 +1248,8 @@ static int ntc_ntb_req_imm32(struct ntc_dev *ntc, void *req,
 }
 
 static int ntc_ntb_req_imm64(struct ntc_dev *ntc, void *req,
-			     u64 dst, u64 val, bool fence,
-			     void (*cb)(void *cb_ctx), void *cb_ctx)
+			dma_addr_t dst, u64 val, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	dev_vdbg(&ntc->dev, "request imm64 dst %llx val %llx\n",
 		 dst, val);
@@ -1282,16 +1266,23 @@ static int ntc_ntb_req_signal(struct ntc_dev *ntc, void *req,
 
 	dev_vdbg(&ntc->dev, "request signal to peer\n");
 
-	BUG_ON(vec > ARRAY_SIZE(dev->peer_irq_dma_addr));
+	if (WARN_ON(vec > ARRAY_SIZE(dev->peer_irq_shift)))
+		return -EFAULT;
 
-	BUG_ON(dev->peer_irq_dma_addr[vec] == (0ULL));
+	if (WARN_ON(dev->peer_irq_num < vec))
+		return -EFAULT;
 
-	BUG_ON(dev->peer_irq_num < vec);
-
-	return ntc_ntb_req_imm32(ntc, req,
-				 dev->peer_irq_dma_addr[vec],
-				 dev->peer_irq_data[vec],
-				 false, cb, cb_ctx);
+	if (dev->use_peer_irq_base)
+		return ntc_request_imm32(req, &dev->peer_irq_base,
+					dev->peer_irq_shift[vec],
+					dev->peer_irq_data[vec],
+					false, cb, cb_ctx);
+	else
+		return ntc_ntb_req_imm32(ntc, req,
+					dev->peer_dram_base +
+					dev->peer_irq_shift[vec],
+					dev->peer_irq_data[vec],
+					false, cb, cb_ctx);
 }
 
 static int ntc_ntb_clear_signal(struct ntc_dev *ntc, int vec)
@@ -1510,7 +1501,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* haven't negotiated the msi pair */
 	dev->peer_irq_num = 0;
-	memset(dev->peer_irq_dma_addr, 0, sizeof(dev->peer_irq_dma_addr));
+	ntc_remote_buf_clear(&dev->peer_irq_base);
 	memset(dev->peer_irq_data, 0, sizeof(dev->peer_irq_data));
 
 	/* init the link state heartbeat */
@@ -1644,9 +1635,11 @@ static int ntc_debugfs_read(struct seq_file *s, void *v)
 		   dev->version);
 	seq_printf(s, "peer_irq_num %d\n",
 			   dev->peer_irq_num);
+	seq_printf(s, "peer_irq_base.dma_addr %#llx\n",
+		dev->peer_irq_base.dma_addr);
 	for (i = 0; i <  dev->peer_irq_num; i++) {
-		seq_printf(s, "peer_irq_addr %#llx\n",
-				dev->peer_irq_dma_addr[i]);
+		seq_printf(s, "peer_irq_shift %#llx\n",
+			dev->peer_irq_shift[i]);
 		seq_printf(s, "peer_irq_data %#x\n",
 				dev->peer_irq_data[i]);
 	}

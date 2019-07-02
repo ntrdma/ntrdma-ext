@@ -87,7 +87,7 @@ struct ntrdma_cmd_mr_create {
 	u64				mr_len;
 	u32				sg_cap;
 	u32				sg_count;
-	struct ntc_sge			sg_list[];
+	struct ntc_remote_buf_desc	sg_desc_list[];
 };
 
 /* Delete memory region command */
@@ -102,7 +102,7 @@ struct ntrdma_cmd_mr_append {
 	u32				mr_key;
 	u32				sg_pos;
 	u32				sg_count;
-	struct ntc_sge			sg_list[];
+	struct ntc_remote_buf_desc	sg_desc_list[];
 };
 
 /* Create, delete or append memory region response */
@@ -123,10 +123,8 @@ struct ntrdma_cmd_qp_create {
 	u32				send_wqe_cap;
 	u32				send_wqe_sg_cap;
 	u32				send_ring_idx;
-	u64				send_cqe_buf_addr;
-	size_t			send_cqe_buf_size;
-	u64				send_cons_addr;
-	size_t			send_cons_size;
+	struct ntc_remote_buf_desc	send_cqe_buf_desc;
+	u64				send_cons_shift;
 	u32				cmpl_vbell_idx;
 };
 
@@ -150,14 +148,10 @@ struct ntrdma_rsp_qp_create {
 	struct ntrdma_rsp_hdr		hdr;
 	u32				qp_key;
 	u32				send_vbell_idx;
-	u64				recv_wqe_buf_addr;
-	size_t			recv_wqe_buf_size;
-	u64				recv_prod_addr;
-	size_t			recv_prod_size;
-	u64				send_wqe_buf_addr;
-	size_t			send_wqe_buf_size;
-	u64				send_prod_addr;
-	size_t			send_prod_size;
+	struct ntc_remote_buf_desc	recv_wqe_buf_desc;
+	u64				recv_prod_shift;
+	struct ntc_remote_buf_desc	send_wqe_buf_desc;
+	u64				send_prod_shift;
 };
 
 /* Delete or modify queue pair response */
@@ -192,11 +186,11 @@ union ntrdma_rsp {
 
 #define NTRDMA_CMD_MR_CREATE_SG_CAP \
 	((sizeof(union ntrdma_cmd) - sizeof(struct ntrdma_cmd_mr_create)) \
-	 / sizeof(struct ntc_sge))
+	 / sizeof(struct ntc_remote_buf_desc))
 
 #define NTRDMA_CMD_MR_APPEND_SG_CAP \
 	((sizeof(union ntrdma_cmd) - sizeof(struct ntrdma_cmd_mr_append)) \
-	 / sizeof(struct ntc_sge))
+	 / sizeof(struct ntc_remote_buf_desc))
 
 struct ntrdma_cmd_cb {
 	/* entry in the device cmd pending or posted list */
@@ -209,7 +203,7 @@ struct ntrdma_cmd_cb {
 
 	/* complete and free the command following a response */
 	int (*rsp_cmpl)(struct ntrdma_cmd_cb *cb,
-			union ntrdma_rsp *rsp,
+			const union ntrdma_rsp *rsp,
 			struct ntrdma_req *req);
 };
 

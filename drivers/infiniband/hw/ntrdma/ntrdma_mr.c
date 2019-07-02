@@ -53,62 +53,52 @@ static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
 static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 				 union ntrdma_cmd *cmd, struct ntrdma_req *req);
 static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_rsp *rsp, struct ntrdma_req *req);
+				const union ntrdma_rsp *rsp,
+				struct ntrdma_req *req);
 static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 				  union ntrdma_cmd *cmd, struct ntrdma_req *req);
 static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_rsp *rsp, struct ntrdma_req *req);
+				const union ntrdma_rsp *rsp,
+				struct ntrdma_req *req);
 
 static int ntrdma_mr_enable(struct ntrdma_res *res);
 static int ntrdma_mr_disable(struct ntrdma_res *res);
 
 static void ntrdma_rmr_free(struct ntrdma_rres *rres);
 
-int ntrdma_mr_init(struct ntrdma_mr *mr,
-		   struct ntrdma_dev *dev,
-		   void *umem,
-		   u32 pd_key, u32 access,
-		   u64 addr, u64 len,
-		   u32 sg_count)
+int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 {
 	int rc;
 
-	mr->umem = umem;
-
-	mr->pd_key = pd_key;
-	mr->access = access;
-
-	mr->addr = addr;
-	mr->len = len;
-
-	mr->local_dma = mr->sg_list;
-	mr->remote_dma = mr->sg_list + sg_count;
-
-	mr->sg_count = ntc_umem_sgl(dev->ntc, umem, mr->sg_list, sg_count);
-	if (mr->sg_count != sg_count) {
-		rc = -ENOMEM;
-		goto err;
+	rc = ntc_umem_sgl(dev->ntc, mr->ib_umem,
+			mr->sg_list, mr->sg_count);
+	if (rc != mr->sg_count) {
+		rc = -EFAULT;
+		goto err_umem_sgl;
 	}
 
-	if (sg_count)
-		WARN((mr->sg_list[0].addr ^ addr) & (PAGE_SIZE - 1),
-				"Invalid sg list addr %llx while user addr %llx",
-				mr->sg_list[0].addr, addr);
+	rc = ntc_bidir_buf_make_prealloced_sgl(mr->sg_list,
+					mr->sg_count, dev->ntc);
+	if (rc < 0)
+		goto err_umem_sgl;
 
 	rc = ntrdma_res_init(&mr->res, dev, &dev->mr_vec,
 			ntrdma_mr_enable, ntrdma_mr_disable, NULL, -1);
 	if (rc)
-		goto err;
+		goto err_res_init;
 
 	return 0;
 
-err:
+ err_res_init:
+	ntc_bidir_buf_free_sgl(mr->sg_list, mr->sg_count);
+ err_umem_sgl:
 	return rc;
 }
 
 void ntrdma_mr_deinit(struct ntrdma_mr *mr)
 {
 	ntrdma_res_deinit(&mr->res);
+	ntc_bidir_buf_free_sgl(mr->sg_list, mr->sg_count);
 }
 
 static int ntrdma_mr_enable(struct ntrdma_res *res)
@@ -176,6 +166,7 @@ static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
+	int i;
 
 	cmd->mr_append.hdr.op = NTRDMA_CMD_MR_APPEND;
 	cmd->mr_append.mr_key = mr->res.key;
@@ -183,8 +174,9 @@ static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
 	cmd->mr_append.sg_pos = mrcb->sg_pos;
 	cmd->mr_append.sg_count = mrcb->sg_count;
 
-	memcpy(cmd->mr_append.sg_list, &mr->remote_dma[mrcb->sg_pos],
-	       mrcb->sg_count * sizeof(*mr->sg_list));
+	for (i = 0; i < mrcb->sg_count; ++i)
+		ntc_bidir_buf_make_desc(&cmd->mr_append.sg_desc_list[i],
+					&mr->sg_list[mrcb->sg_pos + i]);
 
 	return 0;
 }
@@ -194,6 +186,7 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
+	int i;
 
 	TRACE("mr_enable prep: %d\n", mr->res.key);
 
@@ -207,14 +200,16 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 	cmd->mr_create.sg_cap = mr->sg_count;
 	cmd->mr_create.sg_count = mrcb->sg_count;
 
-	memcpy(cmd->mr_create.sg_list, mr->remote_dma,
-	       mrcb->sg_count * sizeof(*mr->sg_list));
+	for (i = 0; i < mrcb->sg_count; ++i)
+		ntc_bidir_buf_make_desc(&cmd->mr_create.sg_desc_list[i],
+					&mr->sg_list[i]);
 
 	return 0;
 }
 
 static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_rsp *rsp, struct ntrdma_req *req)
+				const union ntrdma_rsp *rsp,
+				struct ntrdma_req *req)
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
@@ -282,7 +277,8 @@ static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 }
 
 static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_rsp *rsp, struct ntrdma_req *req)
+				const union ntrdma_rsp *rsp,
+				struct ntrdma_req *req)
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
@@ -317,7 +313,8 @@ int ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 
 	rmr->sg_count = sg_count;
 
-	memset(rmr->sg_list, 0, sg_count * sizeof(*rmr->sg_list));
+	memset(rmr->sg_list, 0,
+		sg_count * sizeof(*rmr->sg_list));
 
 	return ntrdma_rres_init(&rmr->rres, dev, &dev->rmr_vec,
 				ntrdma_rmr_free, key);

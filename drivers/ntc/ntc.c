@@ -35,6 +35,8 @@
 #include <linux/module.h>
 
 #include <linux/ntc.h>
+#include <linux/scatterlist.h>
+#include <rdma/ib_umem.h>
 
 #define DRIVER_NAME			"ntc"
 #define DRIVER_DESCRIPTION		"NTC Driver Framework"
@@ -50,6 +52,71 @@ MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESCRIPTION);
 
 static struct bus_type ntc_bus;
+
+int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
+		struct ntc_bidir_buf *sgl, int count)
+{
+	struct scatterlist *sg, *next;
+	void *ptr;
+	dma_addr_t dma_addr;
+	size_t dma_len, offset, total_len;
+	int i, dma_count;
+
+	offset = ib_umem_offset(ib_umem);
+	total_len = 0;
+	dma_count = 0;
+	for_each_sg(ib_umem->sg_head.sgl, sg, ib_umem->sg_head.nents, i) {
+		/* ptr is start addr of the contiguous range */
+		ptr = page_address(sg_page(sg));
+		/* dma_addr is start DMA addr of the contiguous range */
+		dma_addr = sg_dma_address(sg);
+		/* dma_len accumulates the length of the contiguous range */
+		dma_len = sg_dma_len(sg);
+
+		for (; i + 1 < ib_umem->sg_head.nents; ++i) {
+			next = sg_next(sg);
+			if (!next)
+				break;
+			if (sg_dma_address(next) != dma_addr + dma_len)
+				break;
+			if (page_address(sg_page(next)) != ptr + dma_len)
+				break;
+			dma_len += sg_dma_len(next);
+			sg = next;
+		}
+
+		if (dma_len <= offset) {
+			offset -= dma_len;
+			continue;
+		}
+
+		if (offset) {
+			dma_addr += offset;
+			dma_len -= offset;
+			offset = 0;
+		}
+
+		total_len += dma_len;
+		if (total_len > ib_umem->length) {
+			dma_len -= total_len - ib_umem->length;
+			total_len = ib_umem->length;
+		}
+
+		if (sgl && dma_count < count) {
+			sgl[dma_count].size = dma_len;
+			sgl[dma_count].ptr = ptr;
+		}
+
+		ptr += dma_len;
+		++dma_count;
+
+		if (total_len == ib_umem->length)
+			break;
+	}
+
+	return dma_count;
+}
+EXPORT_SYMBOL(ntc_umem_sgl);
 
 int __ntc_register_driver(struct ntc_driver *driver, struct module *mod,
 			  const char *mod_name)
@@ -82,8 +149,6 @@ int ntc_register_device(struct ntc_dev *ntc)
 	if (!ntc_dev_ops_is_valid(ntc->dev_ops))
 		goto err;
 	if (!ntc->map_ops)
-		goto err;
-	if (!ntc_map_ops_is_valid(ntc->map_ops))
 		goto err;
 
 	pr_devel("register device %s\n", dev_name(&ntc->dev));

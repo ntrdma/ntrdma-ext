@@ -85,8 +85,11 @@ struct ntc_tcp_dev {
 struct ntc_tcp_op {
 	struct list_head		entry;
 	bool				imm;
-	u64				dst;
-	u64				src;
+	dma_addr_t			dst;
+	union {
+		dma_addr_t		src;
+		u64			val;
+	};
 	u64				len;
 	void				(*cb)(void *cb_ctx);
 	void				*cb_ctx;
@@ -336,7 +339,7 @@ static int ntc_tcp_send_msg(struct ntc_tcp_dev *dev,
 		return 0;
 
 	if (op->imm)
-		src = &op->src;
+		src = &op->val;
 	else
 		src = (void *)(unsigned long)op->src;
 
@@ -733,8 +736,8 @@ static int ntc_tcp_req_submit(struct ntc_dev *ntc, void *req)
 }
 
 static int ntc_tcp_req_memcpy(struct ntc_dev *ntc, void *req,
-			      u64 dst, u64 src, u64 len, bool fence,
-			      void (*cb)(void *cb_ctx), void *cb_ctx)
+			dma_addr_t dst, dma_addr_t src, u64 len, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct list_head *op_list = req;
 	struct ntc_tcp_op *op;
@@ -759,8 +762,8 @@ static int ntc_tcp_req_memcpy(struct ntc_dev *ntc, void *req,
 }
 
 static int ntc_tcp_req_imm32(struct ntc_dev *ntc, void *req,
-			     u64 dst, u32 val, bool fence,
-			     void (*cb)(void *cb_ctx), void *cb_ctx)
+			dma_addr_t dst, u32 val, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct list_head *op_list = req;
 	struct ntc_tcp_op *op;
@@ -771,7 +774,7 @@ static int ntc_tcp_req_imm32(struct ntc_dev *ntc, void *req,
 
 	op->imm = true;
 	op->dst = dst;
-	op->src = val;
+	op->val = val;
 	op->len = sizeof(val);
 	op->cb = cb;
 	op->cb_ctx = cb_ctx;
@@ -782,8 +785,8 @@ static int ntc_tcp_req_imm32(struct ntc_dev *ntc, void *req,
 }
 
 static int ntc_tcp_req_imm64(struct ntc_dev *ntc, void *req,
-			     u64 dst, u64 val, bool fence,
-			     void (*cb)(void *cb_ctx), void *cb_ctx)
+			dma_addr_t dst, u64 val, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct list_head *op_list = req;
 	struct ntc_tcp_op *op;
@@ -794,7 +797,7 @@ static int ntc_tcp_req_imm64(struct ntc_dev *ntc, void *req,
 
 	op->imm = true;
 	op->dst = dst;
-	op->src = val;
+	op->val = val;
 	op->len = sizeof(val);
 	op->cb = cb;
 	op->cb_ctx = cb_ctx;

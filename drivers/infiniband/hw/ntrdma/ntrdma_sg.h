@@ -33,77 +33,38 @@
 #ifndef NTRDMA_SG_H
 #define NTRDMA_SG_H
 
+#include <linux/ntc.h>
 #include <linux/err.h>
 #include <linux/types.h>
 
-struct ntrdma_wr_sge {
-	u64				addr;
-	u32				len;
+struct ntrdma_wr_snd_sge {
 	u32				key;
+	union {
+		/* key != NTRDMA_RESERVED_DMA_LEKY */
+		struct {
+			u64		addr;
+			u32		len;
+		};
+		/* key == NTRDMA_RESERVED_DMA_LEKY */
+		struct ntc_local_buf	snd_dma_buf;
+	};
 };
 
-static inline int ntrdma_wr_sg_list_find(struct ntrdma_wr_sge *sg_list,
-					 u32 sg_count,
-					 u64 sg_off,
-					 u32 *sg_pos,
-					 u64 *sg_rem)
-{
-	u32 i = 0;
-
-	for (i = 0; ; ++i) {
-		if (i >= sg_count)
-			return -EINVAL;
-
-		if (sg_off < sg_list[i].len)
-			break;
-
-		sg_off -= sg_list[i].len;
-	}
-
-	*sg_pos = i;
-	*sg_rem = sg_off;
-
-	return 0;
-}
-
-static inline int ntrdma_wr_sg_list_len(struct ntrdma_wr_sge *sg_list,
-					u32 sg_count,
-					u32 *len)
-{
-	u32 i, cur, acc = 0;
-
-	for (i = 0; i < sg_count; ++i) {
-		cur = acc + sg_list[i].len;
-		if (cur < acc)
-			return -EINVAL;
-		acc = cur;
-	}
-
-	*len = acc;
-
-	return 0;
-}
-
-static inline int ntrdma_wr_sg_list_trunc(struct ntrdma_wr_sge *sg_list,
-					  u32 sg_count,
-					  u32 len)
-{
-	u32 i, cur, acc = 0;
-
-	for (i = 0; acc < len && i < sg_count; ++i) {
-		cur = acc + sg_list[i].len;
-		if (cur < acc)
-			return -EINVAL;
-		acc = cur;
-	}
-
-	if (acc < len)
-		return -EINVAL;
-
-	if (acc > len)
-		sg_list[i - 1].len -= acc - len;
-
-	return i;
-}
+struct ntrdma_wr_rcv_sge {
+	u32				key;
+	union {
+		/* key != NTRDMA_RESERVED_DMA_LEKY */
+		struct {
+			u64		addr;
+			u32		len;
+		};
+		/* key == NTRDMA_RESERVED_DMA_LEKY */
+		struct {
+			struct ntc_local_buf	rcv_dma_buf;
+			struct ntc_export_buf	exp_buf;
+			struct ntc_remote_buf_desc desc;
+		};
+	};
+};
 
 #endif
