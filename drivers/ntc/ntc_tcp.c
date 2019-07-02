@@ -360,7 +360,7 @@ static int ntc_tcp_recv_msg(struct ntc_tcp_dev *dev)
 		return -EIO;
 
 	if (!msg.len) {
-		ntc_ctx_signal(&dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
+		ntc_ctx_signal(&dev->ntc, NTB_DEFAULT_VEC(&dev->ntc));
 		return 0;
 	}
 

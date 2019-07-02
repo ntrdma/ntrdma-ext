@@ -1922,8 +1922,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	if (rc) {
 		ntrdma_err(dev,
-				"ntc_req_imm32 %#lx -> %#llx failed rc = %d\n",
-				qp->send_prod, qp->peer_send_prod_dma_addr, rc);
+			"ntc_req_imm32 %#lx -> %#llx failed rc = %d\n",
+			(long)qp->send_prod, qp->peer_send_prod_dma_addr, rc);
 
 		abort = true;
 		move_to_err_state(qp);
@@ -2244,7 +2244,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	if (rc) {
 		ntrdma_err(dev,
 			"ntc_req_imm32 %#lx -> %#llx failed rc = %d qp key %d\n",
-			rqp->send_cons, rqp->peer_send_cons_dma_addr,
+			(long)rqp->send_cons, rqp->peer_send_cons_dma_addr,
 			rc, rqp->qp_key);
 		goto err_memcpy;
 	}
