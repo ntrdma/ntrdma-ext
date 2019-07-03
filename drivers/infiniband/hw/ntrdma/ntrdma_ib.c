@@ -919,6 +919,13 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 		goto unlock_exit;
 	}
 
+	if ((ibqp->qp_type != IB_QPT_GSI) && !ntc_is_link_up(dev->ntc) &&
+			(new_state > NTRDMA_QPS_INIT)) {
+		ntrdma_err(dev, "device is not ready\n");
+		rc = -EAGAIN;
+		goto unlock_exit;
+	}
+
 	if (ibqp_mask & IB_QP_STATE) {
 		ntrdma_vdbg(dev, "qp %p state %d -> %d\n",
 				qp, qp->state,

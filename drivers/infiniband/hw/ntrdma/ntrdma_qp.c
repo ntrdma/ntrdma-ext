@@ -192,6 +192,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->recv_abort = false;
 	qp->send_error = false;
 	qp->send_abort = false;
+	qp->send_aborting = false;
 	qp->access = 0;
 
 	qp->rqp_key = -1;
@@ -768,9 +769,10 @@ err:
 
 static void ntrdma_qp_reset(struct ntrdma_res *res)
 {
-	struct ntrdma_qp *qp = ntrdma_res_qp(res);
+	struct ntrdma_qp *qp;
 
-	return ; /*FIXME: implement full QP error flow*/
+	qp = ntrdma_res_qp(res);
+	TRACE("qp reset %p (res key: %d)\n", qp, qp->res.key);
 	spin_lock_bh(&qp->recv_prod_lock);
 	{
 		qp->recv_error = true;
@@ -787,6 +789,8 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 		qp->peer_send_vbell_idx = 0;
 	}
 	spin_unlock_bh(&qp->send_prod_lock);
+
+	qp->send_aborting = true;
 }
 
 static void ntrdma_rqp_free(struct ntrdma_rres *rres)
@@ -1026,6 +1030,7 @@ static void ntrdma_send_fail(struct ntrdma_cqe *cqe,
 	cqe->op_status = op_status;
 	cqe->rdma_len = 0;
 	cqe->imm_data = 0;
+	cqe->flags = wqe->flags;
 }
 
 static void ntrdma_send_done(struct ntrdma_cqe *cqe,
@@ -1317,6 +1322,19 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 
 	ntrdma_ring_consume(send_cons, qp->send_cmpl, qp->send_cap,
 			    pos, end, base);
+	if (qp->send_aborting && (*pos == *end) && !qp->send_abort) {
+		qp->send_abort = true;
+		TRACE(
+				"qp %p (res key %d): move from aborting to abort, pos = end = %d, cons %d, post %d\n",
+				qp, qp->res.key, *pos, send_cons,
+				qp->send_post);
+	}
+	if (qp->send_aborting && (*pos != *end))
+		TRACE(
+				"qp %p (res key: %d): send_bort %d, post %d, cons %d, cmpl %d, cap %d, pos %d, end %d, base %d\n",
+			qp, qp->res.key, qp->send_abort, qp->send_post,
+			*qp->send_cons_buf, qp->send_cmpl, qp->send_cap, *pos,
+			*end, *base);
 }
 
 static void ntrdma_qp_send_cmpl_put(struct ntrdma_qp *qp,
@@ -1636,17 +1654,12 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				rc, qp->rqp_key);
 		goto err_rqp;
 	}
-	/* FIXME: need to complete the send with error */
-	/* TODO: Which send?, Need to close the connection and destroy qp and rqp!
-	 * there is no rpq if key is larger than rqp size (fatal error)*/
 
 
 	/* connected rqp must be ready to receive */
 	rc = ntrdma_rqp_recv_cons_start(rqp);
 	if (rc) {
-		/* TODO: If EINVAL (not ready or recv error) need to destroy connection */
-		ntrdma_err(dev, "ntrdma_rqp_recv_cons_start failed %d\n",
-				rc);
+		ntrdma_err(dev, "ntrdma_rqp_recv_cons_start failed %d\n", rc);
 		goto err_recv;
 	}
 
@@ -1757,12 +1770,14 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 			break;
 		}
 	}
-	/* TODO: if ended by break do we want to continue from here? */
 	ntrdma_rqp_recv_cons_put(rqp, recv_pos, recv_base);
 	ntrdma_rqp_recv_cons_done(rqp);
 	ntrdma_rqp_put(rqp);
 
 	ntrdma_qp_send_prod_put(qp, pos, base);
+
+	if (qp->send_error || rqp->recv_error)
+		goto err_memcpy;
 
 	if (unlikely(pos == start)) {
 		goto done;
@@ -1781,7 +1796,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	src = qp->send_wqe_buf_addr + off;
 	dst = qp->peer_send_wqe_buf_dma_addr + off;
 
-	/* TODO: return value is ignored! */
 	rc = ntc_req_memcpy(dev->ntc, req,
 			dst, src, len,
 			true, NULL, NULL);
@@ -1793,19 +1807,26 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 		qp->send_error = true;
 		rqp->recv_error = true;
-
 		goto err_memcpy;
 	}
 
 	this_cpu_add(dev_cnt.qp_send_work_bytes, len);
 
-	/* send the prod idx */
-	/* TODO: return value is ignored! */
-	ntc_req_imm32(dev->ntc, req,
-			qp->peer_send_prod_dma_addr,
-			qp->send_prod,
-			true, NULL, NULL);
+		/* send the prod idx */
+	rc = ntc_req_imm32(dev->ntc, req,
+		      qp->peer_send_prod_dma_addr,
+		      qp->send_prod,
+		      true, NULL, NULL);
 
+	if (rc) {
+		ntrdma_err(dev,
+				"ntc_req_imm32 %#lx -> %#llx failed rc = %d\n",
+				qp->send_prod, qp->peer_send_prod_dma_addr, rc);
+
+		qp->send_error = true;
+		rqp->recv_error = true;
+		goto err_memcpy;
+	}
 	/* update the vbell and signal the peer */
 	/* TODO: return value is ignored! */
 	ntrdma_dev_vbell_peer(dev, req,
@@ -1826,14 +1847,19 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* release lock for state change or producing later sends */
 done:
+	ntrdma_qp_send_prod_done(qp);
+	return;
 err_memcpy:
 	ntrdma_qp_send_prod_done(qp);
+	ntrdma_err(dev, "err_memcpy - rc = %d on qp %p", rc, qp);
+	ntrdma_unrecoverable_err(dev);
 	return;
 
 err_recv:
 	ntrdma_rqp_put(rqp);
 err_rqp:
 	ntrdma_qp_send_prod_done(qp);
+	ntrdma_err(dev, "err_rqp - rc = %d on qp %p", rc, qp);
 }
 
 static inline void ntrdma_rqp_send_vbell_clear(struct ntrdma_dev *dev,
@@ -2073,6 +2099,15 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	ntrdma_rqp_send_cons_put(rqp, pos, base);
 
+	if (qp->send_error || rqp->recv_error ||
+			rqp->send_error || qp->recv_error) {
+		ntrdma_err(dev,
+				"error: qp->send %d, rqp->recv %d, rqp->send %d, qp->recv %d\n",
+				qp->send_error, rqp->recv_error,
+				rqp->send_error, qp->recv_error);
+		goto err_memcpy;
+	}
+
 	/* sync the ring buffer for the device */
 	ntc_buf_sync_dev(dev->ntc,
 			 rqp->send_cqe_buf_addr,
@@ -2095,16 +2130,23 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d qp key %d\n",
 				src, dst, len, rc, rqp->qp_key);
 
-		goto err_qp;
+		goto err_memcpy;
 	}
 
 	this_cpu_add(dev_cnt.tx_cqes, pos - start);
 	/* send the cons idx */
-	/* TODO: return code? */
-	ntc_req_imm32(dev->ntc, req,
-			rqp->peer_send_cons_dma_addr,
-			rqp->send_cons,
-			true, NULL, NULL);
+	rc = ntc_req_imm32(dev->ntc, req,
+		      rqp->peer_send_cons_dma_addr,
+		      rqp->send_cons,
+		      true, NULL, NULL);
+
+	if (rc) {
+		ntrdma_err(dev,
+			"ntc_req_imm32 %#lx -> %#llx failed rc = %d qp key %d\n",
+			rqp->send_cons, rqp->peer_send_cons_dma_addr,
+			rc, rqp->qp_key);
+		goto err_memcpy;
+	}
 
 	if (do_signal) {
 		/* update the vbell and signal the peer */
@@ -2134,6 +2176,12 @@ err_qp:
 	ntrdma_rqp_send_cons_done(rqp);
 	ntrdma_err(dev, "%s Failed qp key %d\n",
 			__func__, rqp->qp_key);
+	return;
+err_memcpy:
+	ntrdma_rqp_send_cons_done(rqp);
+	ntrdma_err(dev, "%s Failed qp key %d\n",
+			__func__, rqp->qp_key);
+	ntrdma_unrecoverable_err(dev);
 }
 
 static void ntrdma_qp_work_cb(unsigned long ptrhld)

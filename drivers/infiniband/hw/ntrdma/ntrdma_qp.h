@@ -94,7 +94,16 @@ struct ntrdma_qp {
 	int			recv_error;
 	int			recv_abort;
 	int			send_error;
-	int			send_abort;
+	int			send_abort;    /* wrap up mode, set error
+						* completion for all wqe that
+						* did not get completion yet
+						*/
+	int			send_aborting; /* Entering to wrap up mode,
+						* make sure all wqe that have
+						* pending completion will
+						* process it, before the
+						* send_abort set
+						*/
 
 	/* key of connected remote queue pair, or -1 if not connected */
 	u32			rqp_key;
