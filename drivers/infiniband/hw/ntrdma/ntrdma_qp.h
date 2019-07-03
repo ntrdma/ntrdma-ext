@@ -217,6 +217,8 @@ static inline void ntrdma_qp_repo(struct ntrdma_qp *qp)
 	//ntrdma_res_repo(&qp->res);
 }
 
+void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp);
+
 struct ntrdma_recv_wqe *ntrdma_qp_recv_wqe(struct ntrdma_qp *qp,
 					   u32 pos);
 struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,

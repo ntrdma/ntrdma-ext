@@ -1254,6 +1254,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 				     struct ntrdma_rsp_qp_status *rsp)
 {
 	struct ntrdma_rqp *rqp;
+	struct ntrdma_qp *qp;
 	int rc;
 
 	ntrdma_vdbg(dev, "called\n");
@@ -1267,6 +1268,11 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 		rc = -EINVAL;
 		goto err_rqp;
 	}
+	qp = ntrdma_dev_qp_look(dev, rqp->qp_key);
+	TRACE("stall qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
+	ntrdma_qp_send_stall(qp, rqp);
+	if (qp)
+		ntrdma_qp_put(qp);
 
 	ntc_resource_unmap(dev->ntc,
 			rqp->peer_send_cqe_buf_dma_addr,
@@ -1300,6 +1306,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 				     struct ntrdma_rsp_qp_status *rsp)
 {
 	struct ntrdma_rqp *rqp;
+	struct ntrdma_qp *qp;
 	int rc;
 
 	ntrdma_vdbg(dev, "enter state %d qp key %d\n",
@@ -1327,7 +1334,6 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 		rc = -EINVAL;
 		goto err_rqp;
 	}
-
 	rqp->state = cmd->state;
 	rqp->recv_error = false;
 	rqp->send_error = false;
@@ -1339,6 +1345,22 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	tasklet_schedule(&rqp->send_work);
 	ntrdma_rqp_put(rqp);
 
+	if (cmd->state == NTRDMA_QPS_ERROR) {
+		qp = ntrdma_dev_qp_look(dev, cmd->dest_qp_key);
+		TRACE("qp %p (%d) state changed to %d\n",
+				qp, cmd->dest_qp_key, cmd->state);
+		if (!qp) {
+			ntrdma_info(dev,
+					"ntrdma_dev_qp_look failed key %d (rqp key %d)\n",
+					cmd->dest_qp_key, cmd->qp_key);
+			rc = 0;
+			goto err_qp;
+		}
+		qp->state = cmd->state;
+		ntrdma_qp_put(qp);
+	}
+
+err_qp:
 	rsp->hdr.status = 0;
 	return 0;
 
