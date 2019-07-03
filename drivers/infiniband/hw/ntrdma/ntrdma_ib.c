@@ -890,8 +890,9 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	new_state = ibqp_mask & IB_QP_STATE ?
 			ibqp_attr->qp_state : cur_state;
 
-	ntrdma_dbg(dev, "QP type %d state %d -> %d\n",
-			ibqp->qp_type, cur_state, new_state);
+	ntrdma_info(dev, "QP type %d state %d -> %d (ibqp_mask 0x%x)\n",
+			ibqp->qp_type, cur_state, ntrdma_ib_state(new_state),
+			ibqp_mask);
 
 	if (cur_state != qp->state) {
 		ntrdma_err(dev,
@@ -920,7 +921,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	}
 
 	if ((ibqp->qp_type != IB_QPT_GSI) && !ntc_is_link_up(dev->ntc) &&
-			(new_state > NTRDMA_QPS_INIT)) {
+			(ntrdma_ib_state(new_state) > NTRDMA_QPS_INIT)) {
 		ntrdma_err(dev, "device is not ready\n");
 		rc = -EAGAIN;
 		goto unlock_exit;
@@ -932,6 +933,16 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 				ntrdma_ib_state(new_state));
 
 		qp->state = ntrdma_ib_state(new_state);
+		if ((qp->state >= NTRDMA_QPS_RESET) &&
+				((qp->send_aborting != false) ||
+						(qp->send_abort != false))) {
+			ntrdma_err(dev,
+					"Qp %p (res key %d) abort %d, aborting %d\n",
+					qp, qp->res.key,
+					qp->send_abort, qp->send_aborting);
+			qp->send_aborting = false;
+			qp->send_abort = false;
+		}
 	}
 
 	if (ibqp_mask & IB_QP_ACCESS_FLAGS)
@@ -977,13 +988,18 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	struct ntrdma_dev *dev = NULL;
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 
+	TRACE("qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
 	if (!qp) {
-		ntrdma_err(dev, "trying to destroy a NULL ptr qp\n");
+		pr_err("Invalid qp for ibqp %p\n", ibqp);
 		return -EFAULT;
 	}
 
 	dev = ntrdma_qp_dev(qp);
-	/* TODO: what should be done about oustanding work requests? */
+	if (!dev) {
+		pr_err("Invalid dev for qp %p\n", qp);
+		return -EFAULT;
+	}
+	/* TODO: what should be done about outstanding work requests? */
 
 	ntrdma_qp_del(qp);
 	ntrdma_qp_repo(qp);
@@ -1344,6 +1360,8 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
 	void *umem;
 
+	TRACE("dev %p, ibmr %p, mr %p (res key %d)\n",
+			dev, ibmr, mr, mr->res.key);
 	umem = mr->umem;
 
 	ntrdma_mr_del(mr);

@@ -150,6 +150,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp);
 static void ntrdma_qp_work_cb(unsigned long ptrhld);
 static void ntrdma_rqp_work_cb(unsigned long ptrhld);
 static void ntrdma_rqp_vbell_cb(void *ctx);
+static void ntrdma_send_fail(struct ntrdma_cqe *cqe,
+			     struct ntrdma_send_wqe *wqe, int op_status);
 
 static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 		struct ntrdma_dev *dev,
@@ -692,16 +694,17 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	struct ntrdma_qp *qp = ntrdma_res_qp(res);
+	struct ntrdma_rqp *rqp = NULL;
 	struct ntrdma_qp_cmd_cb *qpcb;
 	int rc;
 
-	spin_lock_bh(&qp->recv_prod_lock);
-	qp->recv_error = true;
-	spin_unlock_bh(&qp->recv_prod_lock);
-
-	spin_lock_bh(&qp->send_prod_lock);
-	qp->send_error = true;
-	spin_unlock_bh(&qp->send_prod_lock);
+	if (qp && dev)
+		rqp = ntrdma_dev_rqp_look(dev, qp->rqp_key);
+	TRACE("qp %p rqp %p - key %d", qp, rqp, qp ? qp->res.key : rqp ?
+			rqp->rres.key : -1);
+	ntrdma_qp_send_stall(qp, rqp);
+	if (rqp)
+		ntrdma_rqp_put(rqp);
 
 	ntrdma_res_start_cmds(&qp->res);
 
@@ -711,7 +714,7 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 		rc = -ENOMEM;
 		goto err;
 	}
-
+	WARN(qp->ibqp.qp_type == IB_QPT_GSI, "try to delete qp type IB_QPT_GSI");
 	qpcb->cb.cmd_prep = ntrdma_qp_disable_prep;
 	qpcb->cb.rsp_cmpl = ntrdma_qp_disable_cmpl;
 	qpcb->qp = qp;
@@ -1346,12 +1349,10 @@ static void ntrdma_qp_send_cmpl_put(struct ntrdma_qp *qp,
 static int ntrdma_rqp_recv_cons_start(struct ntrdma_rqp *rqp)
 {
 	spin_lock_bh(&rqp->recv_cons_lock);
-
 	if (rqp->state < NTRDMA_QPS_RECV_READY) {
 		spin_unlock_bh(&rqp->recv_cons_lock);
 		return -EINVAL;
 	}
-
 	if (rqp->recv_error) {
 		spin_unlock_bh(&rqp->recv_cons_lock);
 		return -EINVAL;
@@ -1388,7 +1389,6 @@ static int ntrdma_rqp_send_cons_start(struct ntrdma_rqp *rqp)
 		spin_unlock_bh(&rqp->send_cons_lock);
 		return -EAGAIN;
 	}
-
 	if (rqp->send_error) {
 		spin_unlock_bh(&rqp->send_cons_lock);
 		return -EINVAL;
@@ -1624,13 +1624,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* verify the qp state and lock for producing sends */
 	rc = ntrdma_qp_send_prod_start(qp);
 	if (rc) {
-		/* TODO: rc can be EAGAIN if state is not ready or rc can be
-		 * EINVAL in case send_status is error, Check if need to re-arm
-		 * the tasklet in case of EAGAIN since nothing is done in this
-		 * case and no return value is returned (it does not arm on the
-		 * state change)*/
-		ntrdma_err(dev,
-				"ntrdma_qp_send_prod_start failed rc = %d qp %d(%p)\n",
+		ntrdma_err(dev, "ntrdma_qp_send_prod_start failed rc = %d qp %d(%p)\n",
 				rc,qp->res.key, qp);
 		return;
 	}
@@ -1720,9 +1714,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		}
 
 		if (wqe->op_status) {
-		/* TODO: in this case who is responsible to change status / re-try / reset ???:
-		 * lines 1668, 1686 is set above but no action made,
-		 * line 1735 below same, more in the rqp send work */
 			ntrdma_err(dev, "op status %d qp %d\n",
 					wqe->op_status,
 					qp->res.key);
@@ -1902,12 +1893,12 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					"ntrdma_rqp_send_cons_start failed rc = %d qp_key %d(%p)\n",
 					rc, rqp->qp_key, rqp);
 		} else {
-			/* TODO: Check if need to re-arm the tasklet since nothing
-			 * is done in this case and no return value is returned
-			 * (it is change to this state only in the init (probe))*/
 			TRACE("ntrdma_rqp_send_cons_start failed qp_key %d(%p)\n",
 					rqp->qp_key, rqp);
 		}
+		ntrdma_err(dev,
+			"ntrdma_rqp_send_cons_start failed - rc = %d on rqp %p",
+			rc, rqp);
 		return;
 	}
 
@@ -2030,10 +2021,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 			qp->send_error = true;
 			rqp->recv_error = true;
-
 			ntrdma_err(dev, "Error wqe op status %d  pos %u QP %d\n",
 					wqe->op_status, pos, qp->res.key);
-
 			break;
 		}
 
@@ -2226,4 +2215,30 @@ struct ntrdma_rqp *ntrdma_dev_rqp_look(struct ntrdma_dev *dev, int key)
 
 	return ntrdma_rres_rqp(rres);
 }
+
+void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
+{
+	int rc;
+
+	if (!qp && !rqp)
+		return;
+	if (qp) {
+		TRACE("qp %p (res key %d)\n", qp, qp->res.key);
+		rc = ntrdma_qp_send_prod_start(qp);
+		if (!rc) {
+			qp->state = NTRDMA_QPS_ERROR;
+			qp->send_aborting = true;
+			ntrdma_qp_send_prod_done(qp);
+		}
+	}
+	if (!rqp)
+		return;
+	TRACE("rqp %p (rres key %d)\n", rqp, rqp->rres.key);
+
+	/* Just to sync */
+	rc = ntrdma_rqp_send_cons_start(rqp);
+	if (!rc)
+		ntrdma_rqp_send_cons_done(rqp);
+}
+
 
