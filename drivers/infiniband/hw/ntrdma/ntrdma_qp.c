@@ -501,6 +501,13 @@ static int ntrdma_qp_enable(struct ntrdma_res *res)
 	struct ntrdma_qp_cmd_cb *qpcb;
 	int rc;
 
+	if (qp->ibqp.qp_type == IB_QPT_GSI) {
+		qp->recv_prod = qp->recv_cmpl;
+		TRACE("Enabling GSI QP post %u prod %u cons %u cmpl %u\n",
+				qp->recv_post, qp->recv_prod,
+				qp->recv_cons, qp->recv_cmpl);
+	}
+
 	ntrdma_res_start_cmds(&qp->res);
 
 	qpcb = kmalloc_node(sizeof(*qpcb),
