@@ -50,7 +50,7 @@
 #include "ntrdma_eth.h"
 
 #define NTRDMA_PKEY_DEFAULT 0xffff
-#define NTRDMA_GIB_TBL_LEN 8
+#define NTRDMA_GIB_TBL_LEN 1
 #define NTRDMA_PKEY_TBL_LEN 2
 
 #define DELL_VENDOR_ID 0x1028
@@ -255,7 +255,7 @@ static int ntrdma_query_port(struct ib_device *ibdev,
 	ibattr->active_mtu = IB_MTU_256;
 
 	/* ntrdma define */
-	ibattr->gid_tbl_len = NTRDMA_GIB_TBL_LEN; // 1;
+	ibattr->gid_tbl_len = NTRDMA_GIB_TBL_LEN;
 
 	/* ntrdma define */
 	ibattr->pkey_tbl_len = NTRDMA_PKEY_TBL_LEN;
