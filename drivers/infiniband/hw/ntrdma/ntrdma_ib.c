@@ -450,7 +450,6 @@ static int ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 	ibwc->sl = 0;
 	ibwc->dlid_path_bits = 0;
 	ibwc->port_num = 0;
-
 	return 0;
 }
 
@@ -477,12 +476,22 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 			/* current entry in the ring, or aborted into abort_cqe */
 			cqe = ntrdma_cq_cmpl_cqe(cq, &abort_cqe, pos);
 
-			if (!ntrdma_wr_code_push_data(cqe->op_code) || 
+			/*complition should be generated for post send with IB_SEND_SIGNALED flag*/
+			if (!ntrdma_wr_code_push_data(cqe->op_code) ||
 					(cqe->flags & IB_SEND_SIGNALED)) {
 				/* transform the entry into the work completion */
 				rc = ntrdma_ib_wc_from_cqe(&ibwc[count], qp, cqe);
 				if (rc)
 					break;
+
+				TRACE("OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u\n",
+						ibwc[count].opcode,
+						cqe->op_code,
+						ibwc[count].wr_id,
+						qp->res.key,
+						ibwc[count].status,
+						pos,
+						end);
 
 				++count;
 			}
@@ -1084,10 +1093,10 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			/* transform work request into the entry */
 			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr, qp);
 
-			TRACE("OPCODE %d: dev %p, flags %x, addr %llx, rc = %d QP %d num sges %d pos %d\n"
-					, ibwr->opcode, dev, ibwr->send_flags,
+			TRACE("OPCODE %d: flags %x, addr %llx, rc = %d QP %d num sges %d pos %d wr_id %llu\n",
+					ibwr->opcode, ibwr->send_flags,
 					wqe->rdma_addr, rc, qp->res.key,
-					ibwr->num_sge, pos);
+					ibwr->num_sge, pos, ibwr->wr_id);
 
 			if (rc)
 				break;
@@ -1171,8 +1180,9 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 			/* transform work request to queue entry */
 			rc = ntrdma_ib_recv_to_wqe(wqe, ibwr,
 						   qp->recv_wqe_sg_cap);
-			TRACE("OPCODE %d: wrid %llu, rc = %d\n"
-					, wqe->op_code, ibwr->wr_id, rc);
+			TRACE("OPCODE %d: wrid %llu QP %d, rc = %d\n",
+					wqe->op_code, ibwr->wr_id,
+					qp->res.key, rc);
 			if (rc)
 				break;
 
@@ -1360,6 +1370,21 @@ int ntrdma_del_gid(struct ib_device *device, u8 port_num,
 	return 0;
 }
 
+int ntrdma_process_mad(struct ib_device *device,
+		int process_mad_flags,
+		u8 port_num,
+		const struct ib_wc *in_wc,
+		const struct ib_grh *in_grh,
+		const struct ib_mad_hdr *in_mad,
+		size_t in_mad_size,
+		struct ib_mad_hdr *out_mad,
+		size_t *out_mad_size,
+		u16 *out_mad_pkey_index)
+{
+	TRACE("RDMA CM MAD received: class %d\n", in_mad->mgmt_class);
+
+	return IB_MAD_RESULT_SUCCESS;
+}
 int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 {
 	struct ib_device *ibdev = &dev->ibdev;
@@ -1443,6 +1468,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	ibdev->get_link_layer	= ntrdma_get_link_layer;
 	ibdev->add_gid			= ntrdma_add_gid;
 	ibdev->del_gid			= ntrdma_del_gid;
+	ibdev->process_mad		= ntrdma_process_mad;
 
 	rc = ib_register_device(ibdev, NULL);
 	if (rc)

@@ -39,6 +39,7 @@
 #include <linux/dma-direction.h>
 #include <linux/rwlock.h>
 
+#include "linux/ntc_trace.h"
 #define NTB_MAX_IRQS (64)
 
 struct ntc_driver;
@@ -564,6 +565,8 @@ static inline int ntc_query_version(struct ntc_dev *ntc)
 static inline int _ntc_link_disable(struct ntc_dev *ntc, const char *f)
 {
 	pr_info("NTC link disable by upper layer (%s)\n",
+			f);
+	TRACE("NTC link disable by upper layer (%s)\n",
 			f);
 
 	return ntc->dev_ops->link_disable(ntc);
