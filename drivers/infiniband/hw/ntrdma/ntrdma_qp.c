@@ -1853,6 +1853,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	size_t off, len;
 	bool cue_recv = false;
 	int rc;
+	bool do_signal = false;
 
 	/* verify the rqp state and lock for consuming sends */
 	rc = ntrdma_rqp_send_cons_start(rqp);
@@ -1915,6 +1916,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	for (pos = start;;) {
 		cqe = ntrdma_rqp_send_cqe(rqp, pos);
 		wqe = ntrdma_rqp_send_wqe(rqp, pos++);
+
+		if (wqe->flags & IB_SEND_SIGNALED)
+			do_signal = true;
 
 		if (ntrdma_wr_code_is_send(wqe->op_code)) {
 			if (ntrdma_wr_status_no_recv(wqe->op_status)) {
@@ -2088,10 +2092,10 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		      rqp->send_cons,
 		      true, NULL, NULL);
 
-	if (cqe->flags & IB_SEND_SIGNALED) {
+	if (do_signal) {
 		/* update the vbell and signal the peer */
 		ntrdma_dev_vbell_peer(dev, req,
-					  rqp->peer_cmpl_vbell_idx);
+				rqp->peer_cmpl_vbell_idx);
 		ntc_req_signal(dev->ntc, req, NULL, NULL,
 			       NTB_DEFAULT_VEC(dev->ntc));
 	}
