@@ -47,6 +47,8 @@
 
 #include <linux/ntc_trace.h>
 
+DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
+
 #define NTRDMA_QP_BATCH_SIZE 0x10
 
 struct ntrdma_qp_cmd_cb {
@@ -200,14 +202,12 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->recv_wqe_size = ntrdma_recv_wqe_size(qp->recv_wqe_sg_cap);
 
 	/* set up the send work ring */
-
 	qp->send_cap = attr->send_wqe_cap;
 	qp->send_post = 0;
 	qp->send_prod = 0;
 	qp->send_cmpl = 0;
 
 	/* set up the send work queue buffer */
-
 	qp->send_wqe_buf_size = qp->send_cap * qp->send_wqe_size;
 
 	qp->send_wqe_buf = kzalloc_node(qp->send_wqe_buf_size,
@@ -230,7 +230,6 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	}
 
 	/* set up the send completion queue buffer */
-
 	qp->send_cqe_buf_size = qp->send_cap * sizeof(struct ntrdma_cqe)
 		+ sizeof(*qp->send_cons_buf); /* space at end for cons buf */
 
@@ -257,13 +256,11 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	}
 
 	/* peer rqp send queue is zero until enabled */
-
 	qp->peer_send_wqe_buf_dma_addr = 0;
 	qp->peer_send_prod_dma_addr = 0;
 	qp->peer_send_vbell_idx = 0;
 
 	/* set up the recv work ring */
-
 	qp->recv_cap = attr->recv_wqe_cap;
 	qp->recv_post = 0;
 	qp->recv_prod = 0;
@@ -271,7 +268,6 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->recv_cmpl = 0;
 
 	/* set up the recv work queue buffer */
-
 	qp->recv_wqe_buf_size = qp->recv_cap * qp->recv_wqe_size;
 
 	qp->recv_wqe_buf = kzalloc_node(qp->recv_wqe_buf_size,
@@ -292,7 +288,6 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	}
 
 	/* set up the recv completion queue buffer */
-
 	qp->recv_cqe_buf_size = qp->recv_cap * sizeof(struct ntrdma_cqe);
 
 	qp->recv_cqe_buf = kzalloc_node(qp->recv_cqe_buf_size,
@@ -303,12 +298,10 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	}
 
 	/* peer rqp recv queue is zero until enabled */
-
 	qp->peer_recv_wqe_buf_dma_addr = 0;
 	qp->peer_recv_prod_dma_addr = 0;
 
 	/* initialize synchronization */
-
 	mutex_init(&qp->send_post_lock);
 	spin_lock_init(&qp->send_prod_lock);
 	mutex_init(&qp->send_cmpl_lock);
@@ -318,7 +311,6 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	mutex_init(&qp->recv_cmpl_lock);
 
 	/* add qp to completion queues for polling */
-
 	/* TODO: add these during qp modify */
 	ntrdma_cq_add_poll(qp->recv_cq, &qp->recv_poll);
 	ntrdma_cq_add_poll(qp->send_cq, &qp->send_poll);
@@ -1788,6 +1780,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	len = (pos - start) * qp->send_wqe_size;
 	src = qp->send_wqe_buf_addr + off;
 	dst = qp->peer_send_wqe_buf_dma_addr + off;
+
 	/* TODO: return value is ignored! */
 	rc = ntc_req_memcpy(dev->ntc, req,
 			dst, src, len,
@@ -1803,6 +1796,9 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 		goto err_memcpy;
 	}
+
+	this_cpu_add(dev_cnt.qp_send_work_bytes, len);
+
 	/* send the prod idx */
 	/* TODO: return value is ignored! */
 	ntc_req_imm32(dev->ntc, req,
@@ -2102,6 +2098,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		goto err_qp;
 	}
 
+	this_cpu_add(dev_cnt.tx_cqes, pos - start);
 	/* send the cons idx */
 	/* TODO: return code? */
 	ntc_req_imm32(dev->ntc, req,

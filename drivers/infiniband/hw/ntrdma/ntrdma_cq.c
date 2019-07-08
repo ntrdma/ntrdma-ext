@@ -37,6 +37,8 @@
 static void ntrdma_cq_cue_work(unsigned long ptrhld);
 static void ntrdma_cq_vbell_cb(void *ctx);
 
+DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
+
 int ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev, int vbell_idx)
 {
 	int rc;
@@ -129,6 +131,8 @@ void ntrdma_cq_cue(struct ntrdma_cq *cq)
 			cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
 	}
 	spin_unlock_bh(&cq->arm_lock);
+	this_cpu_add(dev_cnt.cqes_armed, cq->arm);
+	this_cpu_inc(dev_cnt.cqes_notified);
 }
 
 void ntrdma_cq_add_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll)

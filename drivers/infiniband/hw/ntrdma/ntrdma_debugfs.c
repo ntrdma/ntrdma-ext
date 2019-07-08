@@ -31,6 +31,7 @@
  */
 
 #include <linux/debugfs.h>
+#include <linux/cpumask.h>
 
 #include "ntrdma_dev.h"
 #include "ntrdma_eth.h"
@@ -42,7 +43,7 @@
 #define NTRDMA_DEBUGFS_NAME_MAX 0x10
 
 static const struct file_operations ntrdma_debugfs_dev_info_ops;
-static const struct file_operations ntrdma_debugfs_dev_info_ops;
+static const struct file_operations ntrdma_debugfs_dev_perf_ops;
 static const struct file_operations ntrdma_debugfs_dev_cmd_send_ops;
 static const struct file_operations ntrdma_debugfs_dev_cmd_send_rsp_ops;
 static const struct file_operations ntrdma_debugfs_dev_cmd_recv_ops;
@@ -65,7 +66,7 @@ static const struct file_operations ntrdma_debugfs_dev_vbell_peer_ops;
 #endif
 
 static struct dentry *debug;
-
+DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 static inline void ntrdma_debugfs_print_mr_sg_list(struct seq_file *s,
 						   const char *pre, struct ntc_sge *sg_list, u32 sg_count)
 {
@@ -139,17 +140,19 @@ void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)
 	if (!dev->debug)
 		return;
 
-	debugfs_create_file("info", S_IRUSR, dev->debug,
+	debugfs_create_file("info", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_info_ops);
-	debugfs_create_file("cmd_send_buf", S_IRUSR, dev->debug,
+	debugfs_create_file("perf", 0400, dev->debug,
+			    dev, &ntrdma_debugfs_dev_perf_ops);
+	debugfs_create_file("cmd_send_buf", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_cmd_send_ops);
-	debugfs_create_file("cmd_send_rsp_buf", S_IRUSR, dev->debug,
+	debugfs_create_file("cmd_send_rsp_buf", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_cmd_send_rsp_ops);
-	debugfs_create_file("cmd_recv_buf", S_IRUSR, dev->debug,
+	debugfs_create_file("cmd_recv_buf", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_cmd_recv_ops);
-	debugfs_create_file("cmd_recv_rsp_buf", S_IRUSR, dev->debug,
+	debugfs_create_file("cmd_recv_rsp_buf", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_cmd_recv_rsp_ops);
-	debugfs_create_file("vbell_buf", S_IRUSR, dev->debug,
+	debugfs_create_file("vbell_buf", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_vbell_ops);
 #ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 	debugfs_create_file("vbell_peer_seq", S_IRUSR, dev->debug,
@@ -410,13 +413,60 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	return 0;
 }
 
+
+static int ntrdma_debugfs_dev_perf_show(struct seq_file *s, void *v)
+{
+	int i;
+
+	int num_cpus = num_online_cpus();
+
+	for (i = 0; i < num_cpus; i++) {
+		seq_printf(s, "*** CPU #%d ***\n", i);
+		seq_printf(s, "post_send_bytes %llu\n",
+				per_cpu(dev_cnt.post_send_bytes, i));
+		seq_printf(s, "post_send_wqes %llu\n",
+				per_cpu(dev_cnt.post_send_wqes, i));
+		seq_printf(s, "post_send_wqes_signalled %llu\n",
+				per_cpu(dev_cnt.post_send_wqes_signalled, i));
+		seq_printf(s, "qp_send_work_bytes %llu\n",
+				per_cpu(dev_cnt.qp_send_work_bytes, i));
+		seq_printf(s, "tx_cqes %llu\n",
+				per_cpu(dev_cnt.tx_cqes, i));
+		seq_printf(s, "cqes_notified %llu\n",
+				per_cpu(dev_cnt.cqes_notified, i));
+		seq_printf(s, "cqes_polled %llu\n",
+				per_cpu(dev_cnt.cqes_polled, i));
+		seq_printf(s, "cqes_armed %llu\n",
+				per_cpu(dev_cnt.cqes_armed, i));
+		seq_puts(s, "***********\n");
+	}
+
+	return 0;
+}
+
 static int ntrdma_debugfs_dev_info_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, ntrdma_debugfs_dev_info_show, inode->i_private);
+	return single_open(file, ntrdma_debugfs_dev_info_show,
+			inode->i_private);
 }
+
+static int ntrdma_debugfs_dev_perf_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ntrdma_debugfs_dev_perf_show,
+			inode->i_private);
+}
+
 
 static const struct file_operations ntrdma_debugfs_dev_info_ops = {
 	.open = ntrdma_debugfs_dev_info_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+
+static const struct file_operations ntrdma_debugfs_dev_perf_ops = {
+	.open = ntrdma_debugfs_dev_perf_open,
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = single_release,

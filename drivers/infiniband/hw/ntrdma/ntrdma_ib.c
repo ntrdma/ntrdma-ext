@@ -56,6 +56,8 @@
 #define DELL_VENDOR_ID 0x1028
 #define NOT_SUPPORTED 0
 
+DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
+
 struct net_device *ntrdma_get_netdev(struct ib_device *ibdev,
 						 u8 port_num)
 {
@@ -510,8 +512,10 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	/* release lock for later completions */
 	ntrdma_cq_cmpl_done(cq);
 
-	if (count)
+	if (count) {
+		this_cpu_add(dev_cnt.cqes_polled, count);
 		return count;
+	}
 	if (rc == -EAGAIN)
 		return 0;
 	return rc;
@@ -1050,7 +1054,13 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		wqe->sg_list[i].addr = ibwr->sg_list[i].addr;
 		wqe->sg_list[i].len = ibwr->sg_list[i].length;
 		wqe->sg_list[i].key = ibwr->sg_list[i].lkey;
+		this_cpu_add(dev_cnt.post_send_bytes, wqe->sg_list[i].len);
 	}
+
+	if (wqe->flags & IB_SEND_SIGNALED)
+		this_cpu_add(dev_cnt.post_send_wqes_signalled, wqe->sg_count);
+
+	this_cpu_add(dev_cnt.post_send_wqes, wqe->sg_count);
 
 	return 0;
 }

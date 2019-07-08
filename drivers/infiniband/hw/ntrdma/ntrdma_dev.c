@@ -30,6 +30,7 @@
  * SOFTWARE.
  */
 
+#include <linux/cpumask.h>
 #include "ntrdma_cmd.h"
 #include "ntrdma_vbell.h"
 
@@ -45,6 +46,10 @@
 
 #define NTRDMA_DEV_ETH_VBELL_IDX 2
 #define NTRDMA_DEV_ETH_RX_CAP 0x100
+
+
+DEFINE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
+EXPORT_PER_CPU_SYMBOL(dev_cnt);
 
 static int ntrdma_ntc_hello(void *ctx, int phase,
 				void *in_buf, size_t in_size,
@@ -102,7 +107,8 @@ static struct ntc_ctx_ops ntrdma_ntc_ctx_ops = {
 int ntrdma_dev_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 {
 	int rc;
-
+	int i = 0;
+	int num_cpus;
 	dev->ntc = ntc;
 
 	rc = ntrdma_dev_vbell_init(dev,
@@ -139,6 +145,13 @@ int ntrdma_dev_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 	rc = ntrdma_dev_hello_init(dev, ntc);
 	if (rc)
 		goto err_hello;
+
+	/* counters */
+	num_cpus = num_online_cpus();
+
+	for (i = 0; i < num_cpus; i++)
+		memset(per_cpu_ptr(&dev_cnt, i), 0,
+				sizeof(struct ntrdma_dev_counters));
 
 	ntrdma_debugfs_dev_add(dev);
 
