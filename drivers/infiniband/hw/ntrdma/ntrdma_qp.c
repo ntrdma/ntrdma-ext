@@ -1560,6 +1560,9 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 				dst, src, len,
 				true, NULL, NULL);
 
+		TRACE("QP %d start %u end %u\n",
+				qp->res.key, start, end);
+
 		if (rc) {
 			ntrdma_err(dev,
 					"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
@@ -1796,16 +1799,23 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* send the prod idx */
 	/* TODO: return value is ignored! */
 	ntc_req_imm32(dev->ntc, req,
-		      qp->peer_send_prod_dma_addr,
-		      qp->send_prod,
-		      true, NULL, NULL);
+			qp->peer_send_prod_dma_addr,
+			qp->send_prod,
+			true, NULL, NULL);
 
 	/* update the vbell and signal the peer */
 	/* TODO: return value is ignored! */
 	ntrdma_dev_vbell_peer(dev, req,
-			      qp->peer_send_vbell_idx);
+			qp->peer_send_vbell_idx);
+
 	/* TODO: return value is ignored! */
 	ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
+
+	TRACE("start %u pos %u QP %d RQP %d prod %u peer vbell idx %d\n",
+			start, pos,
+			qp->res.key, rqp->qp_key,
+			qp->send_prod,
+			qp->peer_send_vbell_idx);
 
 	/* submit the request */
 	/* TODO: return value is ignored! */
@@ -2088,16 +2098,23 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	/* send the cons idx */
 	/* TODO: return code? */
 	ntc_req_imm32(dev->ntc, req,
-		      rqp->peer_send_cons_dma_addr,
-		      rqp->send_cons,
-		      true, NULL, NULL);
+			rqp->peer_send_cons_dma_addr,
+			rqp->send_cons,
+			true, NULL, NULL);
 
 	if (do_signal) {
 		/* update the vbell and signal the peer */
 		ntrdma_dev_vbell_peer(dev, req,
 				rqp->peer_cmpl_vbell_idx);
 		ntc_req_signal(dev->ntc, req, NULL, NULL,
-			       NTB_DEFAULT_VEC(dev->ntc));
+				NTB_DEFAULT_VEC(dev->ntc));
+
+		TRACE("Signal QP %d RQP %d cons %u start %u pos %u peer vbell idx %d\n",
+				qp->res.key, rqp->qp_key,
+				rqp->send_cons,
+				start,
+				pos,
+				rqp->peer_cmpl_vbell_idx);
 	}
 	/* submit the request */
 	/* TODO: return cpde? */
