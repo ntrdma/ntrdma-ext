@@ -39,7 +39,7 @@
 #include <linux/workqueue.h>
 #include <linux/types.h>
 #include <linux/ratelimit.h>
-
+#include <linux/percpu.h>
 #include <linux/ntc.h>
 
 #include <rdma/ib_verbs.h>
@@ -65,6 +65,19 @@ struct vbell_work_data_s {
 	struct ntrdma_dev *dev;
 	int vec;
 };
+
+struct ntrdma_dev_counters {
+	u64 qp_send_work_bytes;
+	u64 post_send_bytes;
+	u64 post_send_wqes;
+	u64 post_send_wqes_signalled;
+	u64 tx_cqes;
+
+	u64 cqes_notified;
+	u64 cqes_polled;
+	u64 cqes_armed;
+};
+
 
 /* RDMA over PCIe NTB device */
 struct ntrdma_dev {

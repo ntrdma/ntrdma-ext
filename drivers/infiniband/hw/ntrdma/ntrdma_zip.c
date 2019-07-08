@@ -35,7 +35,7 @@
 #include "ntrdma_mr.h"
 #include "ntrdma_zip.h"
 
-
+DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 struct dma_res_unmap_ctx {
 	struct ntrdma_dev *dev;
 	u64 dma_addr;
@@ -324,6 +324,8 @@ out:
 		/* FIXME: dma callback for put rmr */
 		ntrdma_rmr_put(rmr);
 	}
+
+	this_cpu_add(dev_cnt.qp_send_work_bytes, total_len);
 
 	return rc;
 }
