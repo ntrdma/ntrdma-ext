@@ -1262,13 +1262,13 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	rsp->hdr.op = cmd->hdr.op;
 	rsp->qp_key = cmd->qp_key;
 
-	rqp = ntrdma_dev_rqp_look(dev, cmd->qp_key);
+	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd->qp_key);
 	if (!rqp) {
 		ntrdma_err(dev, "rqp look failed key %d\n", cmd->qp_key);
 		rc = -EINVAL;
 		goto err_rqp;
 	}
-	qp = ntrdma_dev_qp_look(dev, rqp->qp_key);
+	qp = ntrdma_dev_qp_look_and_get(dev, rqp->qp_key);
 	TRACE("stall qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
 	ntrdma_qp_send_stall(qp, rqp);
 	if (qp)
@@ -1327,7 +1327,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 		goto err_sanity;
 	}
 
-	rqp = ntrdma_dev_rqp_look(dev, cmd->qp_key);
+	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd->qp_key);
 	if (!rqp) {
 		ntrdma_err(dev, "ntrdma_dev_rqp_look failed key %d\n",
 				cmd->qp_key);
@@ -1346,7 +1346,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	ntrdma_rqp_put(rqp);
 
 	if (cmd->state == NTRDMA_QPS_ERROR) {
-		qp = ntrdma_dev_qp_look(dev, cmd->dest_qp_key);
+		qp = ntrdma_dev_qp_look_and_get(dev, cmd->dest_qp_key);
 		TRACE("qp %p (%d) state changed to %d\n",
 				qp, cmd->dest_qp_key, cmd->state);
 		if (!qp) {

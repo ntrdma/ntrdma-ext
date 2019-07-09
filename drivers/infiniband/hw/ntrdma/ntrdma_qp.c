@@ -699,7 +699,7 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 	int rc;
 
 	if (qp && dev)
-		rqp = ntrdma_dev_rqp_look(dev, qp->rqp_key);
+		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 	TRACE("qp %p rqp %p - key %d", qp, rqp, qp ? qp->res.key : rqp ?
 			rqp->rres.key : -1);
 	ntrdma_qp_send_stall(qp, rqp);
@@ -1642,7 +1642,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	end = min_t(u32, end, start + NTRDMA_QP_BATCH_SIZE);
 
 	/* sending requires a connected rqp */
-	rqp = ntrdma_dev_rqp_look(dev, qp->rqp_key);
+	rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 	if (!rqp) {
 		ntrdma_err(dev, "ntrdma_dev_rqp_look failed %d key %d\n",
 				rc, qp->rqp_key);
@@ -1921,7 +1921,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	end = min_t(u32, end, start + NTRDMA_QP_BATCH_SIZE);
 
 	/* sending requires a connected qp */
-	qp = ntrdma_dev_qp_look(dev, rqp->qp_key);
+	qp = ntrdma_dev_qp_look_and_get(dev, rqp->qp_key);
 	if (!qp) {
 		ntrdma_err(dev, "ntrdma_dev_qp_look failed qp key %d\n",
 				rqp->qp_key);
@@ -2194,7 +2194,7 @@ static void ntrdma_rqp_vbell_cb(void *ctx)
 	tasklet_schedule(&rqp->send_work);
 }
 
-struct ntrdma_qp *ntrdma_dev_qp_look(struct ntrdma_dev *dev, int key)
+struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, int key)
 {
 	struct ntrdma_res *res;
 
@@ -2205,7 +2205,7 @@ struct ntrdma_qp *ntrdma_dev_qp_look(struct ntrdma_dev *dev, int key)
 	return ntrdma_res_qp(res);
 }
 
-struct ntrdma_rqp *ntrdma_dev_rqp_look(struct ntrdma_dev *dev, int key)
+struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, int key)
 {
 	struct ntrdma_rres *rres;
 
