@@ -363,7 +363,7 @@ struct ntrdma_send_wqe *ntrdma_rqp_send_wqe(struct ntrdma_rqp *rqp,
 struct ntrdma_cqe *ntrdma_rqp_send_cqe(struct ntrdma_rqp *rqp,
 				       u32 pos);
 
-struct ntrdma_qp *ntrdma_dev_qp_look(struct ntrdma_dev *dev, int key);
-struct ntrdma_rqp *ntrdma_dev_rqp_look(struct ntrdma_dev *dev, int key);
+struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, int key);
+struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, int key);
 
 #endif
