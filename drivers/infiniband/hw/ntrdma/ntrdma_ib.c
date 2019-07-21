@@ -885,8 +885,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask, ibudata);
 	ntrdma_res_lock(&qp->res);
 
-	cur_state = ibqp_mask & IB_QP_CUR_STATE ?
-			ibqp_attr->cur_qp_state : qp->state;
+	cur_state = qp->state;
 	new_state = ibqp_mask & IB_QP_STATE ?
 			ibqp_attr->qp_state : cur_state;
 
@@ -894,7 +893,8 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 			ibqp->qp_type, cur_state, ntrdma_ib_state(new_state),
 			ibqp_mask);
 
-	if (cur_state != qp->state) {
+	if ((ibqp_mask & IB_QP_CUR_STATE) &&
+			(ibqp_attr->cur_qp_state != qp->state)) {
 		ntrdma_err(dev,
 				"%s: unexpected current state %d %d\n",
 				__func__, cur_state, qp->state);
