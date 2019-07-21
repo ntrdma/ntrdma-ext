@@ -63,7 +63,7 @@ struct ntrdma_req;
 #define CMD_TIMEOUT_MSEC 5000 /*5 sec*/
 
 #define MAX_SUM_ACCESS_FLAGS (1<<7) // enum ibv_access_flags (rdma-core)
-#define IB_MR_LIMIT_BYTES (1024*1024*1024) /* 1GB */
+#define IB_MR_LIMIT_BYTES (1ULL << 34) /* 16GB */
 #define INTEL_ALIGN 16
 
 struct ntrdma_rsp_hdr {
