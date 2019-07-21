@@ -190,9 +190,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->send_poll.poll_put_and_done = ntrdma_qp_poll_send_put_and_done;
 
 	qp->state = 0;
-	qp->recv_error = false;
 	qp->recv_abort = false;
-	qp->send_error = false;
 	qp->send_abort = false;
 	qp->send_aborting = false;
 	qp->access = 0;
@@ -778,7 +776,7 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	TRACE("qp reset %p (res key: %d)\n", qp, qp->res.key);
 	spin_lock_bh(&qp->recv_prod_lock);
 	{
-		qp->recv_error = true;
+		qp->state = NTRDMA_QPS_ERROR;
 		qp->peer_recv_wqe_buf_dma_addr = 0;
 		qp->peer_recv_prod_dma_addr = 0;
 	}
@@ -786,7 +784,6 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 
 	spin_lock_bh(&qp->send_prod_lock);
 	{
-		qp->send_error = true;
 		qp->peer_send_wqe_buf_dma_addr = 0;
 		qp->peer_send_prod_dma_addr = 0;
 		qp->peer_send_vbell_idx = 0;
@@ -825,9 +822,6 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	rqp->access = 0;
 
 	rqp->state = 0;
-	rqp->recv_error = 0;
-	rqp->send_error = 0;
-
 	rqp->qp_key = -1;
 
 	rqp->send_wqe_sg_cap = attr->send_wqe_sg_cap;
@@ -1147,12 +1141,6 @@ static int ntrdma_qp_recv_prod_start(struct ntrdma_qp *qp)
 		spin_unlock_bh(&qp->recv_prod_lock);
 		return -EAGAIN;
 	}
-
-	if (qp->recv_error) {
-		spin_unlock_bh(&qp->recv_prod_lock);
-		return -EINVAL;
-	}
-
 	return 0;
 }
 
@@ -1273,12 +1261,6 @@ static int ntrdma_qp_send_prod_start(struct ntrdma_qp *qp)
 		spin_unlock_bh(&qp->send_prod_lock);
 		return -EAGAIN;
 	}
-
-	if (qp->send_error) {
-		spin_unlock_bh(&qp->send_prod_lock);
-		return -EINVAL;
-	}
-
 	return 0;
 }
 
@@ -1353,11 +1335,6 @@ static int ntrdma_rqp_recv_cons_start(struct ntrdma_rqp *rqp)
 		spin_unlock_bh(&rqp->recv_cons_lock);
 		return -EINVAL;
 	}
-	if (rqp->recv_error) {
-		spin_unlock_bh(&rqp->recv_cons_lock);
-		return -EINVAL;
-	}
-
 	return 0;
 }
 
@@ -1389,11 +1366,6 @@ static int ntrdma_rqp_send_cons_start(struct ntrdma_rqp *rqp)
 		spin_unlock_bh(&rqp->send_cons_lock);
 		return -EAGAIN;
 	}
-	if (rqp->send_error) {
-		spin_unlock_bh(&rqp->send_cons_lock);
-		return -EINVAL;
-	}
-
 	return 0;
 }
 
@@ -1620,6 +1592,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	u64 dst, src;
 	size_t off, len;
 	int rc;
+	bool abort = false;
 
 	/* verify the qp state and lock for producing sends */
 	rc = ntrdma_qp_send_prod_start(qp);
@@ -1683,8 +1656,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				if (!wqe->op_status)
 					wqe->op_status = NTRDMA_WC_ERR_RECV_MISSING;
 
-				qp->send_error = true;
-				rqp->recv_error = true;
+				abort = true;
+				qp->state = NTRDMA_QPS_ERROR;
 #endif
 				break;
 			}
@@ -1702,8 +1675,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					wqe->op_status = recv_wqe->op_status;
 				}
 
-				qp->send_error = true;
-				rqp->recv_error = true;
+				abort = true;
+				qp->state = NTRDMA_QPS_ERROR;
 				break;
 			}
 
@@ -1718,8 +1691,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					wqe->op_status,
 					qp->res.key);
 
-			qp->send_error = true;
-			rqp->recv_error = true;
+			abort = true;
+			qp->state = NTRDMA_QPS_ERROR;
 			break;
 		}
 
@@ -1748,8 +1721,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						rc, qp->res.key);
 
 				wqe->op_status = NTRDMA_WC_ERR_RDMA_RANGE;
-				qp->send_error = true;
-				rqp->recv_error = true;
+				abort = true;
+				qp->state = NTRDMA_QPS_ERROR;
 				break;
 			}
 
@@ -1767,7 +1740,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	ntrdma_qp_send_prod_put(qp, pos, base);
 
-	if (qp->send_error || rqp->recv_error)
+	if (abort)
 		goto err_memcpy;
 
 	if (unlikely(pos == start)) {
@@ -1796,8 +1769,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
 				src, dst, len, rc);
 
-		qp->send_error = true;
-		rqp->recv_error = true;
+		abort = true;
+		qp->state = NTRDMA_QPS_ERROR;
 		goto err_memcpy;
 	}
 
@@ -1814,8 +1787,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				"ntc_req_imm32 %#lx -> %#llx failed rc = %d\n",
 				qp->send_prod, qp->peer_send_prod_dma_addr, rc);
 
-		qp->send_error = true;
-		rqp->recv_error = true;
+		abort = true;
+		qp->state = NTRDMA_QPS_ERROR;
 		goto err_memcpy;
 	}
 	/* update the vbell and signal the peer */
@@ -1884,20 +1857,13 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	bool cue_recv = false;
 	int rc;
 	bool do_signal = false;
+	bool abort = false;
 
 	/* verify the rqp state and lock for consuming sends */
 	rc = ntrdma_rqp_send_cons_start(rqp);
 	if (rc) {
-		if (rc != -EAGAIN) {
-			ntrdma_err(dev,
-					"ntrdma_rqp_send_cons_start failed rc = %d qp_key %d(%p)\n",
-					rc, rqp->qp_key, rqp);
-		} else {
-			TRACE("ntrdma_rqp_send_cons_start failed qp_key %d(%p)\n",
-					rqp->qp_key, rqp);
-		}
 		ntrdma_err(dev,
-			"ntrdma_rqp_send_cons_start failed - rc = %d on rqp %p",
+			"ntrdma_rqp_send_cons_start failed - rc = %d on rqp %p\n",
 			rc, rqp);
 		return;
 	}
@@ -1956,8 +1922,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				ntrdma_err(dev, "WQE with error %d received on  qp %d\n",
 						wqe->op_status,
 						rqp->qp_key);
-				qp->send_error = true;
-				rqp->recv_error = true;
+				abort = true;
+				qp->state = NTRDMA_QPS_ERROR;
 				break;
 			}
 
@@ -1967,9 +1933,10 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				else
 					ntrdma_send_fail(cqe, wqe, wqe->op_status);
 
-				qp->send_error = true;
-				rqp->recv_error = true;
-				ntrdma_err(dev, "Error %s %d qp key %d\n",
+				abort = true;
+				qp->state = NTRDMA_QPS_ERROR;
+				ntrdma_err(dev,
+						"Error %s %d qp key %d, move to error state\n",
 						__func__, __LINE__,
 						rqp->qp_key);
 				break;
@@ -1981,9 +1948,10 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				else
 					ntrdma_send_fail(cqe, wqe, wqe->op_status);
 
-				rqp->send_error = true;
-				qp->recv_error = true;
-				ntrdma_err(dev, "Error %s %d qp key %d\n",
+				abort = true;
+				qp->state = NTRDMA_QPS_ERROR;
+				ntrdma_err(dev,
+						"Error %s %d qp key %d, move to error state\n",
 						__func__, __LINE__,
 						rqp->qp_key);
 				break;
@@ -2001,8 +1969,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 				ntrdma_recv_fail(recv_cqe, recv_wqe, recv_wqe->op_status);
 
-				qp->send_error = true;
-				rqp->recv_error = true;
+				abort = true;
+				qp->state = NTRDMA_QPS_ERROR;
 				ntrdma_err(dev, "Error %s %d qp key %d\n",
 						__func__, __LINE__,
 						rqp->qp_key);
@@ -2019,8 +1987,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			if (ntrdma_wr_code_is_send(wqe->op_code))
 				ntrdma_recv_fail(recv_cqe, recv_wqe, wqe->op_status);
 
-			qp->send_error = true;
-			rqp->recv_error = true;
+			abort = true;
+			qp->state = NTRDMA_QPS_ERROR;
 			ntrdma_err(dev, "Error wqe op status %d  pos %u QP %d\n",
 					wqe->op_status, pos, qp->res.key);
 			break;
@@ -2088,12 +2056,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	ntrdma_rqp_send_cons_put(rqp, pos, base);
 
-	if (qp->send_error || rqp->recv_error ||
-			rqp->send_error || qp->recv_error) {
-		ntrdma_err(dev,
-				"error: qp->send %d, rqp->recv %d, rqp->send %d, qp->recv %d\n",
-				qp->send_error, rqp->recv_error,
-				rqp->send_error, qp->recv_error);
+	if (abort) {
+		ntrdma_err(dev, " failed to compete\n");
 		goto err_memcpy;
 	}
 

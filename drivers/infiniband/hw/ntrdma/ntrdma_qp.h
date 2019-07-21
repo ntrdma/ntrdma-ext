@@ -91,9 +91,7 @@ struct ntrdma_qp {
 	int			state;
 
 	/* The behavior within the queue pair state */
-	int			recv_error;
 	int			recv_abort;
-	int			send_error;
 	int			send_abort;    /* wrap up mode, set error
 						* completion for all wqe that
 						* did not get completion yet
@@ -259,10 +257,6 @@ struct ntrdma_rqp {
 
 	/* The current state of the queue pair */
 	int				state;
-
-	/* The behavior within the queue pair state */
-	int				recv_error;
-	int				send_error;
 
 	/* key of connected local queue pair, or -1 if not connected */
 	u32				qp_key;

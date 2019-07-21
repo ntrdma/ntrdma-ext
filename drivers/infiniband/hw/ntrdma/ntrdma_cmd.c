@@ -1335,8 +1335,6 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 		goto err_rqp;
 	}
 	rqp->state = cmd->state;
-	rqp->recv_error = false;
-	rqp->send_error = false;
 	rqp->access = cmd->access;
 
 	//rqp->access = cmd->access; /* TODO: qp access flags */

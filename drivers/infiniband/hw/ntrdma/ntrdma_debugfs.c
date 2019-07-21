@@ -686,9 +686,7 @@ static int ntrdma_debugfs_qp_info_show(struct seq_file *s, void *v)
 	struct ntrdma_qp *qp = s->private;
 
 	seq_printf(s, "state %d\n", qp->state);
-	seq_printf(s, "recv_error %u\n", qp->recv_error);
 	seq_printf(s, "recv_abort %u\n", qp->recv_abort);
-	seq_printf(s, "send_error %u\n", qp->send_error);
 	seq_printf(s, "send_abort %u\n", qp->send_abort);
 	seq_printf(s, "rqp_key %u\n", qp->rqp_key);
 	seq_printf(s, "send_wqe_sg_cap %u\n", qp->send_wqe_sg_cap);
@@ -864,8 +862,6 @@ static int ntrdma_debugfs_rqp_info_show(struct seq_file *s, void *v)
 	struct ntrdma_rqp *rqp = s->private;
 
 	seq_printf(s, "state %d\n", rqp->state);
-	seq_printf(s, "recv_error %u\n", rqp->recv_error);
-	seq_printf(s, "send_error %u\n", rqp->send_error);
 	seq_printf(s, "qp_key %u\n", rqp->qp_key);
 	seq_printf(s, "send_wqe_sg_cap %u\n", rqp->send_wqe_sg_cap);
 	seq_printf(s, "recv_wqe_sg_cap %u\n", rqp->recv_wqe_sg_cap);
