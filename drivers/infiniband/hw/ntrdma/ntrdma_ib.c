@@ -1232,8 +1232,15 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	void *umem;
 	int rc, i, count;
 
-	ntrdma_vdbg(dev, "called user addr %llx len %llx:\n",
+	ntrdma_vdbg(dev, "called user addr %llx len %lld:\n",
 			virt_addr, length);
+
+	if (length > IB_MR_LIMIT_BYTES) {
+		ntrdma_err(dev, "reg_user_mr with not supported length %lld\n",
+				length);
+		rc = -EINVAL;
+		goto err_len;
+	}
 
 	if (atomic_inc_return(&dev->mr_num) >= NTRDMA_DEV_MAX_MR) {
 		rc = -ETOOMANYREFS;
@@ -1309,6 +1316,7 @@ err_mr:
 	ntc_umem_put(dev->ntc, umem);
 err_umem:
 	atomic_dec(&dev->mr_num);
+err_len:
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
