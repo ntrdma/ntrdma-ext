@@ -790,7 +790,7 @@ static int ntrdma_sanity_mr_create(struct ntrdma_dev *dev,
 		cmd->sg_count > NTRDMA_CMD_MR_CREATE_SG_CAP) {
 
 		ntrdma_err(dev,
-				"Invalid sg_cap %u(max %u) sg_count %u (max %lu)\n",
+				"Invalid sg_cap %u(max %llu) sg_count %u (max %lu)\n",
 				cmd->sg_cap, (IB_MR_LIMIT_BYTES >> PAGE_SHIFT),
 				cmd->sg_count, NTRDMA_CMD_MR_CREATE_SG_CAP);
 
@@ -825,7 +825,7 @@ static int ntrdma_sanity_mr_append(struct ntrdma_dev *dev,
 	if (cmd->sg_pos > (IB_MR_LIMIT_BYTES >> PAGE_SHIFT) ||
 		cmd->sg_count > NTRDMA_CMD_MR_APPEND_SG_CAP) {
 		ntrdma_err(dev, 
-				"Invalid sg pos %u(%u) sg_count %u(%lu)\n",
+				"Invalid sg pos %u(%llu) sg_count %u(%lu)\n",
 				cmd->sg_pos,
 				(IB_MR_LIMIT_BYTES >> PAGE_SHIFT),
 				cmd->sg_count,
