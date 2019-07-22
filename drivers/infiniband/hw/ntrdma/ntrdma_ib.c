@@ -75,7 +75,7 @@ static int ntrdma_get_port_immutable(struct ib_device *ibdev,
 				     struct ib_port_immutable *imm)
 {
 	imm->pkey_tbl_len = NTRDMA_PKEY_TBL_LEN;
-	imm->gid_tbl_len = NTRDMA_GIB_TBL_LEN;
+	imm->gid_tbl_len = 8;
 	imm->core_cap_flags =
 			RDMA_CORE_CAP_PROT_ROCE |
 			RDMA_CORE_PORT_IBA_ROCE_UDP_ENCAP;
