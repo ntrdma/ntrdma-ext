@@ -170,9 +170,11 @@ static inline struct ntrdma_umem *ntc_phys_umem_get_put(
 		return ERR_PTR(-ENOMEM);
 
 	ib_umem = ib_umem_get(uctx, uaddr, size, access, dmasync);
-
-	if (IS_ERR(ntrdma_umem->ib_umem))
+	if (IS_ERR(ib_umem)) {
+		pr_err("ib_umem_get failed rc %d user address %lx size %zu\n",
+				PTR_ERR(ib_umem), uaddr, size);
 		goto err_ib_umem;
+	}
 
 	ntrdma_umem->ib_umem = ib_umem;
 
@@ -210,7 +212,7 @@ err_sg_alloc:
 err_ib_umem:
 	kfree(ntrdma_umem);
 	ntrdma_umem = NULL;
-	return ntrdma_umem;
+	return NULL;
 }
 
 static void *ntc_phys_umem_get(struct ntc_dev *ntc, struct ib_ucontext *uctx,
