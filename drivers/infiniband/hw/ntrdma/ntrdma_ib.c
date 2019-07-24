@@ -1256,8 +1256,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	umem = ntc_umem_get(dev->ntc, pd->ibpd.uobject->context,
 			    start, length, mr_access_flags, false);
 
-	if (IS_ERR(umem)) {
-		rc = PTR_ERR(umem);
+	if (!umem) {
+		rc = -ENOMEM;
 		goto err_umem;
 	}
 
