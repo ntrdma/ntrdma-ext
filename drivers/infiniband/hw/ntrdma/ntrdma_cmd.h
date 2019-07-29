@@ -69,11 +69,17 @@ struct ntrdma_req;
 struct ntrdma_rsp_hdr {
 	u32				op;
 	u32				status;
+	u32				cmd_id;
+};
+
+struct ntrdma_cmd_hdr {
+	u32				op;
+	u32				cmd_id;
 };
 
 /* Create memory region command */
 struct ntrdma_cmd_mr_create {
-	u32				op;
+	struct ntrdma_cmd_hdr hdr;
 	u32				mr_key;
 	u32				pd_key;
 	u32				access;
@@ -86,13 +92,13 @@ struct ntrdma_cmd_mr_create {
 
 /* Delete memory region command */
 struct ntrdma_cmd_mr_delete {
-	u32				op;
+	struct ntrdma_cmd_hdr		hdr;
 	u32				mr_key;
 };
 
 /* Append to memory region command */
 struct ntrdma_cmd_mr_append {
-	u32				op;
+	struct ntrdma_cmd_hdr hdr;
 	u32				mr_key;
 	u32				sg_pos;
 	u32				sg_count;
@@ -107,7 +113,7 @@ struct ntrdma_rsp_mr_status {
 
 /* Create queue pair command */
 struct ntrdma_cmd_qp_create {
-	u32				op;
+	struct ntrdma_cmd_hdr hdr;
 	u32				qp_key;
 	u32				pd_key;
 	u32				qp_type;
@@ -126,13 +132,13 @@ struct ntrdma_cmd_qp_create {
 
 /* Delete a queue pair command */
 struct ntrdma_cmd_qp_delete {
-	u32				op;
+	struct ntrdma_cmd_hdr hdr;
 	u32				qp_key;
 };
 
 /* Modify queue pair command */
 struct ntrdma_cmd_qp_modify {
-	u32				op;
+	struct ntrdma_cmd_hdr hdr;
 	u32				qp_key;
 	u32				access;
 	u32				state;
@@ -162,7 +168,7 @@ struct ntrdma_rsp_qp_status {
 
 /* Command union */
 union ntrdma_cmd {
-	u32				op;
+	struct ntrdma_cmd_hdr hdr;
 	struct ntrdma_cmd_mr_create	mr_create;
 	struct ntrdma_cmd_mr_delete	mr_delete;
 	struct ntrdma_cmd_mr_append	mr_append;

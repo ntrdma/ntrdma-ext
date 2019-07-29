@@ -177,7 +177,7 @@ static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
 
-	cmd->mr_append.op = NTRDMA_CMD_MR_APPEND;
+	cmd->mr_append.hdr.op = NTRDMA_CMD_MR_APPEND;
 	cmd->mr_append.mr_key = mr->res.key;
 
 	cmd->mr_append.sg_pos = mrcb->sg_pos;
@@ -197,7 +197,7 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 
 	TRACE("mr_enable prep: %d\n", mr->res.key);
 
-	cmd->mr_create.op = NTRDMA_CMD_MR_CREATE;
+	cmd->mr_create.hdr.op = NTRDMA_CMD_MR_CREATE;
 	cmd->mr_create.mr_key = mr->res.key;
 	cmd->mr_create.pd_key = mr->pd_key;
 	cmd->mr_create.access = mr->access;
@@ -275,7 +275,7 @@ static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
 
-	cmd->mr_delete.op = NTRDMA_CMD_MR_DELETE;
+	cmd->mr_delete.hdr.op = NTRDMA_CMD_MR_DELETE;
 	cmd->mr_delete.mr_key = mr->res.key;
 
 	return 0;
