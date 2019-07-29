@@ -442,7 +442,7 @@ static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
 
 	ntrdma_qp_recv_work(qp);
 
-	cmd->qp_modify.op = NTRDMA_CMD_QP_MODIFY;
+	cmd->qp_modify.hdr.op = NTRDMA_CMD_QP_MODIFY;
 	cmd->qp_modify.qp_key = qp->res.key;
 	cmd->qp_modify.access = qp->access;
 	cmd->qp_modify.state = qp->state;
@@ -532,7 +532,7 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 	ntrdma_vdbg(dev, "called\n");
 	TRACE("qp_enable prep: qp %d\n", qp->res.key);
 
-	cmd->qp_create.op = NTRDMA_CMD_QP_CREATE;
+	cmd->qp_create.hdr.op = NTRDMA_CMD_QP_CREATE;
 	cmd->qp_create.qp_key = qp->res.key;
 	cmd->qp_create.pd_key = qp->pd_key;
 	cmd->qp_create.qp_type = 0; /* TODO: just RC for now */
@@ -733,7 +733,7 @@ static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
 
 	ntrdma_vdbg(dev, "called\n");
 
-	cmd->qp_delete.op = NTRDMA_CMD_QP_DELETE;
+	cmd->qp_delete.hdr.op = NTRDMA_CMD_QP_DELETE;
 	cmd->qp_delete.qp_key = qp->res.key;
 
 	return 0;

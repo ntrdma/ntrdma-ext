@@ -108,6 +108,7 @@ static void ntc_phys_res_unmap(struct ntc_dev *ntc, u64 dma_addr, u64 size,
 	dma_unmap_resource(dev, (dma_addr_t)dma_addr,
 			(size_t)size, dir, 0);
 }
+
 static void ntc_phys_buf_sync_cpu(struct ntc_dev *ntc, u64 addr, u64 size,
 				  enum dma_data_direction dir,
 				  enum ntc_dma_access dma_dev)

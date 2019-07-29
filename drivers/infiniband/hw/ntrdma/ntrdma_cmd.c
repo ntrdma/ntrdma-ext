@@ -614,7 +614,6 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 		return; /* FIXME: no req, now what? */
 
 	/* sync the ring buf for the cpu */
-
 	ntc_buf_sync_cpu(dev->ntc,
 			 dev->cmd_send_rsp_buf_addr,
 			 dev->cmd_send_rsp_buf_size,
@@ -626,7 +625,6 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 		ntrdma_cmd_send_vbell_clear(dev);
 
 		/* Complete commands that have a response */
-
 		ntrdma_ring_consume(*dev->cmd_send_cons_buf, dev->cmd_send_cmpl,
 				    dev->cmd_send_cap, &start, &end, &base);
 		ntrdma_vdbg(dev, "rsp start %d end %d\n", start, end);
@@ -639,13 +637,20 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				break;
 			}
 
+			if (unlikely(pos !=	dev->cmd_send_rsp_buf[pos].hdr.cmd_id)) {
+				ntrdma_err(dev, "rsp cmd id %d != pos %d => link down\n",
+					dev->cmd_send_rsp_buf[pos].hdr.cmd_id, pos);
+				ntc_link_disable(dev->ntc);
+			}
+
 			cb = list_first_entry(&dev->cmd_post_list,
 					struct ntrdma_cmd_cb,
 					dev_entry);
 
 			list_del(&cb->dev_entry);
 
-			ntrdma_vdbg(dev, "rsp cmpl pos %d\n", pos);
+			ntrdma_vdbg(dev, "rsp cmpl pos %d cmd_id %d\n",
+					pos, dev->cmd_send_rsp_buf[pos].hdr.cmd_id);
 
 			TRACE("CMD: respond received for %ps pos %u\n",
 				cb->rsp_cmpl, pos);
@@ -662,7 +667,6 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 		}
 
 		/* Issue some more pending commands */
-
 		ntrdma_ring_produce(dev->cmd_send_prod,
 				    dev->cmd_send_cmpl,
 				    dev->cmd_send_cap,
@@ -682,6 +686,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			TRACE("CMD: post cmd by %ps pos %u\n",
 				cb->cmd_prep, pos);
 
+			dev->cmd_send_buf[pos].hdr.cmd_id = pos;
 			rc = cb->cmd_prep(cb, &dev->cmd_send_buf[pos], req);
 			WARN(rc, "%ps failed rc = %d", cb->cmd_prep, rc);
 			/* FIXME: command failed, now what? */
@@ -695,7 +700,6 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			more = true;
 
 			/* sync the ring buf for the device */
-
 			ntc_buf_sync_dev(dev->ntc,
 					 dev->cmd_send_buf_dma_addr,
 					 dev->cmd_send_buf_size,
@@ -720,14 +724,12 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			}
 
 			/* update the producer index on the peer */
-
 			ntc_req_imm32(dev->ntc, req,
 					dev->peer_cmd_recv_prod_dma_addr,
 					dev->cmd_send_prod,
 					true, NULL, NULL);
 
 			/* update the vbell and signal the peer */
-
 			ntrdma_dev_vbell_peer(dev, req,
 					dev->peer_cmd_recv_vbell_idx);
 
@@ -847,7 +849,7 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 			"called mr len %llx  mr addr %llx mr key %x sg_count %d\n",
 			cmd->mr_len, cmd->mr_addr, cmd->mr_key, cmd->sg_count);
 
-	rsp->hdr.op = cmd->op;
+	rsp->hdr.op = cmd->hdr.op;
 	rsp->mr_key = cmd->mr_key;
 
 	rc = ntrdma_sanity_mr_create(dev, cmd);
@@ -943,7 +945,7 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 
 	ntrdma_vdbg(dev, "called\n");
 
-	rsp->hdr.op = cmd->op;
+	rsp->hdr.op = cmd->hdr.op;
 	rsp->mr_key = cmd->mr_key;
 
 	rmr = ntrdma_dev_rmr_look(dev, cmd->mr_key);
@@ -989,7 +991,7 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 	ntrdma_vdbg(dev, "called sg count %d sg pos %d\n",
 			cmd->sg_count, cmd->sg_pos);
 
-	rsp->hdr.op = cmd->op;
+	rsp->hdr.op = cmd->hdr.op;
 	rsp->mr_key = cmd->mr_key;
 
 	rc = ntrdma_sanity_mr_append(dev, cmd);
@@ -1120,7 +1122,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	TRACE("peer QP %d create received, recv cap: %d send cap %d\n",
 			cmd->qp_key, cmd->recv_wqe_cap, cmd->send_wqe_cap);
 
-	rsp->hdr.op = cmd->op;
+	rsp->hdr.op = cmd->hdr.op;
 	rsp->qp_key = cmd->qp_key;
 
 	rc = ntrdma_qp_create_sanity(dev, cmd);
@@ -1249,7 +1251,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 
 	ntrdma_vdbg(dev, "called\n");
 
-	rsp->hdr.op = cmd->op;
+	rsp->hdr.op = cmd->hdr.op;
 	rsp->qp_key = cmd->qp_key;
 
 	rqp = ntrdma_dev_rqp_look(dev, cmd->qp_key);
@@ -1296,7 +1298,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	ntrdma_vdbg(dev, "enter state %d qp key %d\n",
 			cmd->state, cmd->qp_key);
 
-	rsp->hdr.op = cmd->op;
+	rsp->hdr.op = cmd->hdr.op;
 	rsp->qp_key = cmd->qp_key;
 
 	/* sanity check */
@@ -1343,11 +1345,13 @@ static int ntrdma_cmd_recv(struct ntrdma_dev *dev, union ntrdma_cmd *cmd,
 			   union ntrdma_rsp *rsp, void *req)
 {
 	TRACE("CMD: received: op %d\n",
-			cmd->op);
+			cmd->hdr.op);
 
-	switch (cmd->op) {
+	rsp->hdr.cmd_id = cmd->hdr.cmd_id;
+
+	switch (cmd->hdr.op) {
 	case NTRDMA_CMD_NONE:
-		return ntrdma_cmd_recv_none(dev, cmd->op, &rsp->hdr);
+		return ntrdma_cmd_recv_none(dev, cmd->hdr.op, &rsp->hdr);
 	case NTRDMA_CMD_MR_CREATE:
 		return ntrdma_cmd_recv_mr_create(dev, &cmd->mr_create,
 						 &rsp->mr_create);
@@ -1368,7 +1372,7 @@ static int ntrdma_cmd_recv(struct ntrdma_dev *dev, union ntrdma_cmd *cmd,
 						 &rsp->qp_modify);
 	}
 
-	ntrdma_err(dev, "unhandled recv cmd op %u\n", cmd->op);
+	ntrdma_err(dev, "unhandled recv cmd op %u\n", cmd->hdr.op);
 
 	return -EINVAL;
 }
@@ -1402,7 +1406,6 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 		return; /* FIXME: no req, now what? */
 
 	/* sync the ring buf for the cpu */
-
 	ntc_buf_sync_cpu(dev->ntc,
 			 dev->cmd_recv_buf_addr,
 			 dev->cmd_recv_buf_size,
@@ -1414,7 +1417,6 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 		ntrdma_cmd_recv_vbell_clear(dev);
 
 		/* Process commands */
-
 		ntrdma_ring_consume(*dev->cmd_recv_prod_buf,
 				dev->cmd_recv_cons,
 				dev->cmd_recv_cap,
@@ -1438,7 +1440,6 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 								dev->cmd_recv_cap);
 
 			/* sync the ring buf for the device */
-
 			ntc_buf_sync_dev(dev->ntc,
 					 dev->cmd_recv_rsp_buf_addr,
 					 dev->cmd_recv_rsp_buf_size,
@@ -1446,7 +1447,6 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 					 IOAT_DEV_ACCESS);
 
 			/* copy the portion of the ring buf */
-
 			off = start * sizeof(union ntrdma_rsp);
 			len = (pos - start) * sizeof(union ntrdma_rsp);
 			dst = dev->peer_cmd_send_rsp_buf_dma_addr + off;
@@ -1465,7 +1465,6 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 						src, dst, len, rc);
 			}
 			/* update the producer index on the peer */
-
 			ntc_req_imm32(dev->ntc, req,
 					dev->peer_cmd_send_cons_dma_addr,
 					dev->cmd_recv_cons,
