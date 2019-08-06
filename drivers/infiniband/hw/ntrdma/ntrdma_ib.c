@@ -740,9 +740,19 @@ static int ntrdma_query_qp(struct ib_qp *ibqp,
 	 * We just need to return success here to make qperf happy.
 	 * But be careful and fail here if we get an unexpected mask.
 	 */
+	if (!ibqp_mask)
+		return 0;
 
-	if (ibqp_mask)
+	if (!(ibqp_mask & (IB_QP_STATE | IB_QP_DEST_QPN))) {
+		ntrdma_err(dev, "Not supported ibqp mask %d\n", ibqp_mask);
 		return -EINVAL;
+	}
+
+	if (ibqp_mask & IB_QP_STATE)
+		ibqp_attr->qp_state = qp->state;
+
+	if (ibqp_mask & IB_QP_DEST_QPN)
+		ibqp_attr->dest_qp_num = qp->rqp_key;
 
 	return 0;
 }
