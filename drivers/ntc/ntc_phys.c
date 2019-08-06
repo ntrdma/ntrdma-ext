@@ -143,7 +143,8 @@ static inline void ntc_sgl_clone(struct scatterlist *sgl_src,
 	tmp_sg_dst = sgl_dst;
 
 	for (i = 0; i < count; i++) {
-		sg_set_page(tmp_sg_dst, sg_page(tmp_sg_src), PAGE_SIZE, 0);
+		//sg_set_page(tmp_sg_dst, sg_page(tmp_sg_src), PAGE_SIZE, 0);
+		memcpy(tmp_sg_dst, tmp_sg_src, sizeof(struct scatterlist));
 		tmp_sg_src = sg_next(tmp_sg_src);
 		tmp_sg_dst = sg_next(tmp_sg_dst);
 	}
@@ -171,7 +172,7 @@ static inline struct ntrdma_umem *ntc_phys_umem_get_put(
 
 	ib_umem = ib_umem_get(uctx, uaddr, size, access, dmasync);
 	if (IS_ERR(ib_umem)) {
-		pr_err("ib_umem_get failed rc %d user address %lx size %zu\n",
+		pr_err("ib_umem_get failed rc %ld user address %lx size %zu\n",
 				PTR_ERR(ib_umem), uaddr, size);
 		goto err_ib_umem;
 	}
@@ -184,18 +185,36 @@ static inline struct ntrdma_umem *ntc_phys_umem_get_put(
 	if (ret)
 		goto err_sg_alloc;
 
+	/* TODO: this part needs rework as follows:
+	 * The purpose of cloning is to hold different dma mappings
+	 * for the same user memory, to provide few devices
+	 * (dma-engine, NTB) access to memory.
+	 *
+	 * In case no IOMMU is present (on intel), local == remote.
+	 * Another consideration is that the user can use out of
+	 * kernel memory, but get user pages will fail... so a patch
+	 * to the coreOS kernel has been applied which returns a list
+	 * based on pfn and the optimal solution would also require to
+	 * perform dma_map_resource on it.
+	 *
+	 * HACK: Currently ntc_sgl_clone was changed just to memcpy
+	 * the local list to remote.
+	 */
+
 	ntc_sgl_clone(ib_umem->sg_head.sgl, ntrdma_umem->remote_sg_head.sgl,
 			ib_umem->npages);
 
+/*
 	ret = dma_map_sg_attrs(ntc_map_dev(ntc, NTB_DEV_ACCESS),
 			ntrdma_umem->remote_sg_head.sgl,
 			ib_umem->npages,
 			DMA_BIDIRECTIONAL,
 			dmasync?DMA_ATTR_WRITE_BARRIER:0);
 
+
 	if (ret <= 0)
 		goto err_dma_map;
-
+*/
 	return ntrdma_umem;
 is_put:
 	ntrdma_umem = umem;
@@ -203,7 +222,7 @@ is_put:
 			ntrdma_umem->remote_sg_head.sgl,
 			ntrdma_umem->ib_umem->npages,
 			DMA_BIDIRECTIONAL);
-err_dma_map:
+//err_dma_map:
 	sg_free_table(&ntrdma_umem->remote_sg_head);
 err_sg_alloc:
 	ib_umem_release(ntrdma_umem->ib_umem);
@@ -298,17 +317,18 @@ static int ntc_phys_umem_sgl(struct ntc_dev *ntc, void *umem,
 			ib_umem_offset(ibumem),
 			ibumem->length, sgl, count);
 
-
 	remote_dma_count = ntc_compress_sgl(
 			&ntrdma_umem->remote_sg_head,
 			ib_umem_offset(ibumem),
 			ibumem->length, sgl + count, count);
 
-
-	WARN_ON(local_dma_count != remote_dma_count);
+	WARN(local_dma_count != remote_dma_count,
+		"local_dma_count %d remote_dma_count %d",
+		local_dma_count, remote_dma_count);
 
 	return local_dma_count;
 }
+
 struct ntc_map_ops ntc_phys_map_ops = {
 	.buf_alloc		= ntc_phys_buf_alloc,
 	.buf_free		= ntc_phys_buf_free,
