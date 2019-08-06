@@ -122,7 +122,7 @@ int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, int node, int first_key)
 	vec->cap = cap;
 	vec->next_key = first_key;
 
-	spin_lock_init(&vec->lock);
+	rwlock_init(&vec->lock);
 
 	return 0;
 
@@ -179,14 +179,25 @@ void ntrdma_kvec_set(struct ntrdma_kvec *vec, u32 key, void *elem)
 	vec->look[key] = elem;
 }
 
-void ntrdma_kvec_lock(struct ntrdma_kvec *vec)
+void ntrdma_kvec_write_lock(struct ntrdma_kvec *vec)
 {
-	spin_lock_bh(&vec->lock);
+	WARN(in_softirq(), "our assumption it should not happen\n");
+	write_lock_bh(&vec->lock);
 }
 
-void ntrdma_kvec_unlock(struct ntrdma_kvec *vec)
+void ntrdma_kvec_write_unlock(struct ntrdma_kvec *vec)
 {
-	spin_unlock_bh(&vec->lock);
+	write_unlock_bh(&vec->lock);
+}
+
+void ntrdma_kvec_read_lock(struct ntrdma_kvec *vec)
+{
+	read_lock(&vec->lock);
+}
+
+void ntrdma_kvec_read_unlock(struct ntrdma_kvec *vec)
+{
+	read_unlock(&vec->lock);
 }
 
 int ntrdma_kvec_resize_larger(struct ntrdma_kvec *vec, u32 cap, int node)
