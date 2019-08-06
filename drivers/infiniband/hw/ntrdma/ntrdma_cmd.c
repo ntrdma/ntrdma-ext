@@ -637,8 +637,10 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				break;
 			}
 
-			if (unlikely(pos !=	dev->cmd_send_rsp_buf[pos].hdr.cmd_id)) {
-				ntrdma_err(dev, "rsp cmd id %d != pos %d => link down\n",
+			if (unlikely(pos !=
+				dev->cmd_send_rsp_buf[pos].hdr.cmd_id)) {
+				ntrdma_err(dev,
+					"rsp cmd id %d != pos %d, link down\n",
 					dev->cmd_send_rsp_buf[pos].hdr.cmd_id, pos);
 				ntc_link_disable(dev->ntc);
 			}
@@ -649,8 +651,9 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			list_del(&cb->dev_entry);
 
-			ntrdma_vdbg(dev, "rsp cmpl pos %d cmd_id %d\n",
-					pos, dev->cmd_send_rsp_buf[pos].hdr.cmd_id);
+			ntrdma_vdbg(dev,
+					"rsp cmpl pos %d cmd_id %d\n", pos,
+					dev->cmd_send_rsp_buf[pos].hdr.cmd_id);
 
 			TRACE("CMD: respond received for %ps pos %u\n",
 				cb->rsp_cmpl, pos);
@@ -882,6 +885,10 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	for (i = 0; i < count; ++i) {
 		u64 remote_phys_addr = ntc_peer_addr(dev->ntc,
 				rmr->sg_list[i].addr);
+		if (!remote_phys_addr) {
+			rc = -EIO;
+			goto err_map;
+		}
 
 		ntrdma_vdbg(dev,
 				"sg %d addr %llx(%llx) len %llx %p\n",
