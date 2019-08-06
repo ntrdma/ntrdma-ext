@@ -37,23 +37,16 @@
 #include "ntrdma_res.h"
 #include "ntrdma_pd.h"
 
-int ntrdma_pd_init(struct ntrdma_pd *pd, struct ntrdma_dev *dev, u32 key)
+void ntrdma_pd_init(struct ntrdma_pd *pd, struct ntrdma_dev *dev, u32 key)
 {
 	pd->key = key;
 
-	return ntrdma_obj_init(&pd->obj, dev);
-}
-
-void ntrdma_pd_deinit(struct ntrdma_pd *pd)
-{
-	ntrdma_obj_deinit(&pd->obj);
+	ntrdma_obj_init(&pd->obj, dev);
 }
 
 int ntrdma_pd_add(struct ntrdma_pd *pd)
 {
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
-
-	ntrdma_pd_get(pd);
 
 	mutex_lock(&dev->res_lock);
 	{
@@ -64,7 +57,7 @@ int ntrdma_pd_add(struct ntrdma_pd *pd)
 	return 0;
 }
 
-void ntrdma_pd_del(struct ntrdma_pd *pd)
+void ntrdma_pd_remove(struct ntrdma_pd *pd)
 {
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
 
@@ -73,7 +66,4 @@ void ntrdma_pd_del(struct ntrdma_pd *pd)
 		list_del(&pd->obj.dev_entry);
 	}
 	mutex_unlock(&dev->res_lock);
-
-	ntrdma_pd_put(pd);
-	ntrdma_pd_repo(pd);
 }

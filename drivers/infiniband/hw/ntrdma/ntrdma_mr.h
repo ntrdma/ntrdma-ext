@@ -100,10 +100,9 @@ static inline int ntrdma_mr_add(struct ntrdma_mr *mr)
 	return ntrdma_res_add(&mr->res);
 }
 
-static inline void ntrdma_mr_del(struct ntrdma_mr *mr)
+static inline void ntrdma_mr_remove(struct ntrdma_mr *mr)
 {
 	ntrdma_res_del(&mr->res);
-	ntrdma_debugfs_mr_del(mr);
 }
 
 static inline void ntrdma_mr_get(struct ntrdma_mr *mr)
@@ -111,24 +110,13 @@ static inline void ntrdma_mr_get(struct ntrdma_mr *mr)
 	ntrdma_res_get(&mr->res);
 }
 
-static inline void ntrdma_mr_put(struct ntrdma_mr *mr)
-{
-	ntrdma_res_put(&mr->res);
-}
+void ntrdma_mr_put(struct ntrdma_mr *mr);
 
-static inline void ntrdma_mr_repo(struct ntrdma_mr *mr)
-{
-	/* FIXME: missing a put */
-	//ntrdma_res_repo(&mr->res);
-}
-
-int ntrdma_rmr_init(struct ntrdma_rmr *rmr,
+void ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 		    struct ntrdma_dev *dev,
 		    u32 pd_key, u32 access,
 		    u64 addr, u64 len,
 		    u32 sg_count, u32 key);
-
-void ntrdma_rmr_deinit(struct ntrdma_rmr *rmr);
 
 static inline int ntrdma_rmr_add(struct ntrdma_rmr *rmr)
 {
@@ -136,26 +124,12 @@ static inline int ntrdma_rmr_add(struct ntrdma_rmr *rmr)
 	return ntrdma_rres_add(&rmr->rres);
 }
 
-static inline void ntrdma_rmr_del(struct ntrdma_rmr *rmr)
-{
-	ntrdma_debugfs_rmr_del(rmr);
-}
-
 static inline void ntrdma_rmr_get(struct ntrdma_rmr *rmr)
 {
 	ntrdma_rres_get(&rmr->rres);
 }
 
-static inline void ntrdma_rmr_put(struct ntrdma_rmr *rmr)
-{
-	ntrdma_rres_put(&rmr->rres);
-}
-
-static inline void ntrdma_rmr_repo(struct ntrdma_rmr *rmr)
-{
-	/* FIXME: missing a put */
-	//ntrdma_rres_repo(&rmr->rres);
-}
+void ntrdma_rmr_put(struct ntrdma_rmr *rmr);
 
 struct ntrdma_mr *ntrdma_dev_mr_look(struct ntrdma_dev *dev, int key);
 struct ntrdma_rmr *ntrdma_dev_rmr_look(struct ntrdma_dev *dev, int key);

@@ -80,25 +80,17 @@ struct ntrdma_cq {
 #define ntrdma_cq_dev(__cq) \
 	ntrdma_obj_dev(&(__cq)->obj)
 
-int ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev, int vbell_idx);
-void ntrdma_cq_deinit(struct ntrdma_cq *cq);
+void ntrdma_cq_init(struct ntrdma_cq *cq,
+		struct ntrdma_dev *dev, int vbell_idx);
 int ntrdma_cq_add(struct ntrdma_cq *cq);
-void ntrdma_cq_del(struct ntrdma_cq *cq);
+void ntrdma_cq_remove(struct ntrdma_cq *cq);
 
 static inline void ntrdma_cq_get(struct ntrdma_cq *cq)
 {
 	ntrdma_obj_get(&cq->obj);
 }
 
-static inline void ntrdma_cq_put(struct ntrdma_cq *cq)
-{
-	ntrdma_obj_put(&cq->obj);
-}
-
-static inline void ntrdma_cq_repo(struct ntrdma_cq *cq)
-{
-	ntrdma_obj_repo(&cq->obj);
-}
+void ntrdma_cq_put(struct ntrdma_cq *cq);
 
 void ntrdma_cq_arm_resync(struct ntrdma_dev *dev);
 void ntrdma_cq_arm(struct ntrdma_cq *cq);

@@ -63,6 +63,11 @@ static struct kmem_cache *pd_slab;
 static struct kmem_cache *qp_slab;
 static struct kmem_cache *ibuctx_slab;
 
+void ntrdma_free_qp(struct ntrdma_qp *qp)
+{
+	kmem_cache_free(qp_slab, qp);
+}
+
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
 struct net_device *ntrdma_get_netdev(struct ib_device *ibdev,
@@ -338,9 +343,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	else
 		vbell_idx = ntrdma_dev_vbell_next(dev);
 
-	rc = ntrdma_cq_init(cq, dev, vbell_idx);
-	if (rc)
-		goto err_init;
+	ntrdma_cq_init(cq, dev, vbell_idx);
 
 	rc = ntrdma_cq_add(cq);
 	if (rc)
@@ -353,35 +356,44 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
 	return &cq->ibcq;
 
-	// ntrdma_cq_del(cq);
 err_add:
-	ntrdma_cq_deinit(cq);
-err_init:
-	kmem_cache_free(cq_slab, cq);
+	ntrdma_cq_put(cq);
 err_cq:
 	atomic_dec(&dev->cq_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
 
+static void ntrdma_cq_release(struct kref *kref)
+{
+	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
+	struct ntrdma_cq *cq = container_of(obj, struct ntrdma_cq, obj);
+	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
+
+	ntrdma_debugfs_cq_del(cq);
+	kmem_cache_free(cq_slab, cq);
+	atomic_dec(&dev->cq_num);
+}
+
 static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
-	struct ntrdma_dev *dev = NULL;
 
 	if (!cq) {
-		ntrdma_err(dev, "ntrdma_destroy_cq failed, destroying NULL cq\n");
+		pr_err("ntrdma_destroy_cq failed, destroying NULL cq\n");
 		return -EFAULT;
 	}
-	dev = ntrdma_cq_dev(cq);
-	/* TODO: what should be done about oustanding work completions? */
 
-	ntrdma_cq_del(cq);
-	ntrdma_cq_repo(cq);
-	ntrdma_cq_deinit(cq);
-	kmem_cache_free(cq_slab, cq);
-	atomic_dec(&dev->cq_num);
+	ntrdma_cq_remove(cq);
+	ntrdma_cq_put(cq);
+	/* SYNC ref == 0 ?*/
+
 	return 0;
+}
+
+void ntrdma_cq_put(struct ntrdma_cq *cq)
+{
+	ntrdma_obj_put(&cq->obj, ntrdma_cq_release);
 }
 
 static inline int ntrdma_ib_wc_status_from_cqe(u32 op_status)
@@ -566,9 +578,7 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 
 	ntrdma_vdbg(dev, "allocated pd %p\n", pd);
 
-	rc = ntrdma_pd_init(pd, dev, dev->pd_next_key++);
-	if (rc)
-		goto err_init;
+	ntrdma_pd_init(pd, dev, dev->pd_next_key++);
 
 	ntrdma_vdbg(dev, "initialized pd %p\n", pd);
 
@@ -582,34 +592,40 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 
 	// ntrdma_pd_del(pd);
 err_add:
-	ntrdma_pd_deinit(pd);
-err_init:
 	kmem_cache_free(pd_slab, pd);
 err_pd:
 	atomic_dec(&dev->pd_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
+static void ntrdma_pd_release(struct kref *kref)
+{
+	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
+	struct ntrdma_pd *pd = container_of(obj, struct ntrdma_pd, obj);
+	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
+
+	kmem_cache_free(pd_slab, pd);
+	atomic_dec(&dev->pd_num);
+}
 
 static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 {
 	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
-	struct ntrdma_dev *dev = NULL;
 
 	if (!pd) {
-		ntrdma_err(dev, "ntrdma_dealloc_pd failed, dealloc NULL pd\n");
+		pr_err("ntrdma_dealloc_pd failed, dealloc NULL pd\n");
 		return 0;
 	}
 
-	dev = ntrdma_pd_dev(pd);
-	/* TODO: pd should not have any mr or qp: wait, or fail? */
-
-	ntrdma_pd_del(pd);
-	ntrdma_pd_repo(pd);
-	ntrdma_pd_deinit(pd);
-	kmem_cache_free(pd_slab, pd);
-	atomic_dec(&dev->pd_num);
+	ntrdma_pd_remove(pd);
+	ntrdma_pd_put(pd);
+	/* SYNC ref == 0 ?*/
 	return 0;
+}
+
+void ntrdma_pd_put(struct ntrdma_pd *pd)
+{
+	ntrdma_obj_put(&pd->obj, ntrdma_pd_release);
 }
 
 static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
@@ -999,7 +1015,6 @@ unlock_exit:
 
 static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 {
-	struct ntrdma_dev *dev = NULL;
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 
 	TRACE("qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
@@ -1008,20 +1023,9 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 		return -EFAULT;
 	}
 
-	dev = ntrdma_qp_dev(qp);
-	if (!dev) {
-		pr_err("Invalid dev for qp %p\n", qp);
-		return -EFAULT;
-	}
-	/* TODO: what should be done about outstanding work requests? */
-
-	ntrdma_qp_del(qp);
-	ntrdma_qp_repo(qp);
-	ntrdma_qp_deinit(qp);
-	kmem_cache_free(qp_slab, qp);
-
-	if (dev)
-		atomic_dec(&dev->qp_num);
+	ntrdma_qp_remove(qp);
+	ntrdma_qp_put(qp);
+	/* SYNC ref == 0 ?*/
 
 	return 0;
 }
@@ -1485,8 +1489,10 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		goto err_init;
 
 	rc = ntrdma_mr_add(mr);
-	if (rc)
-		goto err_add;
+	if (rc) {
+		ntrdma_mr_put(mr);
+		return ERR_PTR(rc);
+	}
 
 	mr->ibmr.lkey = mr->ibmr.rkey = mr->res.key;
 
@@ -1504,8 +1510,6 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	return &mr->ibmr;
 
 	// ntrdma_mr_del(mr);
-err_add:
-	ntrdma_mr_deinit(mr);
 err_init:
 	kfree(mr);
 err_mr:
@@ -1517,18 +1521,36 @@ err_len:
 	return ERR_PTR(rc);
 }
 
+static void mr_release(struct kref *kref)
+{
+	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
+	struct ntrdma_res *res = container_of(obj, struct ntrdma_res, obj);
+	struct ntrdma_mr *mr = container_of(res, struct ntrdma_mr, res);
+	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
+
+	TRACE("dev %p, mr %p (res key %d)\n",
+			dev, mr, mr->res.key);
+	ntrdma_debugfs_mr_del(mr);
+	ntrdma_mr_deinit(mr);
+	kfree(mr);
+	ib_umem_release(mr->ib_umem);
+	atomic_dec(&dev->mr_num);
+}
+
+
+void ntrdma_mr_put(struct ntrdma_mr *mr)
+{
+	ntrdma_res_put(&mr->res, mr_release);
+}
+
 static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 {
 	struct ntrdma_mr *mr = ntrdma_ib_mr(ibmr);
-	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
-	struct ib_umem *ib_umem = mr->ib_umem;
 
-	ntrdma_mr_del(mr);
-	ntrdma_mr_repo(mr);
-	ntrdma_mr_deinit(mr);
-	kfree(mr);
-	ib_umem_release(ib_umem);
-	atomic_dec(&dev->mr_num);
+	ntrdma_mr_remove(mr);
+	ntrdma_mr_put(mr);
+	/* SYNC ref == 0 ?*/
+
 	return 0;
 }
 
