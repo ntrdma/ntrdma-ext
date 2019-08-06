@@ -157,6 +157,8 @@ static void ntrdma_rqp_vbell_cb(void *ctx);
 static void ntrdma_send_fail(struct ntrdma_cqe *cqe,
 			const struct ntrdma_send_wqe *wqe, int op_status);
 
+void ntrdma_free_qp(struct ntrdma_qp *qp);
+
 #define move_to_err_state(qp) move_to_err_state_d(qp, __func__, __LINE__)
 
 static inline const u32 *ntrdma_qp_send_cons_buf(struct ntrdma_qp *qp)
@@ -383,6 +385,26 @@ void ntrdma_qp_deinit(struct ntrdma_qp *qp)
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
 	ntrdma_qp_init_deinit(qp, dev, NULL, NULL, NULL, true);
+}
+
+static void ntrdma_qp_release(struct kref *kref)
+{
+	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
+	struct ntrdma_res *res = container_of(obj, struct ntrdma_res, obj);
+	struct ntrdma_qp *qp = container_of(res, struct ntrdma_qp, res);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+
+	ntrdma_debugfs_qp_del(qp);
+	ntrdma_qp_deinit(qp);
+	ntrdma_free_qp(qp);
+
+	if (dev)
+		atomic_dec(&dev->qp_num);
+}
+
+void ntrdma_qp_put(struct ntrdma_qp *qp)
+{
+	ntrdma_res_put(&qp->res, ntrdma_qp_release);
 }
 
 struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
@@ -785,7 +807,7 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 	struct ntrdma_rqp *rqp = ntrdma_rres_rqp(rres);
 
 	ntrdma_rqp_del(rqp);
-	ntrdma_rres_del_unsafe(&rqp->rres);
+	ntrdma_rres_remove_unsafe(&rqp->rres);
 	ntrdma_rqp_deinit(rqp);
 	ntrdma_free_rqp(rqp);
 }
@@ -804,10 +826,8 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	if (is_deinit)
 		goto deinit;
 
-	rc = ntrdma_rres_init(&rqp->rres, dev, &dev->rqp_vec,
+	ntrdma_rres_init(&rqp->rres, dev, &dev->rqp_vec,
 			      ntrdma_rqp_free, key);
-	if (rc)
-		goto err_rres;
 
 	rqp->pd_key = attr->pd_key;
 	rqp->access = 0;
@@ -892,8 +912,6 @@ err_recv_wqe_buf:
 err_send_cqe_buf:
 	ntc_export_buf_free(&rqp->send_wqe_buf);
 err_send_wqe_buf:
-	ntrdma_rres_deinit(&rqp->rres);
-err_rres:
 	return rc;
 }
 
@@ -923,8 +941,26 @@ void ntrdma_rqp_del(struct ntrdma_rqp *rqp)
 	ntrdma_debugfs_rqp_del(rqp);
 }
 
+static void ntrdma_rqp_release(struct kref *kref)
+{
+	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
+	struct ntrdma_rres *rres = container_of(obj, struct ntrdma_rres, obj);
+	struct ntrdma_rqp *rqp = container_of(rres, struct ntrdma_rqp, rres);
+	struct ntrdma_dev *dev = ntrdma_rqp_dev(rqp);
+
+	ntc_remote_buf_unmap(&rqp->peer_send_cqe_buf, dev->ntc);
+
+	ntrdma_rqp_deinit(rqp);
+	ntrdma_free_rqp(rqp);
+}
+
+void ntrdma_rqp_put(struct ntrdma_rqp *rqp)
+{
+	ntrdma_rres_put(&rqp->rres, ntrdma_rqp_release);
+}
+
 const struct ntrdma_recv_wqe *ntrdma_rqp_recv_wqe(struct ntrdma_rqp *rqp,
-						u32 pos)
+					    u32 pos)
 {
 	return ntc_export_buf_const_deref(&rqp->recv_wqe_buf,
 					pos * rqp->recv_wqe_size,

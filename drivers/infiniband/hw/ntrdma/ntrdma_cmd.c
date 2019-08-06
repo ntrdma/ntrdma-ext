@@ -764,14 +764,9 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 		goto err_rmr;
 	}
 
-	rc = ntrdma_rmr_init(rmr, dev, cmd.pd_key, cmd.access,
+	ntrdma_rmr_init(rmr, dev, cmd.pd_key, cmd.access,
 			cmd.mr_addr, cmd.mr_len, cmd.sg_cap,
 			cmd.mr_key);
-	if (rc) {
-		ntrdma_err(dev, "rmr init failed, rc %d\n",
-						rc);
-		goto err_init;
-	}
 
 	for (i = 0; i < count; ++i) {
 		sg_desc_list = READ_ONCE(_cmd->sg_desc_list[i]);
@@ -795,8 +790,6 @@ err_add:
 err_map:
 	for (--i; i >= 0; i--)
 		ntc_remote_buf_unmap(&rmr->sg_list[i], dev->ntc);
-	ntrdma_rmr_deinit(rmr); /* Not sure we need this */
-err_init:
 	kfree(rmr);
 err_rmr:
 err_sanity:
@@ -811,7 +804,6 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 	struct ntrdma_cmd_mr_delete cmd;
 	struct ntrdma_rmr *rmr;
 	int rc;
-	int i;
 
 	cmd = READ_ONCE(*_cmd);
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
@@ -829,16 +821,10 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 		goto err_rmr;
 	}
 
-	for (i = 0; i < rmr->sg_count; i++)
-		ntc_remote_buf_unmap(&rmr->sg_list[i], dev->ntc);
-
-	ntrdma_rmr_del(rmr);
-	ntrdma_rres_del(&rmr->rres);
+	ntrdma_rres_remove(&rmr->rres);
 	ntrdma_rmr_put(rmr);
-	ntrdma_rmr_repo(rmr);
-	ntrdma_rmr_deinit(rmr);
-	kfree(rmr);
-
+	ntrdma_rmr_put(rmr);
+	/* SYNC ref == 0 ?*/
 	rsp->hdr.status = 0;
 	return 0;
 
@@ -902,6 +888,7 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 	rsp->hdr.status = 0;
 	return 0;
 err_map:
+	ntrdma_rmr_put(rmr);
 	for (--i; i >= 0 ; i--) {
 		ntc_remote_buf_unmap(&rmr->sg_list[pos + i], dev->ntc);
 	}
@@ -1073,14 +1060,10 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	if (qp)
 		ntrdma_qp_put(qp);
 
-	ntc_remote_buf_unmap(&rqp->peer_send_cqe_buf, dev->ntc);
-
+	ntrdma_rres_remove(&rqp->rres);
 	ntrdma_rqp_del(rqp);
-	ntrdma_rres_del(&rqp->rres);
 	ntrdma_rqp_put(rqp);
-	ntrdma_rqp_repo(rqp);
-	ntrdma_rqp_deinit(rqp);
-	ntrdma_free_rqp(rqp);
+	ntrdma_rqp_put(rqp);
 
 	rsp->hdr.status = 0;
 	return 0;

@@ -130,15 +130,8 @@ static inline void ntrdma_res_get(struct ntrdma_res *res)
 	ntrdma_obj_get(&res->obj);
 }
 
-static inline void ntrdma_res_put(struct ntrdma_res *res)
-{
-	ntrdma_obj_put(&res->obj);
-}
-
-static inline void ntrdma_res_repo(struct ntrdma_res *res)
-{
-	ntrdma_obj_repo(&res->obj);
-}
+void ntrdma_res_put(struct ntrdma_res *res,
+		void (*obj_release)(struct kref *kref));
 
 /* Remote rdma resource */
 struct ntrdma_rres {
@@ -157,31 +150,24 @@ struct ntrdma_rres {
 
 #define ntrdma_rres_dev(rres) ntrdma_obj_dev(&(rres)->obj)
 
-int ntrdma_rres_init(struct ntrdma_rres *rres,
+void ntrdma_rres_init(struct ntrdma_rres *rres,
 		     struct ntrdma_dev *dev,
 		     struct ntrdma_vec *vec,
 		     void (*free)(struct ntrdma_rres *rres),
 		     u32 key);
 
-void ntrdma_rres_deinit(struct ntrdma_rres *rres);
-
 int ntrdma_rres_add(struct ntrdma_rres *rres);
-void ntrdma_rres_del(struct ntrdma_rres *rres);
-void ntrdma_rres_del_unsafe(struct ntrdma_rres *rres);
+void ntrdma_rres_remove(struct ntrdma_rres *rres);
+void ntrdma_rres_remove_unsafe(struct ntrdma_rres *rres);
 
 static inline void ntrdma_rres_get(struct ntrdma_rres *rres)
 {
 	ntrdma_obj_get(&rres->obj);
 }
 
-static inline void ntrdma_rres_put(struct ntrdma_rres *rres)
+static inline void ntrdma_rres_put(struct ntrdma_rres *rres,
+		void (*release)(struct kref *))
 {
-	ntrdma_obj_put(&rres->obj);
+	ntrdma_obj_put(&rres->obj, release);
 }
-
-static inline void ntrdma_rres_repo(struct ntrdma_rres *rres)
-{
-	ntrdma_obj_repo(&rres->obj);
-}
-
 #endif

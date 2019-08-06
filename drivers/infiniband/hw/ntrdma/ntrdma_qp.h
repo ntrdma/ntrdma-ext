@@ -185,10 +185,9 @@ static inline int ntrdma_qp_add(struct ntrdma_qp *qp)
 	return ntrdma_res_add(&qp->res);
 }
 
-static inline void ntrdma_qp_del(struct ntrdma_qp *qp)
+static inline void ntrdma_qp_remove(struct ntrdma_qp *qp)
 {
 	ntrdma_res_del(&qp->res);
-	ntrdma_debugfs_qp_del(qp);
 }
 
 static inline void ntrdma_qp_get(struct ntrdma_qp *qp)
@@ -196,16 +195,7 @@ static inline void ntrdma_qp_get(struct ntrdma_qp *qp)
 	ntrdma_res_get(&qp->res);
 }
 
-static inline void ntrdma_qp_put(struct ntrdma_qp *qp)
-{
-	ntrdma_res_put(&qp->res);
-}
-
-static inline void ntrdma_qp_repo(struct ntrdma_qp *qp)
-{
-	//FIXME: missing a put (missing in rqp work)
-	//ntrdma_res_repo(&qp->res);
-}
+void ntrdma_qp_put(struct ntrdma_qp *qp);
 
 void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp);
 
@@ -327,16 +317,7 @@ static inline void ntrdma_rqp_get(struct ntrdma_rqp *rqp)
 	ntrdma_rres_get(&rqp->rres);
 }
 
-static inline void ntrdma_rqp_put(struct ntrdma_rqp *rqp)
-{
-	ntrdma_rres_put(&rqp->rres);
-}
-
-static inline void ntrdma_rqp_repo(struct ntrdma_rqp *rqp)
-{
-	//FIXME: missing a put (missing in post send)
-	//ntrdma_rres_repo(&rqp->rres);
-}
+void ntrdma_rqp_put(struct ntrdma_rqp *rqp);
 
 const struct ntrdma_recv_wqe *ntrdma_rqp_recv_wqe(struct ntrdma_rqp *rqp,
 						u32 pos);

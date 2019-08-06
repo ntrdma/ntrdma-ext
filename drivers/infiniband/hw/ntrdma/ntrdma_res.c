@@ -197,8 +197,6 @@ void ntrdma_dev_rres_reset(struct ntrdma_dev *dev)
 			}
 			ntrdma_vec_unlock(rres->vec);
 
-			ntrdma_rres_put(rres);
-			ntrdma_rres_repo(rres);
 			rres->free(rres);
 		}
 		INIT_LIST_HEAD(&dev->rres_list);
@@ -231,9 +229,7 @@ int ntrdma_res_init(struct ntrdma_res *res,
 {
 	int rc;
 
-	rc = ntrdma_obj_init(&res->obj, dev);
-	if (rc)
-		goto err_obj;
+	ntrdma_obj_init(&res->obj, dev);
 
 	res->vec = vec;
 
@@ -263,8 +259,6 @@ int ntrdma_res_init(struct ntrdma_res *res,
 
 err_key:
 	mutex_unlock(&dev->res_lock);
-	ntrdma_obj_deinit(&res->obj);
-err_obj:
 	return rc;
 }
 
@@ -277,16 +271,12 @@ void ntrdma_res_deinit(struct ntrdma_res *res)
 		ntrdma_kvec_dispose_key(res->vec, res->key);
 	}
 	mutex_unlock(&dev->res_lock);
-
-	ntrdma_obj_deinit(&res->obj);
 }
 
 int ntrdma_res_add(struct ntrdma_res *res)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	int rc;
-
-	ntrdma_res_get(res);
 
 	ntrdma_vdbg(dev, "resource obtained\n");
 
@@ -363,7 +353,6 @@ void ntrdma_res_del(struct ntrdma_res *res)
 
 	rc = ntrdma_res_wait_cmds(res);
 	ntrdma_res_unlock(res);
-	ntrdma_res_put(res);
 
 	if (rc) {
 		ntrdma_err(dev,
@@ -374,27 +363,22 @@ void ntrdma_res_del(struct ntrdma_res *res)
 	}
 }
 
-int ntrdma_rres_init(struct ntrdma_rres *rres,
-		     struct ntrdma_dev *dev, struct ntrdma_vec *vec,
-		     void (*free)(struct ntrdma_rres *rres),
-		     u32 key)
+void ntrdma_res_put(struct ntrdma_res *res,
+		void (*obj_release)(struct kref *kref))
 {
-	int rc;
+	ntrdma_obj_put(&res->obj, obj_release);
+}
 
-	rc = ntrdma_obj_init(&rres->obj, dev);
-	if (rc)
-		return rc;
+void ntrdma_rres_init(struct ntrdma_rres *rres,
+		struct ntrdma_dev *dev, struct ntrdma_vec *vec,
+		void (*free)(struct ntrdma_rres *rres),
+		u32 key)
+{
+	ntrdma_obj_init(&rres->obj, dev);
 
 	rres->vec = vec;
 	rres->free = free;
 	rres->key = key;
-
-	return 0;
-}
-
-void ntrdma_rres_deinit(struct ntrdma_rres *rres)
-{
-	ntrdma_obj_deinit(&rres->obj);
 }
 
 int ntrdma_rres_add(struct ntrdma_rres *rres)
@@ -404,8 +388,6 @@ int ntrdma_rres_add(struct ntrdma_rres *rres)
 
 	mutex_lock(&dev->rres_lock);
 	{
-		ntrdma_rres_get(rres);
-
 		rc = ntrdma_vec_ensure_key(rres->vec, rres->key, dev->node);
 		if (rc)
 			goto err_key;
@@ -423,12 +405,11 @@ int ntrdma_rres_add(struct ntrdma_rres *rres)
 	return 0;
 
 err_key:
-	ntrdma_rres_put(rres);
 	mutex_unlock(&dev->rres_lock);
 	return rc;
 }
 
-void ntrdma_rres_del_unsafe(struct ntrdma_rres *rres)
+void ntrdma_rres_remove_unsafe(struct ntrdma_rres *rres)
 {
 	list_del(&rres->obj.dev_entry);
 
@@ -438,13 +419,11 @@ void ntrdma_rres_del_unsafe(struct ntrdma_rres *rres)
 	ntrdma_vec_unlock(rres->vec);
 }
 
-void ntrdma_rres_del(struct ntrdma_rres *rres)
+void ntrdma_rres_remove(struct ntrdma_rres *rres)
 {
 	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
 
 	mutex_lock(&dev->rres_lock);
-	ntrdma_rres_del_unsafe(rres);
+	ntrdma_rres_remove_unsafe(rres);
 	mutex_unlock(&dev->rres_lock);
-
-	ntrdma_rres_put(rres);
 }

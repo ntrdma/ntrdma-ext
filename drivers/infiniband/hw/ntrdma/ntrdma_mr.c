@@ -93,7 +93,6 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 
 void ntrdma_mr_deinit(struct ntrdma_mr *mr)
 {
-	ntrdma_res_deinit(&mr->res);
 	ntc_mr_buf_clear_sgl(mr->sg_list, mr->sg_count);
 }
 
@@ -293,7 +292,7 @@ err:
 	return rc;
 }
 
-int ntrdma_rmr_init(struct ntrdma_rmr *rmr,
+void ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 		    struct ntrdma_dev *dev,
 		    u32 pd_key, u32 access,
 		    u64 addr, u64 len,
@@ -310,22 +309,37 @@ int ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 	memset(rmr->sg_list, 0,
 		sg_count * sizeof(*rmr->sg_list));
 
-	return ntrdma_rres_init(&rmr->rres, dev, &dev->rmr_vec,
-				ntrdma_rmr_free, key);
+	ntrdma_rres_init(&rmr->rres, dev, &dev->rmr_vec,
+			ntrdma_rmr_free, key);
 }
 
-void ntrdma_rmr_deinit(struct ntrdma_rmr *rmr)
+static void ntrdma_rmr_release(struct kref *kref)
 {
-	ntrdma_rres_deinit(&rmr->rres);
+	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
+	struct ntrdma_rres *rres = container_of(obj, struct ntrdma_rres, obj);
+	struct ntrdma_rmr *rmr = container_of(rres, struct ntrdma_rmr, rres);
+	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
+	int i;
+
+	ntrdma_debugfs_rmr_del(rmr);
+
+	for (i = 0; i < rmr->sg_count; i++)
+		ntc_remote_buf_unmap(&rmr->sg_list[i], dev->ntc);
+
+	kfree(rmr);
+}
+
+void ntrdma_rmr_put(struct ntrdma_rmr *rmr)
+{
+	ntrdma_rres_put(&rmr->rres, ntrdma_rmr_release);
 }
 
 static void ntrdma_rmr_free(struct ntrdma_rres *rres)
 {
 	struct ntrdma_rmr *rmr = ntrdma_rres_rmr(rres);
 
-	ntrdma_rmr_del(rmr);
-	ntrdma_rmr_deinit(rmr);
-	kfree(rmr);
+	ntrdma_rmr_put(rmr);
+	/* SYNC ref == 0 ?*/
 }
 
 struct ntrdma_mr *ntrdma_dev_mr_look(struct ntrdma_dev *dev, int key)

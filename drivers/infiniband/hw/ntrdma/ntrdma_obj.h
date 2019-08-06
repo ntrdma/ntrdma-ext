@@ -36,6 +36,7 @@
 #include <linux/list.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
+#include <linux/kref.h>
 
 #include "ntrdma.h"
 
@@ -44,64 +45,32 @@ struct ntrdma_obj {
 	struct ntrdma_dev		*dev;
 	/* The entry in the device list for this type of object */
 	struct list_head		dev_entry;
-
-	/* The number of reference holders of this object */
-	unsigned int			ref_count;
-	/* Broadcast if the ref count reaches zero */
-	wait_queue_head_t		ref_cond;
-	/* Synchronize access to ref count */
-	spinlock_t			ref_lock;
+	struct kref kref;
 };
 
 #define ntrdma_obj_dev(obj) ((obj)->dev)
 #define ntrdma_obj_dev_entry(obj) ((obj)->dev_entry)
 
-static inline int ntrdma_obj_init(struct ntrdma_obj *obj,
-				  struct ntrdma_dev *dev)
-{
-	obj->dev = dev;
-	obj->ref_count = 0;
-	init_waitqueue_head(&obj->ref_cond);
-	spin_lock_init(&obj->ref_lock);
-
-	return 0;
-}
-
-static inline void ntrdma_obj_deinit(struct ntrdma_obj *obj)
-{
-}
-
 /* Claim a reference to the object */
 static inline void ntrdma_obj_get(struct ntrdma_obj *obj)
 {
-	spin_lock_bh(&obj->ref_lock);
-	{
-		++obj->ref_count;
-	}
-	spin_unlock_bh(&obj->ref_lock);
+	int ret = kref_get_unless_zero(&obj->kref);
+
+	WARN(!ret, "Should not happen ref is zero for obj %p", obj);
 }
 
 /* Relinquish a reference to the object */
-static inline void ntrdma_obj_put(struct ntrdma_obj *obj)
+static inline void ntrdma_obj_put(struct ntrdma_obj *obj,
+		void (*obj_release)(struct kref *kref))
 {
-	spin_lock_bh(&obj->ref_lock);
-	{
-		if (!--obj->ref_count)
-			wake_up_all(&obj->ref_cond);
-	}
-	spin_unlock_bh(&obj->ref_lock);
+	kref_put(&obj->kref, obj_release);
 }
 
-/* Repossess an object.  Wait for references to be relinquished. */
-static inline void ntrdma_obj_repo(struct ntrdma_obj *obj)
+static inline void ntrdma_obj_init(struct ntrdma_obj *obj,
+				  struct ntrdma_dev *dev)
 {
-	spin_lock_bh(&obj->ref_lock);
-	{
-		wait_event_cmd(obj->ref_cond, !obj->ref_count,
-			       spin_unlock_bh(&obj->ref_lock),
-			       spin_lock_bh(&obj->ref_lock));
-	}
-	spin_unlock_bh(&obj->ref_lock);
+	obj->dev = dev;
+	kref_init(&obj->kref);
 }
 
 #endif

@@ -51,25 +51,15 @@ struct ntrdma_pd {
 #define ntrdma_ib_pd(__ib) \
 	container_of(__ib, struct ntrdma_pd, ibpd)
 
-int ntrdma_pd_init(struct ntrdma_pd *pd, struct ntrdma_dev *dev, u32 key);
-void ntrdma_pd_deinit(struct ntrdma_pd *pd);
+void ntrdma_pd_init(struct ntrdma_pd *pd, struct ntrdma_dev *dev, u32 key);
 int ntrdma_pd_add(struct ntrdma_pd *cq);
-void ntrdma_pd_del(struct ntrdma_pd *cq);
+void ntrdma_pd_remove(struct ntrdma_pd *cq);
 
 static inline void ntrdma_pd_get(struct ntrdma_pd *pd)
 {
 	ntrdma_obj_get(&pd->obj);
 }
 
-static inline void ntrdma_pd_put(struct ntrdma_pd *pd)
-{
-	ntrdma_obj_put(&pd->obj);
-}
-
-static inline void ntrdma_pd_repo(struct ntrdma_pd *pd)
-{
-	/* FIXME: missing a put somewhere */
-	//ntrdma_obj_repo(&pd->obj);
-}
+void ntrdma_pd_put(struct ntrdma_pd *pd);
 
 #endif
