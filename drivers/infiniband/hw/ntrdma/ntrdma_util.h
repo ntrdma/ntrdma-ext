@@ -87,7 +87,7 @@ struct ntrdma_kvec {
 	unsigned long			*keys;
 	/* Key indexed lookup of elements, cap elements long */
 	void				**look;
-	spinlock_t			lock;
+	rwlock_t			lock;
 };
 
 /* Allocate an empty vector with a capacity */
@@ -103,9 +103,11 @@ void *ntrdma_kvec_look(struct ntrdma_kvec *vec, u32 key);
 /* Look up an element in a vector */
 void ntrdma_kvec_set(struct ntrdma_kvec *vec, u32 key, void *elem);
 /* Lock kvec access */
-void ntrdma_kvec_lock(struct ntrdma_kvec *vec);
+void ntrdma_kvec_write_lock(struct ntrdma_kvec *vec);
 /* Unlock kvec access */
-void ntrdma_kvec_unlock(struct ntrdma_kvec *vec);
+void ntrdma_kvec_write_unlock(struct ntrdma_kvec *vec);
+void ntrdma_kvec_read_lock(struct ntrdma_kvec *vec);
+void ntrdma_kvec_read_unlock(struct ntrdma_kvec *vec);
 
 /* TODO: move to static in c file */
 /* Resize a vector if cap is larger than the allocated capacity */

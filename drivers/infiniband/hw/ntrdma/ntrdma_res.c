@@ -171,13 +171,13 @@ struct ntrdma_res *ntrdma_dev_res_look(struct ntrdma_dev *dev,
 {
 	struct ntrdma_res *res;
 
-	ntrdma_kvec_lock(vec);
-	{
-		res = ntrdma_kvec_look(vec, key);
-		if (res)
-			ntrdma_res_get(res);
-	}
-	ntrdma_kvec_unlock(vec);
+	ntrdma_kvec_read_lock(vec);
+
+	res = ntrdma_kvec_look(vec, key);
+	if (res)
+		ntrdma_res_get(res);
+
+	ntrdma_kvec_read_unlock(vec);
 
 	return res;
 }
@@ -293,11 +293,11 @@ int ntrdma_res_add(struct ntrdma_res *res)
 	ntrdma_res_lock(res);
 	mutex_lock(&dev->res_lock);
 	{
-		ntrdma_kvec_lock(res->vec);
+		ntrdma_kvec_write_lock(res->vec);
 		{
 			ntrdma_kvec_set(res->vec, res->key, res);
 		}
-		ntrdma_kvec_unlock(res->vec);
+		ntrdma_kvec_write_unlock(res->vec);
 
 		list_add_tail(&res->obj.dev_entry, &dev->res_list);
 
@@ -353,11 +353,11 @@ void ntrdma_res_del(struct ntrdma_res *res)
 
 		list_del(&res->obj.dev_entry);
 
-		ntrdma_kvec_lock(res->vec);
+		ntrdma_kvec_write_lock(res->vec);
 		{
 			ntrdma_kvec_set(res->vec, res->key, NULL);
 		}
-		ntrdma_kvec_unlock(res->vec);
+		ntrdma_kvec_write_unlock(res->vec);
 	}
 	mutex_unlock(&dev->res_lock);
 
