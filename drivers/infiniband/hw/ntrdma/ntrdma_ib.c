@@ -393,6 +393,8 @@ static inline int ntrdma_ib_wc_status_from_cqe(u32 op_status)
 	case NTRDMA_WC_ERR_RDMA_RANGE:
 	case NTRDMA_WC_ERR_RDMA_ACCESS:
 		return IB_WC_REM_ACCESS_ERR;
+	case NTRDMA_WC_ERR_LOC_PORT:
+		return IB_WC_LOC_PROT_ERR;
 	}
 	return IB_WC_FATAL_ERR;
 }
@@ -701,25 +703,6 @@ err_qp:
 					  NTRDMA_IBQP_MASK_FAKE_SUPPORTED | \
 					  0 )
 
-static u32 ntrdma_ib_state(int ib_state)
-{
-	switch(ib_state) {
-	case IB_QPS_RESET:
-		return NTRDMA_QPS_RESET;
-	case IB_QPS_INIT:
-		return NTRDMA_QPS_INIT;
-	case IB_QPS_RTR:
-		return NTRDMA_QPS_RECV_READY;
-	case IB_QPS_RTS:
-		return NTRDMA_QPS_SEND_READY;
-	case IB_QPS_SQD:
-		return NTRDMA_QPS_SEND_DRAIN;
-	case IB_QPS_ERR:
-		return NTRDMA_QPS_ERROR;
-	}
-	return NTRDMA_QPS_ERROR;
-}
-
 static int ntrdma_query_qp(struct ib_qp *ibqp,
 			   struct ib_qp_attr *ibqp_attr,
 			   int ibqp_mask,
@@ -889,8 +872,8 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	new_state = ibqp_mask & IB_QP_STATE ?
 			ibqp_attr->qp_state : cur_state;
 
-	ntrdma_info(dev, "QP type %d state %d -> %d (ibqp_mask 0x%x)\n",
-			ibqp->qp_type, cur_state, ntrdma_ib_state(new_state),
+	ntrdma_info(dev, "QP  %d state %d (%d) -> %d (ibqp_mask 0x%x)\n",
+			qp->res.key, cur_state, qp->state, new_state,
 			ibqp_mask);
 
 	if ((ibqp_mask & IB_QP_CUR_STATE) &&
@@ -921,23 +904,21 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	}
 
 	if ((ibqp->qp_type != IB_QPT_GSI) && !ntc_is_link_up(dev->ntc) &&
-			(ntrdma_ib_state(new_state) > NTRDMA_QPS_INIT)) {
-		ntrdma_err(dev, "device is not ready\n");
+			is_state_send_ready(new_state)) {
+		ntrdma_err(dev, "link is not up, cannot move to ready qp %d\n",
+				qp->res.key);
 		rc = -EAGAIN;
 		goto unlock_exit;
 	}
 
 	if (ibqp_mask & IB_QP_STATE) {
 		ntrdma_vdbg(dev, "qp %p state %d -> %d\n",
-				qp, qp->state,
-				ntrdma_ib_state(new_state));
+				qp, qp->state, new_state);
 
-		qp->state = ntrdma_ib_state(new_state);
-		if ((qp->state >= NTRDMA_QPS_RESET) &&
-				((qp->send_aborting != false) ||
-						(qp->send_abort != false))) {
-			ntrdma_err(dev,
-					"Qp %p (res key %d) abort %d, aborting %d\n",
+		qp->state = new_state;
+		if (!is_state_error(qp->state) && ((qp->send_aborting != false)
+				|| (qp->send_abort != false))) {
+			ntrdma_err(dev, "QP %p (res key %d) abort %d, aborting %d\n",
 					qp, qp->res.key,
 					qp->send_abort, qp->send_aborting);
 			qp->send_aborting = false;

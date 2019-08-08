@@ -58,6 +58,7 @@
 #define NTRDMA_WC_ERR_RDMA_KEY		7
 #define NTRDMA_WC_ERR_RDMA_RANGE	8
 #define NTRDMA_WC_ERR_RDMA_ACCESS	9
+#define NTRDMA_WC_ERR_LOC_PORT		10
 
 struct ntrdma_send_wqe {
 	u64				ulp_handle;
