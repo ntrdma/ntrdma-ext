@@ -1316,9 +1316,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	rsp->qp_key = cmd->qp_key;
 
 	/* sanity check */
-	if (cmd->access > MAX_SUM_ACCESS_FLAGS ||
-			(cmd->state >= NTRDMA_QPS_ERROR &&
-					cmd->state <= NTRDMA_QPS_SEND_READY)) {
+	if (cmd->access > MAX_SUM_ACCESS_FLAGS || !is_state_valid(cmd->state)) {
 		ntrdma_err(dev,
 				"Sanity failure %d %d\n",
 				cmd->access, cmd->state);
@@ -1343,7 +1341,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	tasklet_schedule(&rqp->send_work);
 	ntrdma_rqp_put(rqp);
 
-	if (cmd->state == NTRDMA_QPS_ERROR) {
+	if (is_state_error(cmd->state)) {
 		qp = ntrdma_dev_qp_look_and_get(dev, cmd->dest_qp_key);
 		TRACE("qp %p (%d) state changed to %d\n",
 				qp, cmd->dest_qp_key, cmd->state);

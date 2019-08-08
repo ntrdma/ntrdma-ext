@@ -37,16 +37,6 @@
 
 #include "ntrdma_res.h"
 
-enum ntrdma_qp_state {
-	NTRDMA_QPS_ERROR		= -1,
-
-	NTRDMA_QPS_RESET		= 0,
-	NTRDMA_QPS_INIT,
-	NTRDMA_QPS_RECV_READY,
-	NTRDMA_QPS_SEND_DRAIN, /* Note: unused, no QP UD this version */
-	NTRDMA_QPS_SEND_READY,
-};
-
 /* Queue Pair Entry in Completion Queue */
 struct ntrdma_poll {
 	struct list_head		cq_entry;
@@ -61,6 +51,7 @@ struct ntrdma_poll {
 
 	void (*poll_put_and_done)(struct ntrdma_poll *poll,
 				  u32 pos, u32 base);
+	bool is_send;
 };
 
 /* Queue Pair */
@@ -92,6 +83,8 @@ struct ntrdma_qp {
 
 	/* The behavior within the queue pair state */
 	int			recv_abort;
+	int			recv_aborting;
+	int			recv_abort_first;
 	int			send_abort;    /* wrap up mode, set error
 						* completion for all wqe that
 						* did not get completion yet
@@ -102,6 +95,7 @@ struct ntrdma_qp {
 						* process it, before the
 						* send_abort set
 						*/
+	int			send_abort_first;
 
 	/* key of connected remote queue pair, or -1 if not connected */
 	u32			rqp_key;
@@ -360,4 +354,40 @@ struct ntrdma_cqe *ntrdma_rqp_send_cqe(struct ntrdma_rqp *rqp,
 struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, int key);
 struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, int key);
 
+static inline bool is_state_valid(int state)
+{
+	return ((state >= IB_QPS_RESET) && (state <= IB_QPS_ERR));
+}
+
+static inline bool is_state_send_ready(int state)
+{
+	return ((state == IB_QPS_RTR) || (state == IB_QPS_RTS));
+}
+
+static inline bool is_state_recv_ready(int state)
+{
+	return ((state == IB_QPS_RTR) || (state == IB_QPS_RTS) ||
+			(state == IB_QPS_SQE));
+}
+
+static inline bool is_state_error(int state)
+{
+	return ((state == IB_QPS_ERR) || (state == IB_QPS_SQE));
+}
+
+static inline bool is_state_out_of_reset(int state)
+{
+	return (is_state_valid(state) && !is_state_error(state) &&
+			(state != IB_QPS_RESET));
+}
+
+static inline int move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
+		int line)
+{
+	TRACE("Move QP %d to err state from %s, line %d\n",
+			qp->res.key, s, line);
+	if (qp->ibqp.qp_type == IB_QPT_GSI)
+		return IB_QPS_SQE;
+	return IB_QPS_ERR;
+}
 #endif
