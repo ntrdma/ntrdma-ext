@@ -193,8 +193,11 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 
 	qp->state = 0;
 	qp->recv_abort = false;
+	qp->recv_aborting = false;
+	qp->recv_abort_first = false;
 	qp->send_abort = false;
 	qp->send_aborting = false;
+	qp->send_abort_first = false;
 	qp->access = 0;
 
 	qp->rqp_key = -1;
@@ -773,10 +776,20 @@ err:
 static void ntrdma_qp_reset(struct ntrdma_res *res)
 {
 	struct ntrdma_qp *qp;
+	struct ntrdma_dev *dev;
+	struct ntrdma_rqp *rqp;
 	int start, end, base;
 
 	qp = ntrdma_res_qp(res);
-	TRACE("qp reset %p (res key: %d)\n", qp, qp->res.key);
+	dev = ntrdma_qp_dev(qp);
+	if (dev) {
+		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
+		if (rqp) {
+			rqp->state = IB_QPS_ERR;
+			ntrdma_rqp_put(rqp);
+		}
+	}
+	TRACE("qp reset %p (res key: %d) rqp %p\n", qp, qp->res.key, rqp);
 	spin_lock_bh(&qp->recv_prod_lock);
 	{
 		if (qp->ibqp.qp_type != IB_QPT_GSI)
@@ -793,6 +806,11 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 		qp->peer_send_vbell_idx = 0;
 	}
 	spin_unlock_bh(&qp->send_prod_lock);
+	/* GSI is always active, we can move it to SQE only if we generate
+	 * error completion, here we check if there are completion waiting
+	 * if yet we move it to aborting and will generate the completion
+	 * later, if not it is transparent, and no need for the aborting
+	 */
 	if (qp->ibqp.qp_type == IB_QPT_GSI) {
 		ntrdma_qp_send_cmpl_start(qp);
 		ntrdma_ring_consume(qp->send_abort ? qp->send_post :
@@ -801,7 +819,11 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 		ntrdma_qp_send_cmpl_done(qp);
 		if (start != end)
 			qp->send_aborting = true;
-	}
+	} else
+		qp->send_aborting = true;
+	/* GSI can have only send abort (in SQE state) */
+	if (qp->ibqp.qp_type != IB_QPT_GSI)
+		qp->recv_aborting = true;
 }
 
 static void ntrdma_rqp_free(struct ntrdma_rres *rres)
@@ -1228,8 +1250,30 @@ static void ntrdma_qp_recv_cmpl_done(struct ntrdma_qp *qp)
 static void ntrdma_qp_recv_cmpl_get(struct ntrdma_qp *qp,
 				    u32 *pos, u32 *end, u32 *base)
 {
-	ntrdma_ring_consume(qp->recv_abort ? qp->recv_post : qp->recv_cons,
-			    qp->recv_cmpl, qp->recv_cap, pos, end, base);
+	u32 recv_cons;
+
+	if (qp->recv_abort) {
+		recv_cons = qp->recv_post;
+		qp->recv_cons = recv_cons;
+	} else
+		recv_cons = qp->recv_cons;
+	ntrdma_ring_consume(recv_cons, qp->recv_cmpl, qp->recv_cap,
+			pos, end, base);
+
+	if (qp->recv_aborting && (*pos == *end) && !qp->recv_abort) {
+		qp->recv_abort = true;
+		qp->recv_abort_first = true;
+		TRACE(
+				"qp %p (res key %d): move from aborting to abort, pos = end = %d, cons %d, post %d\n",
+				qp, qp->res.key, *pos, recv_cons,
+				qp->recv_post);
+	}
+	if (qp->recv_aborting && (*pos != *end))
+		TRACE(
+				"qp %p (res key: %d): recv_bort %d, post %d, cons %d, cmpl %d, cap %d, pos %d, end %d, base %d\n",
+				qp, qp->res.key, qp->recv_abort,
+				qp->recv_post, qp->recv_cons, qp->recv_cmpl,
+				qp->recv_cap, *pos, *end, *base);
 	rmb(); /* read index before recv completions */
 }
 
@@ -1325,8 +1369,11 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 	u32 send_cons;
 
 	/* during abort, short circuit prod and cons: abort to post idx */
-	if (qp->send_abort)
+	if (qp->send_abort) {
+		TRACE("qp %d (already in abort)\n", qp->res.key);
 		send_cons = qp->send_post;
+		*qp->send_cons_buf = send_cons;
+	}
 	else
 		send_cons = *qp->send_cons_buf;
 
@@ -1334,6 +1381,7 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 			    pos, end, base);
 	if (qp->send_aborting && (*pos == *end) && !qp->send_abort) {
 		qp->send_abort = true;
+		qp->send_abort_first = true;
 		TRACE(
 				"qp %p (res key %d): move from aborting to abort, pos = end = %d, cons %d, post %d\n",
 				qp, qp->res.key, *pos, send_cons,
@@ -1425,6 +1473,7 @@ static int ntrdma_qp_poll_recv_start_and_get(struct ntrdma_poll *poll,
 					     struct ntrdma_qp **poll_qp, u32 *poll_pos,
 					     u32 *poll_end, u32 *poll_base)
 {
+	int rc = 0;
 	struct ntrdma_qp *qp = ntrdma_recv_poll_qp(poll);
 	u32 pos, end, base;
 
@@ -1432,12 +1481,13 @@ static int ntrdma_qp_poll_recv_start_and_get(struct ntrdma_poll *poll,
 	ntrdma_qp_recv_cmpl_get(qp, &pos, &end, &base);
 
 	if (pos == end) {
-		*poll_qp = qp;
-		*poll_pos = pos;
-		*poll_end = end;
-		*poll_base = base;
-		ntrdma_qp_recv_cmpl_done(qp);
-		return -EAGAIN;
+		/* update once qp->recv_cons */
+		if (qp->recv_abort_first)
+			ntrdma_qp_recv_cmpl_get(qp, &pos, &end, &base);
+		if (pos == end) {
+			ntrdma_qp_recv_cmpl_done(qp);
+			rc = -EAGAIN;
+		}
 	}
 
 	end = min_t(u32, end, pos + NTRDMA_QP_BATCH_SIZE);
@@ -1447,7 +1497,7 @@ static int ntrdma_qp_poll_recv_start_and_get(struct ntrdma_poll *poll,
 	*poll_end = end;
 	*poll_base = base;
 
-	return 0;
+	return rc;
 }
 
 static void ntrdma_qp_poll_recv_put_and_done(struct ntrdma_poll *poll,
@@ -1465,20 +1515,28 @@ static struct ntrdma_cqe *ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
 	struct ntrdma_qp *qp = ntrdma_recv_poll_qp(poll);
 	struct ntrdma_cqe *cqe = ntrdma_qp_recv_cqe(qp, pos);
 	struct ntrdma_recv_wqe *wqe = ntrdma_qp_recv_wqe(qp, pos);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	int opt;
 
 	if (qp->recv_abort) {
+		opt = qp->recv_abort_first ? NTRDMA_WC_ERR_LOC_PORT :
+				NTRDMA_WC_ERR_ABORTED;
 		ntrdma_recv_fail(abort_cqe, wqe, NTRDMA_WC_ERR_ABORTED);
+		qp->recv_abort_first = false;
+		ntrdma_info(dev, "fail completion opt %d QP %d\n",
+				opt, qp->res.key);
 		return abort_cqe;
 	}
-
 	if (wqe->op_status) {
-		qp->recv_abort = true;
+		qp->recv_aborting = true;
 		ntrdma_recv_fail(abort_cqe, wqe, wqe->op_status);
+		TRACE("qp %d wqe status %d\n", qp->res.key, wqe->op_status);
 		return abort_cqe;
 	}
-
-	if (cqe->op_status)
-		qp->recv_abort = true;
+	if (cqe->op_status) {
+		qp->recv_aborting = true;
+		TRACE("qp %d cqe status %d\n", qp->res.key, cqe->op_status);
+	}
 
 	return cqe;
 }
@@ -1487,6 +1545,7 @@ static int ntrdma_qp_poll_send_start_and_get(struct ntrdma_poll *poll,
 					     struct ntrdma_qp **poll_qp, u32 *poll_pos,
 					     u32 *poll_end, u32 *poll_base)
 {
+	int rc = 0;
 	struct ntrdma_qp *qp = ntrdma_send_poll_qp(poll);
 	u32 pos, end, base;
 
@@ -1494,12 +1553,13 @@ static int ntrdma_qp_poll_send_start_and_get(struct ntrdma_poll *poll,
 	ntrdma_qp_send_cmpl_get(qp, &pos, &end, &base);
 
 	if (pos == end) {
-		*poll_qp = qp;
-		*poll_pos = pos;
-		*poll_end = end;
-		*poll_base = base;
-		ntrdma_qp_send_cmpl_done(qp);
-		return -EAGAIN;
+		/* In this cae we update once the qp->send_cons_buf */
+		if (qp->send_abort_first)
+			ntrdma_qp_send_cmpl_get(qp, &pos, &end, &base);
+		if (pos == end) {
+			ntrdma_qp_send_cmpl_done(qp);
+			rc =  -EAGAIN;
+		}
 	}
 
 	end = min_t(u32, end, pos + NTRDMA_QP_BATCH_SIZE);
@@ -1509,7 +1569,7 @@ static int ntrdma_qp_poll_send_start_and_get(struct ntrdma_poll *poll,
 	*poll_end = end;
 	*poll_base = base;
 
-	return 0;
+	return rc;
 }
 
 static void ntrdma_qp_poll_send_put_and_done(struct ntrdma_poll *poll,
@@ -1527,20 +1587,35 @@ static struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 	struct ntrdma_qp *qp = ntrdma_send_poll_qp(poll);
 	struct ntrdma_cqe *cqe = ntrdma_qp_send_cqe(qp, pos);
 	struct ntrdma_send_wqe *wqe = ntrdma_qp_send_wqe(qp, pos);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	int opt;
 
 	if (qp->send_abort) {
-		ntrdma_send_fail(abort_cqe, wqe, NTRDMA_WC_ERR_ABORTED);
+		opt = qp->send_abort_first ? NTRDMA_WC_ERR_LOC_PORT :
+				NTRDMA_WC_ERR_ABORTED;
+		ntrdma_send_fail(abort_cqe, wqe, opt);
+		qp->send_abort_first = false;
+		ntrdma_info(dev, "fail completion opt %d QP %d\n",
+				opt, qp->res.key);
 		return abort_cqe;
 	}
 
 	if (wqe->op_status) {
-		qp->send_abort = true;
+		/* TODO: should not happen if we are here and not in aborting
+		 * already
+		 */
+		qp->send_aborting = true;
 		ntrdma_send_fail(abort_cqe, wqe, wqe->op_status);
+		TRACE("qp %d wqe->op_status %d, move to abort\n", qp->res.key,
+				wqe->op_status);
 		return abort_cqe;
 	}
 
-	if (cqe->op_status)
-		qp->send_abort = true;
+	if (cqe->op_status) {
+		qp->send_aborting = true;
+		TRACE("qp %d, cqe->op_status %d, move to abort\n",
+				qp->res.key, cqe->op_status);
+	}
 
 	return cqe;
 }
@@ -1647,7 +1722,9 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* get the next producing range in the send ring */
 	ntrdma_qp_send_prod_get(qp, &start, &end, &base);
-
+	if (qp->ibqp.qp_type == IB_QPT_GSI)
+		ntrdma_info(dev, "qp %d, start %d, end %d, base %d\n",
+				qp->res.key, start, end, base);
 	/* quit if there is no send work to do */
 	if (start == end) {
 		ntrdma_qp_send_prod_done(qp);
@@ -1657,6 +1734,15 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* limit the range to batch size */
 	end = min_t(u32, end, start + NTRDMA_QP_BATCH_SIZE);
 
+	/* On GSI qp we do not change qp state in reset, since it cannot move
+	 * to SQE state without error completion, we move it to aborting
+	 * and on first send (here) we will provide the error completion
+	 * and move to error state
+	 */
+	if (qp->send_abort || qp->send_aborting) {
+		ntrdma_err(dev, "qp %d in abort process\n", qp->res.key);
+		goto err_rqp;
+	}
 	/* sending requires a connected rqp */
 	rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 	if (!rqp) {
@@ -1865,8 +1951,18 @@ err_memcpy:
 err_recv:
 	ntrdma_rqp_put(rqp);
 err_rqp:
-	ntrdma_qp_send_prod_done(qp);
-	ntrdma_err(dev, "err_rqp - rc = %d on qp %p", rc, qp);
+	if (qp->ibqp.qp_type == IB_QPT_GSI) {
+		qp->state = IB_QPS_SQE;
+		qp->send_aborting = true;
+		qp->send_abort = false;
+		qp->send_abort_first = false;
+		ntrdma_qp_send_prod_put(qp, end, base);
+		ntrdma_qp_send_prod_done(qp);
+		ntrdma_cq_cue(qp->send_cq);
+	} else
+		ntrdma_qp_send_prod_done(qp);
+	ntrdma_err(dev, "err_rqp QP %d aborting = %d qp %p, cq %p end %d\n",
+			qp->send_aborting, qp->res.key, qp, qp->send_cq, end);
 }
 
 static inline void ntrdma_rqp_send_vbell_clear(struct ntrdma_dev *dev,
@@ -2235,7 +2331,9 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
 		if (!rc) {
 			qp->state = move_to_err_state(qp);
 			qp->send_aborting = true;
+			qp->recv_aborting = true;
 			ntrdma_qp_send_prod_done(qp);
+			TRACE("qp %d - aborting\n", qp->res.key);
 		}
 	}
 	if (!rqp)

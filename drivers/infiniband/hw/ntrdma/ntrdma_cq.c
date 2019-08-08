@@ -34,6 +34,7 @@
 #include "ntrdma_cq.h"
 #include "ntrdma_qp.h"
 
+void ntrdma_cq_cue(struct ntrdma_cq *cq);
 static void ntrdma_cq_cue_work(unsigned long ptrhld);
 static void ntrdma_cq_vbell_cb(void *ctx);
 
@@ -48,6 +49,7 @@ int ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev, int vbell_idx)
 		goto err_obj;
 
 	cq->arm = 0;
+	cq->need_cue = false;
 	spin_lock_init(&cq->arm_lock);
 
 	INIT_LIST_HEAD(&cq->poll_list);
@@ -56,7 +58,6 @@ int ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev, int vbell_idx)
 	tasklet_init(&cq->cue_work,
 		     ntrdma_cq_cue_work,
 		     to_ptrhld(cq));
-
 	ntrdma_vbell_init(&cq->vbell, ntrdma_cq_vbell_cb, cq);
 	cq->vbell_idx = vbell_idx;
 
@@ -94,6 +95,7 @@ void ntrdma_cq_del(struct ntrdma_cq *cq)
 	spin_lock_bh(&cq->arm_lock);
 	{
 		cq->arm = 0;
+		cq->need_cue = false;
 		ntrdma_dev_vbell_del(dev, &cq->vbell);
 	}
 	spin_unlock_bh(&cq->arm_lock);
@@ -114,25 +116,35 @@ void ntrdma_cq_del(struct ntrdma_cq *cq)
 void ntrdma_cq_arm(struct ntrdma_cq *cq)
 {
 	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
+	bool need_cue;
 
 	spin_lock_bh(&cq->arm_lock);
 	{
 		ntrdma_dev_vbell_add_clear(dev, &cq->vbell, cq->vbell_idx);
 		++cq->arm;
+		need_cue = cq->need_cue;
+		cq->need_cue = false;
+		TRACE("cq %p arm %d\n", cq, cq->arm);
 	}
 	spin_unlock_bh(&cq->arm_lock);
+	if (need_cue)
+		ntrdma_cq_cue(cq);
 }
 
 void ntrdma_cq_cue(struct ntrdma_cq *cq)
 {
 	spin_lock_bh(&cq->arm_lock);
-	{
+	TRACE("cq %p arm %d\n", cq, cq->arm);
+	if (cq->arm) {
 		for (; cq->arm; --cq->arm)
 			cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
+		spin_unlock_bh(&cq->arm_lock);
+		this_cpu_add(dev_cnt.cqes_armed, cq->arm);
+		this_cpu_inc(dev_cnt.cqes_notified);
+	} else {
+		cq->need_cue = true;
+		spin_unlock_bh(&cq->arm_lock);
 	}
-	spin_unlock_bh(&cq->arm_lock);
-	this_cpu_add(dev_cnt.cqes_armed, cq->arm);
-	this_cpu_inc(dev_cnt.cqes_notified);
 }
 
 void ntrdma_cq_add_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll)
@@ -171,9 +183,10 @@ int ntrdma_cq_cmpl_get(struct ntrdma_cq *cq, struct ntrdma_qp **qp,
 
 	list_for_each_entry(poll, &cq->poll_list, cq_entry) {
 		rc = poll->poll_start_and_get(poll, qp, pos, end, base);
-
-		if (rc == -EAGAIN)
-			continue;
+		if (rc == -EAGAIN && qp && *qp) {
+			if (rc == -EAGAIN)
+				continue;
+		}
 
 		/* move the head to after the entry (rotate the list) */
 		list_move(&cq->poll_list, &poll->cq_entry);
