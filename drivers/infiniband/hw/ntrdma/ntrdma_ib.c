@@ -487,7 +487,6 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 				rc = ntrdma_ib_wc_from_cqe(&ibwc[count], qp, cqe);
 				if (rc)
 					break;
-
 				TRACE("OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u\n",
 						ibwc[count].opcode,
 						cqe->op_code,
@@ -916,13 +915,18 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 				qp, qp->state, new_state);
 
 		qp->state = new_state;
-		if (!is_state_error(qp->state) && ((qp->send_aborting != false)
-				|| (qp->send_abort != false))) {
-			ntrdma_err(dev, "QP %p (res key %d) abort %d, aborting %d\n",
-					qp, qp->res.key,
-					qp->send_abort, qp->send_aborting);
+		TRACE(
+				"qp %d move to state %d, s_a %d, s_aing %d, r_a %d, r_aing %d\n",
+				qp->res.key, qp->state,
+				qp->send_abort, qp->send_aborting,
+				qp->recv_abort, qp->recv_aborting);
+		if (!is_state_error(qp->state)) {
 			qp->send_aborting = false;
 			qp->send_abort = false;
+		}
+		if (qp->state != IB_QPS_ERR) {
+			qp->recv_aborting = false;
+			qp->recv_abort = false;
 		}
 	}
 
@@ -1132,7 +1136,6 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			if (!ibwr || pos == end)
 				break;
 		}
-
 		/* update the next posting range */
 		ntrdma_qp_send_post_put(qp, pos, base);
 
@@ -1204,9 +1207,11 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 			/* transform work request to queue entry */
 			rc = ntrdma_ib_recv_to_wqe(wqe, ibwr,
 						   qp->recv_wqe_sg_cap);
+
 			TRACE("OPCODE %d: wrid %llu QP %d, rc = %d\n",
 					wqe->op_code, ibwr->wr_id,
 					qp->res.key, rc);
+
 			if (rc)
 				break;
 

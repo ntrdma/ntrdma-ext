@@ -51,7 +51,6 @@ struct ntrdma_poll {
 
 	void (*poll_put_and_done)(struct ntrdma_poll *poll,
 				  u32 pos, u32 base);
-	bool is_send;
 };
 
 /* Queue Pair */

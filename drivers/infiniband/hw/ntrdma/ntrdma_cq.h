@@ -71,6 +71,7 @@ struct ntrdma_cq {
 	struct tasklet_struct		cue_work;
 	struct ntrdma_vbell		vbell;
 	u32				vbell_idx;
+	bool				need_cue;
 };
 
 #define ntrdma_ib_cq(__ibcq) \
