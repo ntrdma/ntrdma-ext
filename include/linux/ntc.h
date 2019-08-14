@@ -35,6 +35,7 @@
 
 /* Non-Transparent Channel */
 
+#include <linux/ntc_mm.h>
 #include <linux/device.h>
 #include <linux/dma-direction.h>
 #include <linux/rwlock.h>
