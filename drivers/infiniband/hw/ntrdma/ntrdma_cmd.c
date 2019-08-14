@@ -1352,7 +1352,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 			rc = 0;
 			goto err_qp;
 		}
-		qp->state = cmd->state;
+		atomic_set(&qp->state, cmd->state);
 		ntrdma_qp_put(qp);
 	}
 
