@@ -78,7 +78,7 @@ struct ntrdma_qp {
 	u32			access;
 
 	/* The current ib_qp_state of the queue pair */
-	int			state;
+	atomic_t		state;
 
 	/* The behavior within the queue pair state */
 	int			recv_abort;
@@ -380,13 +380,13 @@ static inline bool is_state_out_of_reset(int state)
 			(state != IB_QPS_RESET));
 }
 
-static inline int move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
+static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 		int line)
 {
 	TRACE("Move QP %d to err state from %s, line %d\n",
 			qp->res.key, s, line);
 	if (qp->ibqp.qp_type == IB_QPT_GSI)
-		return IB_QPS_SQE;
-	return IB_QPS_ERR;
+		atomic_set(&qp->state, IB_QPS_SQE);
+	atomic_set(&qp->state, IB_QPS_ERR);
 }
 #endif

@@ -660,7 +660,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		goto err_add;
 
 	qp->ibqp.qp_num = qp->res.key;
-	qp->state = IB_QPS_RESET;
+	atomic_set(&qp->state, IB_QPS_RESET);
 
 	ntrdma_dbg(dev, "added qp%d type %d\n",
 			qp->res.key, ibqp_attr->qp_type);
@@ -731,7 +731,7 @@ static int ntrdma_query_qp(struct ib_qp *ibqp,
 	}
 
 	if (ibqp_mask & IB_QP_STATE)
-		ibqp_attr->qp_state = qp->state;
+		ibqp_attr->qp_state = atomic_read(&qp->state);
 
 	if (ibqp_mask & IB_QP_DEST_QPN)
 		ibqp_attr->dest_qp_num = qp->rqp_key;
@@ -860,75 +860,84 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	struct ntrdma_dev *dev;
 	struct ntrdma_qp *qp;
 	int rc, cur_state, new_state;
+	bool success = true;
 
 	qp = ntrdma_ib_qp(ibqp);
 	dev = ntrdma_qp_dev(qp);
 
 	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask, ibudata);
 	ntrdma_res_lock(&qp->res);
+	do {
+		cur_state = atomic_read(&qp->state);
+		new_state = ibqp_mask & IB_QP_STATE ?
+				ibqp_attr->qp_state : cur_state;
 
-	cur_state = qp->state;
-	new_state = ibqp_mask & IB_QP_STATE ?
-			ibqp_attr->qp_state : cur_state;
+		ntrdma_info(dev, "QP  %d state %d (%d) -> %d (ibqp_mask 0x%x)\n",
+				qp->res.key, cur_state,
+				atomic_read(&qp->state), new_state, ibqp_mask);
 
-	ntrdma_info(dev, "QP  %d state %d (%d) -> %d (ibqp_mask 0x%x)\n",
-			qp->res.key, cur_state, qp->state, new_state,
-			ibqp_mask);
-
-	if ((ibqp_mask & IB_QP_CUR_STATE) &&
-			(ibqp_attr->cur_qp_state != qp->state)) {
-		ntrdma_err(dev,
-				"%s: unexpected current state %d %d\n",
-				__func__, cur_state, qp->state);
-		rc = -EINVAL;
-		goto unlock_exit;
-	}
-
-	if (ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED) {
-		ntrdma_err(dev, "%s: unsupported QP mask %x\n",
-				__func__,
-				ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED);
-		rc = -EINVAL;
-		goto unlock_exit;
-	}
-
-	rc = ib_modify_qp_is_ok(cur_state, new_state,
-			ibqp->qp_type, ibqp_mask,
-			IB_LINK_LAYER_UNSPECIFIED);
-
-	if (!rc) {
-		ntrdma_err(dev, "ib_modify_qp_is_ok failed\n");
-		rc = -EINVAL;
-		goto unlock_exit;
-	}
-
-	if ((ibqp->qp_type != IB_QPT_GSI) && !ntc_is_link_up(dev->ntc) &&
-			is_state_send_ready(new_state)) {
-		ntrdma_err(dev, "link is not up, cannot move to ready qp %d\n",
-				qp->res.key);
-		rc = -EAGAIN;
-		goto unlock_exit;
-	}
-
-	if (ibqp_mask & IB_QP_STATE) {
-		ntrdma_vdbg(dev, "qp %p state %d -> %d\n",
-				qp, qp->state, new_state);
-
-		qp->state = new_state;
-		TRACE(
-				"qp %d move to state %d, s_a %d, s_aing %d, r_a %d, r_aing %d\n",
-				qp->res.key, qp->state,
-				qp->send_abort, qp->send_aborting,
-				qp->recv_abort, qp->recv_aborting);
-		if (!is_state_error(qp->state)) {
-			qp->send_aborting = false;
-			qp->send_abort = false;
+		if ((ibqp_mask & IB_QP_CUR_STATE) &&
+				(ibqp_attr->cur_qp_state !=
+						atomic_read(&qp->state))) {
+			ntrdma_err(dev,
+					"%s: unexpected current state %d %d\n",
+					__func__, cur_state,
+					atomic_read(&qp->state));
+			rc = -EINVAL;
+			goto unlock_exit;
 		}
-		if (qp->state != IB_QPS_ERR) {
-			qp->recv_aborting = false;
-			qp->recv_abort = false;
+
+		if (ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED) {
+			ntrdma_err(dev, "%s: unsupported QP mask %x\n",
+					__func__, ibqp_mask &
+					~NTRDMA_IBQP_MASK_SUPPORTED);
+			rc = -EINVAL;
+			goto unlock_exit;
 		}
-	}
+
+		rc = ib_modify_qp_is_ok(cur_state, new_state,
+				ibqp->qp_type, ibqp_mask,
+				IB_LINK_LAYER_UNSPECIFIED);
+
+		if (!rc) {
+			ntrdma_err(dev, "ib_modify_qp_is_ok failed\n");
+			rc = -EINVAL;
+			goto unlock_exit;
+		}
+
+		if ((ibqp->qp_type != IB_QPT_GSI) && !ntc_is_link_up(dev->ntc)
+				&& is_state_send_ready(new_state)) {
+			ntrdma_err(dev,
+					"link is not up, cannot move to ready qp %d\n",
+					qp->res.key);
+			rc = -EAGAIN;
+			goto unlock_exit;
+		}
+
+		if (ibqp_mask & IB_QP_STATE) {
+			ntrdma_vdbg(dev, "qp %p state %d -> %d\n",
+					qp, cur_state, new_state);
+
+			success =
+				atomic_cmpxchg(&qp->state, cur_state,
+					new_state) == cur_state;
+			TRACE(
+				"try qp %d move to state %d, s_a %d, s_aing %d, r_a %d, r_aing %d\n",
+				qp->res.key, new_state, qp->send_abort,
+				qp->send_aborting, qp->recv_abort,
+				qp->recv_aborting);
+			if (success) {
+				if (!is_state_error(new_state)) {
+					qp->send_aborting = false;
+					qp->send_abort = false;
+				}
+				if (new_state != IB_QPS_ERR) {
+					qp->recv_aborting = false;
+					qp->recv_abort = false;
+				}
+			}
+		}
+	} while (!success);
 
 	if (ibqp_mask & IB_QP_ACCESS_FLAGS)
 		qp->access = ibqp_attr->qp_access_flags;

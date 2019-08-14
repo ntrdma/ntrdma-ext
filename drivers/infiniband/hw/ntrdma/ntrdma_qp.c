@@ -191,7 +191,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->send_poll.poll_start_and_get = ntrdma_qp_poll_send_start_and_get;
 	qp->send_poll.poll_put_and_done = ntrdma_qp_poll_send_put_and_done;
 
-	qp->state = 0;
+	atomic_set(&qp->state, 0);
 	qp->recv_abort = false;
 	qp->recv_aborting = false;
 	qp->recv_abort_first = false;
@@ -451,7 +451,7 @@ static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
 	cmd->qp_modify.hdr.op = NTRDMA_CMD_QP_MODIFY;
 	cmd->qp_modify.qp_key = qp->res.key;
 	cmd->qp_modify.access = qp->access;
-	cmd->qp_modify.state = qp->state;
+	cmd->qp_modify.state = atomic_read(&qp->state);
 	cmd->qp_modify.dest_qp_key = qp->rqp_key;
 
 	return 0;
@@ -678,7 +678,7 @@ static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	if (rc)
 		return rc;
 
-	if (is_state_out_of_reset(qp->state)) {
+	if (is_state_out_of_reset(atomic_read(&qp->state))) {
 		qpcb->cb.cmd_prep = ntrdma_qp_modify_prep;
 		qpcb->cb.rsp_cmpl = ntrdma_qp_modify_cmpl;
 		ntrdma_dev_cmd_add_unsafe(dev, &qpcb->cb);
@@ -777,7 +777,7 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 {
 	struct ntrdma_qp *qp;
 	struct ntrdma_dev *dev;
-	struct ntrdma_rqp *rqp;
+	struct ntrdma_rqp *rqp = NULL;
 	int start, end, base;
 
 	qp = ntrdma_res_qp(res);
@@ -793,7 +793,7 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	spin_lock_bh(&qp->recv_prod_lock);
 	{
 		if (qp->ibqp.qp_type != IB_QPT_GSI)
-			qp->state = move_to_err_state(qp);
+			move_to_err_state(qp);
 		qp->peer_recv_wqe_buf_dma_addr = 0;
 		qp->peer_recv_prod_dma_addr = 0;
 	}
@@ -1136,9 +1136,10 @@ int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp)
 	struct ntrdma_dev *dev;
 
 	mutex_lock(&qp->recv_post_lock);
-	if (!is_state_out_of_reset(qp->state)) {
+	if (!is_state_out_of_reset(atomic_read(&qp->state))) {
 		dev = ntrdma_qp_dev(qp);
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key, qp->state);
+		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
+				atomic_read(&qp->state));
 		mutex_unlock(&qp->recv_post_lock);
 		return -EINVAL;
 	}
@@ -1174,9 +1175,10 @@ static int ntrdma_qp_recv_prod_start(struct ntrdma_qp *qp)
 	struct ntrdma_dev *dev;
 
 	spin_lock_bh(&qp->recv_prod_lock);
-	if (!is_state_recv_ready(qp->state)) {
+	if (!is_state_recv_ready(atomic_read(&qp->state))) {
 		dev = ntrdma_qp_dev(qp);
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key, qp->state);
+		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
+				atomic_read(&qp->state));
 		spin_unlock_bh(&qp->recv_prod_lock);
 		return -EAGAIN;
 	}
@@ -1206,9 +1208,10 @@ static int ntrdma_qp_recv_cons_start(struct ntrdma_qp *qp)
 	struct ntrdma_dev *dev;
 
 	spin_lock_bh(&qp->recv_cons_lock);
-	if (!is_state_recv_ready(qp->state)) {
+	if (!is_state_recv_ready(atomic_read(&qp->state))) {
 		dev = ntrdma_qp_dev(qp);
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key, qp->state);
+		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
+				atomic_read(&qp->state));
 		spin_unlock_bh(&qp->recv_cons_lock);
 		return -EINVAL;
 	}
@@ -1289,11 +1292,12 @@ int ntrdma_qp_send_post_start(struct ntrdma_qp *qp)
 
 	mutex_lock(&qp->send_post_lock);
 
-	if (!is_state_send_ready(qp->state)) {
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key, qp->state);
+	if (!is_state_send_ready(atomic_read(&qp->state))) {
+		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
+				atomic_read(&qp->state));
 		mutex_unlock(&qp->send_post_lock);
 		ntrdma_dbg(dev, "invalid qp %d state %u\n", qp->res.key,
-				qp->state);
+				atomic_read(&qp->state));
 		return -EINVAL;
 	}
 
@@ -1324,9 +1328,10 @@ static int ntrdma_qp_send_prod_start(struct ntrdma_qp *qp)
 	struct ntrdma_dev *dev;
 
 	spin_lock_bh(&qp->send_prod_lock);
-	if (qp->state != IB_QPS_RTS) {
+	if (atomic_read(&qp->state) != IB_QPS_RTS) {
 		dev = ntrdma_qp_dev(qp);
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key, qp->state);
+		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
+				atomic_read(&qp->state));
 		spin_unlock_bh(&qp->send_prod_lock);
 		return -EAGAIN;
 	}
@@ -1786,7 +1791,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					wqe->op_status = NTRDMA_WC_ERR_RECV_MISSING;
 
 				abort = true;
-				qp->state = move_to_err_state(qp);
+				move_to_err_state(qp);
 #endif
 				break;
 			}
@@ -1805,7 +1810,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				}
 
 				abort = true;
-				qp->state = move_to_err_state(qp);
+				move_to_err_state(qp);
 				break;
 			}
 
@@ -1821,7 +1826,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					qp->res.key);
 
 			abort = true;
-			qp->state = move_to_err_state(qp);
+			move_to_err_state(qp);
 			break;
 		}
 
@@ -1851,7 +1856,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 				wqe->op_status = NTRDMA_WC_ERR_RDMA_RANGE;
 				abort = true;
-					qp->state = move_to_err_state(qp);
+				move_to_err_state(qp);
 				break;
 			}
 
@@ -1899,7 +1904,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				src, dst, len, rc);
 
 		abort = true;
-		qp->state = move_to_err_state(qp);
+		move_to_err_state(qp);
 		goto err_memcpy;
 	}
 
@@ -1917,7 +1922,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				qp->send_prod, qp->peer_send_prod_dma_addr, rc);
 
 		abort = true;
-		qp->state = move_to_err_state(qp);
+		move_to_err_state(qp);
 		goto err_memcpy;
 	}
 	/* update the vbell and signal the peer */
@@ -1952,7 +1957,7 @@ err_recv:
 	ntrdma_rqp_put(rqp);
 err_rqp:
 	if (qp->ibqp.qp_type == IB_QPT_GSI) {
-		qp->state = IB_QPS_SQE;
+		atomic_set(&qp->state, IB_QPS_SQE);
 		qp->send_aborting = true;
 		qp->send_abort = false;
 		qp->send_abort_first = false;
@@ -2062,7 +2067,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 						wqe->op_status,
 						rqp->qp_key);
 				abort = true;
-				qp->state = move_to_err_state(qp);
+				move_to_err_state(qp);
 				break;
 			}
 
@@ -2073,7 +2078,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					ntrdma_send_fail(cqe, wqe, wqe->op_status);
 
 				abort = true;
-				qp->state = move_to_err_state(qp);
+				move_to_err_state(qp);
 				ntrdma_err(dev,
 						"Error %s %d qp key %d, move to error state\n",
 						__func__, __LINE__,
@@ -2088,7 +2093,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					ntrdma_send_fail(cqe, wqe, wqe->op_status);
 
 				abort = true;
-				qp->state = move_to_err_state(qp);
+				move_to_err_state(qp);
 				ntrdma_err(dev,
 						"Error %s %d qp key %d, move to error state\n",
 						__func__, __LINE__,
@@ -2109,7 +2114,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				ntrdma_recv_fail(recv_cqe, recv_wqe, recv_wqe->op_status);
 
 				abort = true;
-				qp->state = move_to_err_state(qp);
+				move_to_err_state(qp);
 				ntrdma_err(dev, "Error %s %d qp key %d\n",
 						__func__, __LINE__,
 						rqp->qp_key);
@@ -2127,7 +2132,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				ntrdma_recv_fail(recv_cqe, recv_wqe, wqe->op_status);
 
 			abort = true;
-			qp->state = move_to_err_state(qp);
+			move_to_err_state(qp);
 			ntrdma_err(dev, "Error wqe op status %d  pos %u QP %d\n",
 					wqe->op_status, pos, qp->res.key);
 			break;
@@ -2329,7 +2334,7 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
 		TRACE("qp %p (res key %d)\n", qp, qp->res.key);
 		rc = ntrdma_qp_send_prod_start(qp);
 		if (!rc) {
-			qp->state = move_to_err_state(qp);
+			move_to_err_state(qp);
 			qp->send_aborting = true;
 			qp->recv_aborting = true;
 			ntrdma_qp_send_prod_done(qp);

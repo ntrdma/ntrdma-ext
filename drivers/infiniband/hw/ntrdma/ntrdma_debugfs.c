@@ -685,7 +685,7 @@ static int ntrdma_debugfs_qp_info_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_qp *qp = s->private;
 
-	seq_printf(s, "state %d\n", qp->state);
+	seq_printf(s, "state %d\n", atomic_read(&qp->state));
 	seq_printf(s, "recv_abort %u\n", qp->recv_abort);
 	seq_printf(s, "send_abort %u\n", qp->send_abort);
 	seq_printf(s, "rqp_key %u\n", qp->rqp_key);
