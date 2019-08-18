@@ -1997,9 +1997,10 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				abort = true;
 				move_to_err_state(qp);
 				ntrdma_err(dev,
-						"Error %s %d qp key %d, move to error state\n",
-						__func__, __LINE__,
-						rqp->qp_key);
+						"qp %d, recv_key %d, recv_pos %d, recv_base %d, wqe_op_status %d move to error state\n",
+						rqp->qp_key, wqe->recv_key,
+						recv_pos, recv_base,
+						wqe->op_status);
 				break;
 			}
 
@@ -2012,9 +2013,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				abort = true;
 				move_to_err_state(qp);
 				ntrdma_err(dev,
-						"Error %s %d qp key %d, move to error state\n",
-						__func__, __LINE__,
-						rqp->qp_key);
+						"qp %d, recv_pos = recv_end = %d, wqe_op_status %d move to error state\n",
+						rqp->qp_key, recv_pos,
+						wqe->op_status);
 				break;
 			}
 
@@ -2032,9 +2033,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 				abort = true;
 				move_to_err_state(qp);
-				ntrdma_err(dev, "Error %s %d qp key %d\n",
-						__func__, __LINE__,
-						rqp->qp_key);
+				ntrdma_err(dev, "qp %d, recv_wqe_op_status %d\n",
+						rqp->qp_key,
+						recv_wqe->op_status);
 				break;
 			}
 		} else {
