@@ -46,6 +46,8 @@
 #include <linux/ntc.h>
 #include <linux/ntc_trace.h>
 
+#include <asm/e820/api.h>
+
 #define DRIVER_NAME			"ntc_ntb"
 #define DRIVER_DESCRIPTION		"NTC Non Transparent Bridge"
 
@@ -58,6 +60,11 @@ MODULE_LICENSE(DRIVER_LICENSE);
 MODULE_VERSION(DRIVER_VERSION);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESCRIPTION);
+
+static unsigned long mw1_base_addr;
+module_param(mw1_base_addr, ulong, 0444);
+static unsigned long mw1_len;
+module_param(mw1_len, ulong, 0444);
 
 static struct dentry *ntc_dbgfs;
 
@@ -1767,8 +1774,35 @@ struct ntb_client ntc_ntb_client = {
 
 static int __init ntc_init(void)
 {
+	u64 start = mw1_base_addr;
+	u64 end = start + mw1_len;
+	bool has_reserved;
+	bool has_other;
+	int i;
+
 	pr_info("%s: %s %s init\n", DRIVER_NAME,
 		DRIVER_DESCRIPTION, DRIVER_VERSION);
+
+
+	pr_info("mw1_base_addr %#lx mw1_len %#lx",
+		mw1_base_addr, mw1_len);
+
+	if (start && end > start) {
+		has_reserved = e820__mapped_any(start, end, E820_TYPE_RESERVED);
+		has_other = false;
+		for (i = E820_TYPE_RAM; i <= E820_TYPE_RESERVED_KERN; i++) {
+			if (i == E820_TYPE_RESERVED)
+				continue;
+			if (e820__mapped_any(start, end, i)) {
+				pr_info("mw1 has non-reserved type %d", i);
+				has_other = true;
+			}
+		}
+		if (has_reserved && !has_other)
+			pr_info("mw1 all is reserved memory");
+		else
+			pr_info("mw1 is NOT all reserved memory");
+	}
 
 	if (debugfs_initialized())
 		ntc_dbgfs = debugfs_create_dir(KBUILD_MODNAME, NULL);
