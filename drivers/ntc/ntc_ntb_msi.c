@@ -176,7 +176,7 @@ struct ntc_ntb_dev {
 
 	/* local buffer for remote driver to write info */
 	void                            *info_peer_on_self_unaligned;
-	struct ntc_ntb_info		*info_peer_on_self;
+	const struct ntc_ntb_info	*info_peer_on_self;
 	size_t				info_peer_on_self_size;
 	dma_addr_t			info_peer_on_self_dma;
 	size_t                          info_peer_on_self_off;
@@ -408,6 +408,7 @@ static void ntc_ntb_ping_pong_cb(unsigned long ptrhld)
 
 static bool ntc_ntb_ping_poll(struct ntc_ntb_dev *dev)
 {
+	const struct ntc_ntb_info *peer_info;
 	int ping_flags;
 	u32 poll_val;
 
@@ -418,7 +419,8 @@ static bool ntc_ntb_ping_poll(struct ntc_ntb_dev *dev)
 	ping_flags = dev->ping_flags;
 	(void)ping_flags; /* TODO: cleanup unused */
 
-	poll_val = dev->info_peer_on_self->ping;
+	peer_info = dev->info_peer_on_self;
+	poll_val = peer_info->ping;
 
 	dev_vdbg(&dev->ntc.dev, "poll val %x\n", poll_val);
 
@@ -579,7 +581,6 @@ static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 	ntc_ctx_reset(&dev->ntc);
 
 	reset_peer_irq(dev);
-	memset(dev->info_peer_on_self, 0, sizeof(*dev->info_peer_on_self));
 	dev->reset_cnt++;
 	wake_up(&dev->reset_done);
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_START);
@@ -605,7 +606,9 @@ static inline void ntc_ntb_send_version(struct ntc_ntb_dev *dev)
 
 static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 {
-	struct multi_version_support versions, *peer_versions;
+	const struct ntc_ntb_info *peer_info;
+	struct multi_version_support versions;
+	struct multi_version_support peer_versions;
 	u64 msi_addr[NTB_MAX_IRQS];
 	u32 msi_data[NTB_MAX_IRQS];
 	int msi_idx;
@@ -614,14 +617,15 @@ static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 	dev_dbg(&dev->ntc.dev, "link choose version and send msi data\n");
 
 	ntc_ntb_version(&versions);
-	peer_versions = &dev->info_peer_on_self->versions;
-	if (peer_versions->num > MAX_SUPPORTED_VERSIONS)
+	peer_info = dev->info_peer_on_self;
+	peer_versions = peer_info->versions;
+	if (peer_versions.num > MAX_SUPPORTED_VERSIONS)
 		goto err;
 
 	if (versions.num > 0)
 		dev->latest_version = versions.versions[versions.num-1];
 
-	dev->version = ntc_ntb_version_matching(dev, &versions, peer_versions);
+	dev->version = ntc_ntb_version_matching(dev, &versions, &peer_versions);
 	if (dev->version == NTC_NTB_VERSION_NONE)
 		goto err;
 
@@ -661,17 +665,20 @@ static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 	int rc;
 	int i;
 	resource_size_t size;
+	const struct ntc_ntb_info *peer_info;
+	u32 msi_irqs_num;
 
-	u32 msi_irqs_num = dev->info_peer_on_self->msi_irqs_num;
+	peer_info = dev->info_peer_on_self;
+	msi_irqs_num = peer_info->msi_irqs_num;
 
 	if (use_msi && msi_irqs_num > 0 && msi_irqs_num < NTB_MAX_IRQS) {
 		dev->use_peer_irq_base = false;
 		for (i = 0; i < msi_irqs_num; i++) {
 			dev->peer_irq_data[i] =
-					dev->info_peer_on_self->msi_data[i];
+					peer_info->msi_data[i];
 			dev->peer_irq_shift[i] =
-				(((u64)dev->info_peer_on_self->msi_addr_lower[i]) |
-				 (((u64)dev->info_peer_on_self->msi_addr_upper[i]) << 32));
+				(((u64)peer_info->msi_addr_lower[i]) |
+				 (((u64)peer_info->msi_addr_upper[i]) << 32));
 		}
 	} else {
 		phys_addr_t peer_irq_phys_addr_base;
@@ -686,7 +693,7 @@ static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 
 		if (max_irqs <= 0 || max_irqs> NTB_MAX_IRQS) {
 			dev_err(&dev->ntc.dev, "max_irqs %d - not supported\n",
-					dev->info_peer_on_self->msi_irqs_num);
+					peer_info->msi_irqs_num);
 			rc = -EINVAL;
 			goto err_ntb_db;
 		}
@@ -749,8 +756,12 @@ static inline void ntc_ntb_link_commit(struct ntc_ntb_dev *dev)
 
 static inline bool ntc_ntb_done_hello(struct ntc_ntb_dev *dev)
 {
+	const struct ntc_ntb_info *peer_info;
+
+	peer_info = dev->info_peer_on_self;
+
 	/* no outstanding input or output buffers */
-	return (dev->info_peer_on_self->done == 1) && (dev->info_self_on_peer->done == 1);
+	return (peer_info->done == 1) && (dev->info_self_on_peer->done == 1);
 }
 
 static inline int ntc_ntb_hello(struct ntc_ntb_dev *dev)
@@ -1315,11 +1326,14 @@ int ntc_ntb_max_peer_irqs(struct ntc_dev *ntc)
 	return dev->peer_irq_num;
 }
 
-void *ntc_ntb_local_hello_buf(struct ntc_dev *ntc, int *size)
+static const void *ntc_ntb_local_hello_buf(struct ntc_dev *ntc, int *size)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+	const struct ntc_ntb_info *peer_info;
+
 	*size = NTC_CTX_BUF_SIZE;
-	return dev->info_peer_on_self->ctx_buf;
+	peer_info = dev->info_peer_on_self;
+	return peer_info->ctx_buf;
 }
 
 void *ntc_ntb_peer_hello_buf(struct ntc_dev *ntc, int *size)
@@ -1416,6 +1430,8 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* this is the window we'll translate to local dram */
 	ntb_peer_mw_get_addr(dev->ntb, mw_idx, &mw_base, &mw_size);
+	pr_info("PEER: mw_idx %d mw_base %#lx mw_size %#lx",
+		mw_idx, (long)mw_base, (long)mw_size);
 
 	/*
 	 * FIXME: ensure window is large enough.
@@ -1441,6 +1457,9 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* a local buffer for peer driver to write */
 	ntb_peer_mw_get_addr(dev->ntb, mw_idx - 1, &mw_base, &mw_size);
+	pr_info("PEER: mw_idx %d mw_base %#lx mw_size %#lx info size %#lx",
+		mw_idx - 1, (long)mw_base, (long)mw_size,
+		sizeof(struct ntc_ntb_info));
 
 	if (mw_size < ntc_ntb_info_size) {
 		pr_debug("invalid alignement of peer info for new device %s\n",
@@ -1453,10 +1472,10 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->info_peer_on_self_size = mw_size;
 
 	dev->info_peer_on_self_unaligned =
-		dma_alloc_coherent(ntc_ntb_dma_dev(dev),
-				   dev->info_peer_on_self_size * 2,
-				   &dev->info_peer_on_self_dma,
-				   GFP_KERNEL);
+		dma_zalloc_coherent(ntc_ntb_dma_dev(dev),
+				dev->info_peer_on_self_size * 2,
+				&dev->info_peer_on_self_dma,
+				GFP_KERNEL);
 	if (!dev->info_peer_on_self_unaligned) {
 		pr_debug("failed to allocate peer info for new device %s\n",
 			 dev_name(&dev->ntb->dev));
@@ -1605,7 +1624,10 @@ static void ntc_ntb_release(struct device *device)
 static int ntc_debugfs_read(struct seq_file *s, void *v)
 {
 	struct ntc_ntb_dev *dev = s->private;
+	const struct ntc_ntb_info *peer_info;
 	int i;
+
+	peer_info = dev->info_peer_on_self;
 
 	seq_printf(s, "peer_dram_base %#llx\n",
 		   dev->peer_dram_base);
@@ -1614,23 +1636,18 @@ static int ntc_debugfs_read(struct seq_file *s, void *v)
 	seq_printf(s, "info_peer_on_self_dma %#llx\n",
 		   dev->info_peer_on_self_dma);
 	seq_puts(s, "info_peer_on_self:\n");
-	seq_printf(s, "  magic %#x\n",
-		   dev->info_peer_on_self->magic);
-	seq_printf(s, "  ping %#x\n",
-		   dev->info_peer_on_self->ping);
-	seq_printf(s, "  msi_irqs_num %d\n",
-			dev->info_peer_on_self->msi_irqs_num);
-	for (i = 0; i <  dev->info_peer_on_self->msi_irqs_num; i ++) {
-		seq_printf(s, "  msi_data %#x\n",
-			   dev->info_peer_on_self->msi_data[i]);
+	seq_printf(s, "  magic %#x\n", peer_info->magic);
+	seq_printf(s, "  ping %#x\n", peer_info->ping);
+	seq_printf(s, "  msi_irqs_num %d\n", peer_info->msi_irqs_num);
+	for (i = 0; i < peer_info->msi_irqs_num; i++) {
+		seq_printf(s, "  msi_data %#x\n", peer_info->msi_data[i]);
 		seq_printf(s, "  msi_addr_lower %#x\n",
-			   dev->info_peer_on_self->msi_addr_lower[i]);
+			peer_info->msi_addr_lower[i]);
 		seq_printf(s, "  msi_addr_upper %#x\n",
-		   dev->info_peer_on_self->msi_addr_upper[i]);
+			peer_info->msi_addr_upper[i]);
 	}
 	seq_puts(s, "  ctx level negotiation:\n");
-	seq_printf(s, "    done %#x\n",
-		   dev->info_peer_on_self->done);
+	seq_printf(s, "    done %#x\n", peer_info->done);
 	seq_printf(s, "version %d\n",
 		   dev->version);
 	seq_printf(s, "peer_irq_num %d\n",
