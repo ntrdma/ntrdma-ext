@@ -1022,13 +1022,29 @@ static int ntc_ntb_link_reset_sync(struct ntc_dev *ntc)
 	return 0;
 }
 
-static phys_addr_t ntc_ntb_peer_addr(struct ntc_dev *ntc, u64 addr)
+static phys_addr_t ntc_ntb_peer_addr(struct ntc_dev *ntc,
+				const union ntc_chan_addr *chan_addr)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
-	if (addr > dev->peer_dram_size) {
+	u64 addr;
+	resource_size_t peer_mem_size;
+	phys_addr_t peer_mem_base;
+
+	switch (chan_addr->mw_desc) {
+	case NTC_CHAN_MW1:
+		peer_mem_size = dev->peer_dram_size;
+		peer_mem_base = dev->peer_dram_base;
+		break;
+	default:
+		return 0;
+	}
+
+	addr = chan_addr->offset;
+
+	if (addr > peer_mem_size) {
 		dev_err(&dev->ntc.dev,
 			"off 0x%llx is larger than memory size %llu\n",
-			addr, dev->peer_dram_size);
+			addr, peer_mem_size);
 		return 0;
 	}
 
@@ -1038,7 +1054,7 @@ static phys_addr_t ntc_ntb_peer_addr(struct ntc_dev *ntc, u64 addr)
 				return 0;
 		return 0;
 	}
-	return dev->peer_dram_base + addr;
+	return peer_mem_base + addr;
 }
 
 static void *ntc_ntb_req_create(struct ntc_dev *ntc)

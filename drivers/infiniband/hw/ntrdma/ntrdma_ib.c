@@ -1209,9 +1209,9 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 			TRACE("Allocating rcv buffer of size %d @DMA addr %#lx",
 				(int)ibwr->sg_list[i].length,
 				(long)(dma_addr_t)ibwr->sg_list[i].addr);
-			TRACE("with export buffer at %p chan_addr %#lx",
+			TRACE("with export buffer at %p chan_addr %#llx",
 				wqe->rcv_sg_list[i].exp_buf.ptr,
-				(long)wqe->rcv_sg_list[i].exp_buf.chan_addr);
+				wqe->rcv_sg_list[i].exp_buf.chan_addr.value);
 		}
 	}
 
@@ -1367,7 +1367,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	for (i = 0; i < count; ++i) {
 		ntrdma_vdbg(dev, "sgl[%d] chan %llx len %#llx\n", i,
-			mr->sg_list[i].chan_addr,
+			mr->sg_list[i].chan_addr.value,
 			mr->sg_list[i].size);
 	}
 
