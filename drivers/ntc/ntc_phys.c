@@ -74,7 +74,8 @@ static int ntc_phys_export_buf_alloc(struct ntc_export_buf *buf)
 		return -EIO;
 	}
 
-	buf->chan_addr = dma_addr;
+	buf->chan_addr.mw_desc = NTC_CHAN_MW1;
+	buf->chan_addr.offset = dma_addr;
 
 	return 0;
 }
@@ -82,9 +83,12 @@ static int ntc_phys_export_buf_alloc(struct ntc_export_buf *buf)
 static void ntc_phys_export_buf_free(struct ntc_export_buf *buf)
 {
 	struct device *dev = buf->ntb_dev;
-	dma_addr_t dma_addr = buf->chan_addr;
+	dma_addr_t dma_addr;
 
-	dma_unmap_single(dev, dma_addr, buf->size, DMA_FROM_DEVICE);
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		dma_addr = buf->chan_addr.offset;
+		dma_unmap_single(dev, dma_addr, buf->size, DMA_FROM_DEVICE);
+	}
 
 	if (buf->gfp && buf->ptr)
 		kfree(buf->ptr);
@@ -94,9 +98,12 @@ static const void *ntc_phys_export_buf_const_deref(struct ntc_export_buf *buf,
 						u64 offset, u64 len)
 {
 	struct device *dev = buf->ntb_dev;
-	dma_addr_t dma_addr = buf->chan_addr + offset;
+	dma_addr_t dma_addr;
 
-	dma_sync_single_for_cpu(dev, dma_addr, len, DMA_FROM_DEVICE);
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		dma_addr = buf->chan_addr.offset;
+		dma_sync_single_for_cpu(dev, dma_addr, len, DMA_FROM_DEVICE);
+	}
 
 	return buf->ptr + offset;
 }
@@ -129,7 +136,8 @@ static int ntc_phys_bidir_buf_alloc(struct ntc_bidir_buf *buf)
 		goto err_dma_engine_map;
 	}
 
-	buf->chan_addr = ntb_dma_addr;
+	buf->chan_addr.mw_desc = NTC_CHAN_MW1;
+	buf->chan_addr.offset = ntb_dma_addr;
 	buf->dma_addr = dma_engine_addr;
 
 	return 0;
@@ -148,12 +156,16 @@ static void ntc_phys_bidir_buf_free(struct ntc_bidir_buf *buf)
 {
 	struct device *ntb_dev = buf->ntb_dev;
 	struct device *dma_engine_dev = buf->dma_engine_dev;
-	dma_addr_t ntb_dma_addr = buf->chan_addr;
+	dma_addr_t ntb_dma_addr;
 	dma_addr_t dma_engine_addr = buf->dma_addr;
 
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		ntb_dma_addr = buf->chan_addr.offset;
+		dma_unmap_single(ntb_dev, ntb_dma_addr, buf->size,
+				DMA_FROM_DEVICE);
+	}
 	dma_unmap_single(dma_engine_dev, dma_engine_addr, buf->size,
 			DMA_TO_DEVICE);
-	dma_unmap_single(ntb_dev, ntb_dma_addr, buf->size, DMA_FROM_DEVICE);
 
 	if (buf->gfp && buf->ptr)
 		kfree(buf->ptr);
@@ -163,9 +175,13 @@ static void *ntc_phys_bidir_buf_deref(struct ntc_bidir_buf *buf,
 				u64 offset, u64 len)
 {
 	struct device *ntb_dev = buf->ntb_dev;
-	dma_addr_t ntb_dma_addr = buf->chan_addr + offset;
+	dma_addr_t ntb_dma_addr;
 
-	dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len, DMA_FROM_DEVICE);
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		ntb_dma_addr = buf->chan_addr.offset;
+		dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len,
+					DMA_FROM_DEVICE);
+	}
 
 	return buf->ptr + offset;
 }
@@ -174,18 +190,26 @@ static void ntc_phys_bidir_buf_unref(struct ntc_bidir_buf *buf,
 				u64 offset, u64 len)
 {
 	struct device *ntb_dev = buf->ntb_dev;
-	dma_addr_t ntb_dma_addr = buf->chan_addr + offset;
+	dma_addr_t ntb_dma_addr;
 
-	dma_sync_single_for_device(ntb_dev, ntb_dma_addr, len, DMA_FROM_DEVICE);
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		ntb_dma_addr = buf->chan_addr.offset;
+		dma_sync_single_for_device(ntb_dev, ntb_dma_addr, len,
+					DMA_FROM_DEVICE);
+	}
 }
 
 static const void *ntc_phys_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
 						u64 offset, u64 len)
 {
 	struct device *ntb_dev = buf->ntb_dev;
-	dma_addr_t ntb_dma_addr = buf->chan_addr + offset;
+	dma_addr_t ntb_dma_addr;
 
-	dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len, DMA_FROM_DEVICE);
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		ntb_dma_addr = buf->chan_addr.offset;
+		dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len,
+					DMA_FROM_DEVICE);
+	}
 
 	return buf->ptr + offset;
 }
@@ -202,7 +226,7 @@ static int ntc_phys_remote_buf_map(struct ntc_remote_buf *buf,
 {
 	struct device *dev = buf->dma_engine_dev;
 
-	buf->ptr = ntc_peer_addr(buf->ntc, desc->chan_addr);
+	buf->ptr = ntc_peer_addr(buf->ntc, &desc->chan_addr);
 	if (!buf->ptr)
 		return -EIO;
 

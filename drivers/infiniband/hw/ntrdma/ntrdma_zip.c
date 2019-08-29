@@ -466,7 +466,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 		if (rc < 0)
 			return rc;
 		TRACE("DMA copy %#lx bytes to remote at %#lx offset %#lx",
-			(long)len, (long)rcv->rcv_sge->desc.chan_addr,
+			(long)len, (long)rcv->rcv_sge->desc.chan_addr.value,
 			(long)rcv->next_io_off);
 		rcv_buf = &remote;
 	} else

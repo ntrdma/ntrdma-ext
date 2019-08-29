@@ -108,6 +108,22 @@ static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
 		1;
 }
 
+#define MW_DESC_BIT_WIDTH 4
+#define CHAN_OFFSET_BIT_WIDTH (64 - MW_DESC_BIT_WIDTH)
+
+enum ntc_chan_mw_desc {
+	NTC_CHAN_INVALID = 0,
+	NTC_CHAN_MW1 = 1,
+};
+
+union ntc_chan_addr {
+	struct {
+		u64 offset:CHAN_OFFSET_BIT_WIDTH;
+		enum ntc_chan_mw_desc mw_desc:MW_DESC_BIT_WIDTH;
+	};
+	u64 value;
+};
+
 /**
  * struct ntc_dev_ops - ntc device operations
  * @map_dev:		See ntc_map_dev().
@@ -132,7 +148,8 @@ struct ntc_dev_ops {
 	int (*link_enable)(struct ntc_dev *ntc);
 	int (*link_reset)(struct ntc_dev *ntc);
 
-	phys_addr_t (*peer_addr)(struct ntc_dev *ntc, u64 dma_addr_local);
+	phys_addr_t (*peer_addr)(struct ntc_dev *ntc,
+				const union ntc_chan_addr *chan_addr);
 
 	void *(*req_create)(struct ntc_dev *ntc);
 	void (*req_cancel)(struct ntc_dev *ntc, void *req);
@@ -197,7 +214,7 @@ struct ntc_export_buf {
 	gfp_t gfp;
 
 	void *ptr;
-	u64 chan_addr;
+	union ntc_chan_addr chan_addr;
 };
 
 struct ntc_bidir_buf {
@@ -208,12 +225,12 @@ struct ntc_bidir_buf {
 	gfp_t gfp;
 
 	void *ptr;
-	u64 chan_addr;
+	union ntc_chan_addr chan_addr;
 	dma_addr_t dma_addr;
 };
 
 struct ntc_remote_buf_desc {
-	u64 chan_addr;
+	union ntc_chan_addr chan_addr;
 	u64 size;
 };
 
@@ -638,12 +655,13 @@ static inline int _ntc_link_reset(struct ntc_dev *ntc, const char *f)
  *
  * Return: The translated peer address.
  */
-static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc, u64 addr)
+static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
+					const union ntc_chan_addr *chan_addr)
 {
 	if (!ntc->dev_ops->peer_addr)
-		return addr;
+		return chan_addr->value;
 
-	return ntc->dev_ops->peer_addr(ntc, addr);
+	return ntc->dev_ops->peer_addr(ntc, chan_addr);
 }
 
 /**
@@ -1199,6 +1217,16 @@ static inline void *ntc_local_buf_deref(struct ntc_local_buf *buf)
 	return buf->ptr;
 }
 
+static inline bool ntc_chan_addr_valid(union ntc_chan_addr *chan_addr)
+{
+	return !!chan_addr->value;
+}
+
+static inline void ntc_chan_addr_clean(union ntc_chan_addr *chan_addr)
+{
+	chan_addr->value = 0;
+}
+
 /**
  * ntc_export_buf_valid() - Check whether the buffer is valid.
  * @buf:	Export buffer.
@@ -1207,14 +1235,14 @@ static inline void *ntc_local_buf_deref(struct ntc_local_buf *buf)
  */
 static inline bool ntc_export_buf_valid(struct ntc_export_buf *buf)
 {
-	return !!buf->chan_addr;
+	return ntc_chan_addr_valid(&buf->chan_addr);
 }
 
 static inline void ntc_export_buf_clear(struct ntc_export_buf *buf)
 {
 	if (buf->gfp)
 		buf->ptr = NULL;
-	buf->chan_addr = 0;
+	ntc_chan_addr_clean(&buf->chan_addr);
 }
 
 /**
@@ -1440,7 +1468,8 @@ ntc_export_buf_make_partial_desc(struct ntc_remote_buf_desc *desc,
 	if (!ntc_segment_valid(buf->size, offset, len))
 		return -EINVAL;
 
-	desc->chan_addr = buf->chan_addr + offset;
+	desc->chan_addr = buf->chan_addr;
+	desc->chan_addr.offset += offset;
 	desc->size = len;
 
 	return 0;
@@ -1463,7 +1492,7 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 {
 	s64 soffset;
 
-	soffset = desc->chan_addr - buf->chan_addr;
+	soffset = desc->chan_addr.offset - buf->chan_addr.offset;
 
 	*offset = soffset;
 	*len = desc->size;
@@ -1475,6 +1504,9 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 		return -EINVAL;
 
 	if (!buf->ptr)
+		return -EINVAL;
+
+	if (buf->chan_addr.mw_desc != desc->chan_addr.mw_desc)
 		return -EINVAL;
 
 	return 0;
@@ -1534,14 +1566,14 @@ static inline int ntc_export_buf_seq_write(struct seq_file *s,
  */
 static inline bool ntc_bidir_buf_valid(struct ntc_bidir_buf *buf)
 {
-	return !!buf->chan_addr;
+	return ntc_chan_addr_valid(&buf->chan_addr);
 }
 
 static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
 {
 	if (buf->gfp)
 		buf->ptr = NULL;
-	buf->chan_addr = 0;
+	ntc_chan_addr_clean(&buf->chan_addr);
 }
 
 /**
@@ -1918,7 +1950,7 @@ ntc_remote_buf_desc_clip(struct ntc_remote_buf_desc *desc, u64 offset, u64 len)
 	if (!ntc_segment_valid(desc->size, offset, len))
 		return -EINVAL;
 
-	desc->chan_addr += offset;
+	desc->chan_addr.offset += offset;
 	desc->size = len;
 
 	return 0;
