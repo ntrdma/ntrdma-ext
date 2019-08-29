@@ -165,7 +165,7 @@ struct ntrdma_dev {
 	u32				peer_cmd_recv_vbell_idx;
 	int				is_cmd_hello_done;
 	/* hello buffers */
-	u8 *hello_local_buf;
+	const u8 *hello_local_buf;
 	int hello_local_buf_size;
 	u8 *hello_peer_buf;
 	int hello_peer_buf_size;

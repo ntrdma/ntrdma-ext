@@ -209,9 +209,10 @@ int ntrdma_dev_cmd_init(struct ntrdma_dev *dev,
 			send_vbell_idx, send_cap, false);
 }
 
-static inline int ntrdma_dev_cmd_hello_done_undone(struct ntrdma_dev *dev,
-			       struct ntrdma_cmd_hello_prep *peer_prep,
-				   int is_undone)
+static inline
+int ntrdma_dev_cmd_hello_done_undone(struct ntrdma_dev *dev,
+				const struct ntrdma_cmd_hello_prep *peer_prep,
+				int is_undone)
 {
 	int rc;
 
@@ -255,9 +256,10 @@ void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
 	info->recv_vbell_idx = dev->cmd_recv_vbell_idx;
 }
 
-static inline int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
-			      struct ntrdma_cmd_hello_info *peer_info,
-				  int is_unprep)
+static inline
+int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
+				const struct ntrdma_cmd_hello_info *peer_info,
+				int is_unprep)
 {
 	int rc;
 
@@ -338,8 +340,8 @@ err_sanity:
 }
 
 int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
-			      struct ntrdma_cmd_hello_info *peer_info,
-			      struct ntrdma_cmd_hello_prep *prep)
+			const struct ntrdma_cmd_hello_info *peer_info,
+			struct ntrdma_cmd_hello_prep *prep)
 {
 	int rc;
 
@@ -355,7 +357,7 @@ int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
 }
 
 int ntrdma_dev_cmd_hello_done(struct ntrdma_dev *dev,
-			       struct ntrdma_cmd_hello_prep *peer_prep)
+			const struct ntrdma_cmd_hello_prep *peer_prep)
 {
 	return ntrdma_dev_cmd_hello_done_undone(dev, peer_prep, false);
 }

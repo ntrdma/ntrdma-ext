@@ -242,10 +242,11 @@ int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 	return 0;
 }
 
-static inline int ntrdma_dev_eth_hello_prep_unperp(struct ntrdma_dev *dev,
-			      struct ntrdma_eth_hello_info *peer_info,
-			      struct ntrdma_eth_hello_prep *prep,
-				  int is_unperp)
+static inline
+int ntrdma_dev_eth_hello_prep_unperp(struct ntrdma_dev *dev,
+				const struct ntrdma_eth_hello_info *peer_info,
+				struct ntrdma_eth_hello_prep *prep,
+				int is_unperp)
 {
 	struct ntrdma_eth *eth = dev->eth;
 	int rc;
@@ -340,8 +341,8 @@ err_peer_rx_cqe_buf:
 }
 
 int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
-			      struct ntrdma_eth_hello_info *peer_info,
-			      struct ntrdma_eth_hello_prep *prep)
+			const struct ntrdma_eth_hello_info *peer_info,
+			struct ntrdma_eth_hello_prep *prep)
 {
 	struct ntrdma_eth *eth = dev->eth;
 	int rc;
@@ -356,9 +357,10 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 	return 0;
 }
 
-static inline int ntrdma_dev_eth_hello_done_undone(struct ntrdma_dev *dev,
-			       struct ntrdma_eth_hello_prep *peer_prep,
-				   int is_undone)
+static inline
+int ntrdma_dev_eth_hello_done_undone(struct ntrdma_dev *dev,
+				const struct ntrdma_eth_hello_prep *peer_prep,
+				int is_undone)
 {
 	struct ntrdma_eth *eth = dev->eth;
 	int rc;
@@ -395,7 +397,7 @@ err_peer_tx_wqe_buf:
 }
 
 int ntrdma_dev_eth_hello_done(struct ntrdma_dev *dev,
-			       struct ntrdma_eth_hello_prep *peer_prep)
+			const struct ntrdma_eth_hello_prep *peer_prep)
 {
 	return ntrdma_dev_eth_hello_done_undone(dev, peer_prep, false);
 }

@@ -61,7 +61,7 @@ void ntrdma_dev_vbell_deinit(struct ntrdma_dev *dev);
 u32 ntrdma_dev_vbell_next(struct ntrdma_dev *dev);
 
 int ntrdma_dev_vbell_enable(struct ntrdma_dev *dev,
-			struct ntc_remote_buf_desc *vbell_ntc_buf_desc,
+			const struct ntc_remote_buf_desc *vbell_ntc_buf_desc,
 			u32 peer_vbell_count);
 
 void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev);
