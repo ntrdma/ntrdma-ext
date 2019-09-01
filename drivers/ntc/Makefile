@@ -1,4 +1,4 @@
-obj-$(CONFIG_NTC) += ntc.o
-obj-$(CONFIG_NTC) += ntc_phys.o
-obj-$(CONFIG_NTC_NTB) += ntc_ntb.o
-obj-$(CONFIG_NTC_NTB_MSI) += ntc_ntb_msi.o
+obj-$(CONFIG_NTC) += ntc_ntb.o
+
+ntc_ntb-y += ntc.o
+ntc_ntb-y += ntc_ntb_msi.o
