@@ -11,6 +11,4 @@ F:	drivers/ntc/ntc.c
 F:	drivers/ntc/ntc_ntb.c
 F:	drivers/ntc/ntc_ntb_msi.c
 F:	drivers/ntc/ntc_phys.c
-F:	drivers/ntc/ntc_tcp.c
-F:	drivers/ntc/ntc_virt.c
 F:	drivers/ntc/Makefile
