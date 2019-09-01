@@ -39,6 +39,8 @@
 #include <linux/device.h>
 #include <linux/dma-direction.h>
 #include <linux/rwlock.h>
+#include <linux/dma-mapping.h>
+#include <linux/slab.h>
 
 #include "linux/ntc_trace.h"
 #define NTB_MAX_IRQS (64)
@@ -76,7 +78,6 @@ static inline int ntc_driver_ops_is_valid(const struct ntc_driver_ops *ops)
  * @quiesce:		See ntc_ctx_quiesce().
  * @reset:		See ntc_ctx_reset().
  * @signal:		See ntc_ctx_signal().
- * @clear_signal:	See ntc_ctx_clear_signal().
  */
 struct ntc_ctx_ops {
 	int (*hello)(void *ctx, int phase,
@@ -88,12 +89,6 @@ struct ntc_ctx_ops {
 	void (*reset)(void *ctx);
 	void (*signal)(void *ctx, int vec);
 };
-
-enum ntc_dma_access {
-	NTB_DEV_ACCESS = 0,
-	IOAT_DEV_ACCESS
-};
-
 
 static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
 {
@@ -124,81 +119,8 @@ union ntc_chan_addr {
 	u64 value;
 };
 
-/**
- * struct ntc_dev_ops - ntc device operations
- * @map_dev:		See ntc_map_dev().
- * @link_disable:	See ntc_link_disable().
- * @link_enable:	See ntc_link_enable().
- * @link_reset:		See ntc_link_reset().
- * @peer_addr		See ntc_peer_addr().
- * @req_create:		See ntc_req_create().
- * @req_cancel:		See ntc_req_cancel().
- * @req_submit:		See ntc_req_submit().
- * @req_memcpy:		See ntc_req_memcpy().
- * @req_imm32:		See ntc_req_imm32().
- * @req_imm64:		See ntc_req_imm64().
- * @req_signal:		See ntc_req_signal().
- * @clear_signal:	See ntc_clear_signal().
- */
-struct ntc_dev_ops {
-	struct device *(*map_dev)(struct ntc_dev *ntc,
-			enum ntc_dma_access dma_dev);
-	int (*is_link_up)(struct ntc_dev *ntc);
-	int (*link_disable)(struct ntc_dev *ntc);
-	int (*link_enable)(struct ntc_dev *ntc);
-	int (*link_reset)(struct ntc_dev *ntc);
-
-	phys_addr_t (*peer_addr)(struct ntc_dev *ntc,
-				const union ntc_chan_addr *chan_addr);
-
-	void *(*req_create)(struct ntc_dev *ntc);
-	void (*req_cancel)(struct ntc_dev *ntc, void *req);
-	int (*req_submit)(struct ntc_dev *ntc, void *req);
-
-	int (*req_memcpy)(struct ntc_dev *ntc, void *req,
-			dma_addr_t dst, dma_addr_t src, u64 len, bool fence,
-			void (*cb)(void *cb_ctx), void *cb_ctx);
-	int (*req_imm32)(struct ntc_dev *ntc, void *req,
-			dma_addr_t dst, u32 val, bool fence,
-			void (*cb)(void *cb_ctx), void *cb_ctx);
-	int (*req_imm64)(struct ntc_dev *ntc, void *req,
-			dma_addr_t dst, u64 val, bool fence,
-			void (*cb)(void *cb_ctx), void *cb_ctx);
-	int (*req_signal)(struct ntc_dev *ntc, void *req,
-			  void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
-	int (*clear_signal)(struct ntc_dev *ntc, int vec);
-	int (*max_peer_irqs)(struct ntc_dev *ntc);
-	const void *(*local_hello_buf)(struct ntc_dev *ntc, int *size);
-	void *(*peer_hello_buf)(struct ntc_dev *ntc, int *size);
-	u32 (*query_version)(struct ntc_dev *ntc);
-};
-
-static inline int ntc_dev_ops_is_valid(const struct ntc_dev_ops *ops)
-{
-	/* commented callbacks are not required: */
-	return
-		/* ops->map_dev				&& */
-		ops->link_disable			&&
-		ops->link_enable			&&
-		ops->link_reset				&&
-
-		/* ops->peer_addr			&& */
-
-		ops->req_create				&&
-		ops->req_cancel				&&
-		ops->req_submit				&&
-
-		ops->req_memcpy				&&
-		ops->req_imm32				&&
-		ops->req_imm64				&&
-		ops->req_signal				&&
-		/* ops->clear_signal			&& */
-		1;
-}
-
 struct ntc_local_buf {
 	struct ntc_dev *ntc;
-	struct device *dma_engine_dev;
 	u64 size;
 	bool owned;
 	bool mapped;
@@ -209,7 +131,6 @@ struct ntc_local_buf {
 
 struct ntc_export_buf {
 	struct ntc_dev *ntc;
-	struct device *ntb_dev;
 	u64 size;
 	gfp_t gfp;
 
@@ -219,8 +140,6 @@ struct ntc_export_buf {
 
 struct ntc_bidir_buf {
 	struct ntc_dev *ntc;
-	struct device *ntb_dev;
-	struct device *dma_engine_dev;
 	u64 size;
 	gfp_t gfp;
 
@@ -236,52 +155,21 @@ struct ntc_remote_buf_desc {
 
 struct ntc_remote_buf {
 	struct ntc_dev *ntc;
-	struct device *dma_engine_dev;
 	u64 size;
 
 	phys_addr_t ptr;
 	dma_addr_t dma_addr;
 };
 
-/** struct ntc_map_ops - ntc memory mapping operations
- * See usage below.
- */
-struct ntc_map_ops {
-	int (*local_buf_alloc)(struct ntc_local_buf *buf, gfp_t gfp);
-	void (*local_buf_free)(struct ntc_local_buf *buf);
-	int (*local_buf_map)(struct ntc_local_buf *buf);
-	void (*local_buf_unmap)(struct ntc_local_buf *buf);
-	void (*local_buf_prepare_to_copy)(const struct ntc_local_buf *buf,
-					u64 offset, u64 len);
-
-	int (*export_buf_alloc)(struct ntc_export_buf *buf);
-	void (*export_buf_free)(struct ntc_export_buf *buf);
-	const void *(*export_buf_const_deref)(struct ntc_export_buf *buf,
-					u64 offset, u64 len);
-
-	int (*bidir_buf_alloc)(struct ntc_bidir_buf *buf);
-	void (*bidir_buf_free)(struct ntc_bidir_buf *buf);
-	void *(*bidir_buf_deref)(struct ntc_bidir_buf *buf,
-				u64 offset, u64 len);
-	void (*bidir_buf_unref)(struct ntc_bidir_buf *buf,
-				u64 offset, u64 len);
-	const void *(*bidir_buf_const_deref)(struct ntc_bidir_buf *buf,
-					u64 offset, u64 len);
-	void (*bidir_buf_prepare_to_copy)(const struct ntc_bidir_buf *buf,
-					u64 offset, u64 len);
-
-	int (*remote_buf_map)(struct ntc_remote_buf *buf,
-			const struct ntc_remote_buf_desc *desc);
-	int (*remote_buf_map_phys)(struct ntc_remote_buf *buf,
-				phys_addr_t ptr, u64 size);
-	void (*remote_buf_unmap)(struct ntc_remote_buf *buf);
+struct ntc_peer_mw {
+	phys_addr_t base;
+	resource_size_t size;
 };
 
-/* Virtual mapping ops provided by ntc_virt library module */
-extern struct ntc_map_ops ntc_virt_map_ops;
-
-/* Hardware DMA mapping ops provided by ntc_phys library module */
-extern struct ntc_map_ops ntc_phys_map_ops;
+struct ntc_own_mw {
+	dma_addr_t base;
+	resource_size_t size;
+};
 
 /**
  * struct ntc_driver - driver interested in ntc devices
@@ -298,35 +186,33 @@ struct ntc_driver {
 /**
  * struct ntc_device - ntc device
  * @dev:		Linux device object.
- * @ops:		See &ntc_dev_ops.
  * @ctx_ops:		See &ntc_ctx_ops.
  */
 struct ntc_dev {
 	struct device			dev;
-	const struct ntc_dev_ops	*dev_ops;
-	const struct ntc_map_ops	*map_ops;
+	struct device			*ntb_dev;
+	struct device			*dma_engine_dev;
 	const struct ntc_ctx_ops	*ctx_ops;
+	struct ntc_peer_mw		peer_dram_mw;
+	struct ntc_own_mw		own_dram_mw;
+	int				peer_irq_num;
+
+	/* negotiated protocol version for ntc */
+	int				version;
+	u32				latest_version;
+
+	bool				link_is_up;
 };
 
 #define ntc_of_dev(__dev) container_of(__dev, struct ntc_dev, dev)
 
 static inline int ntc_max_peer_irqs(struct ntc_dev *ntc)
 {
-	if (!ntc->dev_ops->max_peer_irqs)
-			return 1;
-
-	return ntc->dev_ops->max_peer_irqs(ntc);
+	return ntc->peer_irq_num;
 }
 
-static inline const void *ntc_local_hello_buf(struct ntc_dev *ntc, int *size)
-{
-	return ntc->dev_ops->local_hello_buf(ntc, size);
-}
-
-static inline void *ntc_peer_hello_buf(struct ntc_dev *ntc, int *size)
-{
-	return ntc->dev_ops->peer_hello_buf(ntc, size);
-}
+const void *ntc_local_hello_buf(struct ntc_dev *ntc, int *size);
+void *ntc_peer_hello_buf(struct ntc_dev *ntc, int *size);
 
 static inline int ntc_door_bell_arbitrator(struct ntc_dev *ntc)
 {
@@ -339,6 +225,9 @@ static inline int ntc_door_bell_arbitrator(struct ntc_dev *ntc)
 }
 
 #define NTB_DEFAULT_VEC(__NTC) ntc_door_bell_arbitrator(__NTC)
+
+struct bus_type *ntc_bus_ptr(void);
+
 /**
  * ntc_register_driver() - register a driver for interest in ntc devices
  * @driver:	Client context.
@@ -352,8 +241,21 @@ static inline int ntc_door_bell_arbitrator(struct ntc_dev *ntc)
 #define ntc_register_driver(driver) \
 	__ntc_register_driver(driver, THIS_MODULE, KBUILD_MODNAME)
 
-int __ntc_register_driver(struct ntc_driver *driver, struct module *mod,
-			  const char *mod_name);
+static inline int __ntc_register_driver(struct ntc_driver *driver,
+					struct module *mod,
+					const char *mod_name)
+{
+	if (!ntc_driver_ops_is_valid(&driver->ops))
+		return -EINVAL;
+
+	pr_devel("register driver %s\n", driver->drv.name);
+
+	driver->drv.bus = ntc_bus_ptr();
+	driver->drv.name = mod_name;
+	driver->drv.owner = mod;
+
+	return driver_register(&driver->drv);
+}
 
 /**
  * ntc_unregister_driver() - unregister a driver for interest in ntc devices
@@ -363,57 +265,16 @@ int __ntc_register_driver(struct ntc_driver *driver, struct module *mod,
  * devices.  If any ntc devices are associated with the driver, the driver will
  * be notified to remove those devices.
  */
-void ntc_unregister_driver(struct ntc_driver *driver);
+static inline void ntc_unregister_driver(struct ntc_driver *driver)
+{
+	pr_devel("unregister driver %s\n", driver->drv.name);
+
+	driver_unregister(&driver->drv);
+}
 
 #define module_ntc_driver(__ntc_driver) \
 	module_driver(__ntc_driver, ntc_register_driver, \
 		      ntc_unregister_driver)
-
-/**
- * ntc_register_device() - register a ntc device
- * @ntc:	Device context.
- *
- * The device will be added to the list of ntc devices.  If any drivers are
- * interested in ntc devices, each driver will be notified of the ntc device,
- * until at most one driver accepts the device.
- *
- * Return: Zero if the device is registered, otherwise an error number.
- */
-int ntc_register_device(struct ntc_dev *ntc);
-
-/**
- * ntc_unregister_device() - unregister a ntc device
- * @ntc:	Device context.
- *
- * The device will be removed from the list of ntc devices.  If the ntc device
- * is associated with a driver, the driver will be notified to remove the
- * device.
- */
-void ntc_unregister_device(struct ntc_dev *ntc);
-
-/**
- * ntc_set_ctx() - associate a driver context with an ntc device
- * @ntc:	Device context.
- * @ctx:	Driver context.
- * @ctx_ops:	Driver context operations.
- *
- * Associate a driver context and operations with a ntc device.  The context is
- * provided by the driver driver, and the driver may associate a different
- * context with each ntc device.
- *
- * Return: Zero if the context is associated, otherwise an error number.
- */
-int ntc_set_ctx(struct ntc_dev *ntc, void *ctx,
-		const struct ntc_ctx_ops *ctx_ops);
-
-/**
- * ntc_clear_ctx() - disassociate any driver context from an ntc device
- * @ntc:	Device context.
- *
- * Clear any association that may exist between a driver context and the ntc
- * device.
- */
-void ntc_clear_ctx(struct ntc_dev *ntc);
 
 /**
  * ntc_get_ctx() - get the driver context associated with an ntc device
@@ -429,126 +290,52 @@ static inline void *ntc_get_ctx(struct ntc_dev *ntc)
 }
 
 /**
- * ntc_ctx_hello() - exchange data for upper layer protocol initialization
+ * ntc_set_ctx() - associate a driver context with an ntc device
  * @ntc:	Device context.
- * @phase:	Hello phase number.
- * @in_buf:	Hello input buffer.
- * @in_buf:	Hello input buffer size.
- * @out_buf:	Hello output buffer.
- * @out_buf:	Hello output buffer size.
+ * @ctx:	Driver context.
+ * @ctx_ops:	Driver context operations.
  *
- * In each phase, provide an input buffer with data from the peer, and an
- * output buffer with data for the peer.  The inputs are from the peer previous
- * phase outputs, and the outputs are for the peer next phase inputs.  Return
- * the size of a buffer for the peer next phase outputs, and the local phase
- * after next inputs.
+ * Associate a driver context and operations with a ntc device.  The context is
+ * provided by the driver driver, and the driver may associate a different
+ * context with each ntc device.
  *
- * The zero'th phase has no inputs or outputs, and returns the size of the
- * buffer for the peer phase one outputs, which will be the local phase two
- * inputs.
- *
- * The first phase has only outputs, which will be the peer phase two inputs.
- * Phase one returns the size of the buffer for peer phase two outputs, which
- * will be the local phase three inputs.  The second and later phases have both
- * inputs and outputs, until the final phases.
- *
- * If a phase returns zero, then the next phase has no outputs.  The next phase
- * is the last phase.  Likewise, the last phase must return zero, or an error
- * code, only.
- *
- * When the next phase (logically, after the last phase) has no inputs or
- * outputs, initialization is complete.  After initialization is complete on
- * both sides of the channel, a link event will be indicated to the upper
- * layer, indicating that the link is up.
- *
- * The input buffer size is the capacity of the buffer, although the peer may
- * have written less data than the buffer size.  Likewise, the output buffer
- * size is the capacity of the buffer on the peer.  It is the responsibility of
- * the upper layer to detect and handle any cases where the data in the buffer
- * is less than the capacity of the buffer.
- *
- * Return: Input buffer size for phase after next, zero, or an error number.
+ * Return: Zero if the context is associated, otherwise an error number.
  */
-int ntc_ctx_hello(struct ntc_dev *ntc, int phase,
-		      void *in_buf, size_t in_size,
-		      void *out_buf, size_t out_size);
-
-/**
- * ntc_ctx_enable() - notify driver that the link is active
- * @ntc:	Device context.
- *
- * Notify the driver context that the link is active.  The driver may begin
- * issuing requests.
- */
-int ntc_ctx_enable(struct ntc_dev *ntc);
-
-/**
- * ntc_ctx_disable() - notify driver that the link is not active
- * @ntc:	Device context.
- *
- * Notify the driver context that the link is not active.  The driver should
- * stop issuing requests.  See ntc_ctx_quiesce().
- */
-void ntc_ctx_disable(struct ntc_dev *ntc);
-
-/**
- * ntc_ctx_quiesce() - make sure driver is not issuing any new requests
- * @ntc:	Device context.
- *
- * Make sure the driver context is not issuing any new requests.  The driver
- * should block and wait for any asynchronous operations to stop.  It is not
- * necessary to wait for previously issued requests to complete, just that no
- * new requests will be issued after this function returns.
- */
-void ntc_ctx_quiesce(struct ntc_dev *ntc);
-
-/**
- * ntc_ctx_reset() - safely deallocate upper layer protocol structures
- * @ntc:	Device context.
- *
- * Call the upper layer to deallocate data structures that the peer may have
- * been writing.  When calling this function, the channel must guarantee to the
- * upper layer that the peer is no longer using any of the locally channel
- * mapped buffers.  Either the channel has obtained acknowledgment from the
- * peer for a protocol reset, or the channel can prevent misbehavior from a
- * peer in an unknown state.
- *
- * It is important that the upper layer does not immediately deallocate
- * structures on a link event, because while the channel link may report to be
- * down, a hardware link may still be active.  Immediately deallocating data
- * buffers could result in memory corruption, as it may be used by the peer
- * after it is freed locally.  A coordinated protocol reset is therefore
- * necessary to prevent use after free conditions from occurring.
- */
-void ntc_ctx_reset(struct ntc_dev *ntc);
-
-/**
- * ntc_ctx_signal() - notify driver context of a signal event
- * @ntc:	Device context.
- * @vector:	Interrupt vector number.
- *
- * Notify the driver context of a signal event triggered by the peer.
- */
-void ntc_ctx_signal(struct ntc_dev *ntc, int vec);
-
-/**
- * ntc_map_dev() - get the device to use for channel mapping
- * @ntc:	Device context.
- *
- * Get the device to use for channel mapping, which may be different from
- * &ntc->dev.  This is the device to pass to map_ops.
- *
- * Return: The device for channel mapping.
- */
-static inline struct device *ntc_map_dev(struct ntc_dev *ntc,
-		enum ntc_dma_access dma_dev)
+static inline int ntc_set_ctx(struct ntc_dev *ntc, void *ctx,
+			const struct ntc_ctx_ops *ctx_ops)
 {
-	if (!ntc->dev_ops->map_dev)
-		return &ntc->dev;
+	if (ntc_get_ctx(ntc))
+		return -EINVAL;
 
-	return ntc->dev_ops->map_dev(ntc, dma_dev);
+	if (!ctx_ops)
+		return -EINVAL;
+	if (!ntc_ctx_ops_is_valid(ctx_ops))
+		return -EINVAL;
+
+	dev_vdbg(&ntc->dev, "set ctx\n");
+
+	dev_set_drvdata(&ntc->dev, ctx);
+	wmb(); /* if ctx_ops is set, drvdata must be set */
+	ntc->ctx_ops = ctx_ops;
+
+	return 0;
 }
 
+/**
+ * ntc_clear_ctx() - disassociate any driver context from an ntc device
+ * @ntc:	Device context.
+ *
+ * Clear any association that may exist between a driver context and the ntc
+ * device.
+ */
+static inline void ntc_clear_ctx(struct ntc_dev *ntc)
+{
+	dev_vdbg(&ntc->dev, "clear ctx\n");
+
+	ntc->ctx_ops = NULL;
+	wmb(); /* if ctx_ops is set, drvdata must be set */
+	dev_set_drvdata(&ntc->dev, NULL);
+}
 
 /**
  * ntc_is_link_up() - check the link
@@ -560,10 +347,7 @@ static inline struct device *ntc_map_dev(struct ntc_dev *ntc,
  */
 static inline int ntc_is_link_up(struct ntc_dev *ntc)
 {
-	if (!ntc->dev_ops->is_link_up)
-		return 0;
-
-	return ntc->dev_ops->is_link_up(ntc);
+	return ntc->link_is_up;
 }
 
 /**
@@ -576,9 +360,7 @@ static inline int ntc_is_link_up(struct ntc_dev *ntc)
  */
 static inline int ntc_query_version(struct ntc_dev *ntc)
 {
-	if (!ntc->dev_ops->query_version)
-		return -EINVAL;
-	return ntc->dev_ops->query_version(ntc);
+	return ntc->latest_version;
 }
 
 /**
@@ -590,15 +372,7 @@ static inline int ntc_query_version(struct ntc_dev *ntc)
  *
  * Return: Zero on success, otherwise an error number.
  */
-static inline int _ntc_link_disable(struct ntc_dev *ntc, const char *f)
-{
-	pr_info("NTC link disable by upper layer (%s)\n",
-			f);
-	TRACE("NTC link disable by upper layer (%s)\n",
-			f);
-
-	return ntc->dev_ops->link_disable(ntc);
-}
+int _ntc_link_disable(struct ntc_dev *ntc, const char *f);
 #define ntc_link_disable(_ntc) _ntc_link_disable(_ntc, __func__)
 
 /**
@@ -609,10 +383,7 @@ static inline int _ntc_link_disable(struct ntc_dev *ntc, const char *f)
  *
  * Return: Zero on success, otherwise an error number.
  */
-static inline int ntc_link_enable(struct ntc_dev *ntc)
-{
-	return ntc->dev_ops->link_enable(ntc);
-}
+int ntc_link_enable(struct ntc_dev *ntc);
 
 /**
  * ntc_link_reset() - reset the link
@@ -623,18 +394,7 @@ static inline int ntc_link_enable(struct ntc_dev *ntc)
  *
  * Return: Zero on success, otherwise an error number.
  */
-static inline int _ntc_link_reset(struct ntc_dev *ntc, const char *f)
-{
-	int ret;
-
-	pr_info("NTC link resetting by upper layer (%s)...\n",
-			f);
-	ret = ntc->dev_ops->link_reset(ntc);
-	pr_info("NTC link reset done (%s)\n", f);
-
-	return ret;
-}
-
+int _ntc_link_reset(struct ntc_dev *ntc, const char *f);
 #define ntc_link_reset(_ntc) _ntc_link_reset(_ntc, __func__)
 
 /**
@@ -658,10 +418,27 @@ static inline int _ntc_link_reset(struct ntc_dev *ntc, const char *f)
 static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 					const union ntc_chan_addr *chan_addr)
 {
-	if (!ntc->dev_ops->peer_addr)
-		return chan_addr->value;
+	struct ntc_peer_mw *peer_mw;
+	u64 addr = chan_addr->offset;
 
-	return ntc->dev_ops->peer_addr(ntc, chan_addr);
+	switch (chan_addr->mw_desc) {
+	case NTC_CHAN_MW1:
+		peer_mw = &ntc->peer_dram_mw;
+		break;
+	default:
+		dev_err(&ntc->dev, "Unsupported MW kind %d",
+			chan_addr->mw_desc);
+		return 0;
+	}
+
+	if (addr > peer_mw->size) {
+		dev_err(&ntc->dev,
+			"off 0x%llx is larger than memory size %llu\n",
+			addr, peer_mw->size);
+		return 0;
+	}
+
+	return peer_mw->base + addr;
 }
 
 /**
@@ -685,10 +462,7 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
  *
  * Return: A channel request context, otherwise an error pointer.
  */
-static inline void *ntc_req_create(struct ntc_dev *ntc)
-{
-	return ntc->dev_ops->req_create(ntc);
-}
+void *ntc_req_create(struct ntc_dev *ntc);
 
 /**
  * ntc_req_cancel() - cancel a channel request
@@ -705,10 +479,7 @@ static inline void *ntc_req_create(struct ntc_dev *ntc)
  * function exists to provide a portable interface to use the varying
  * underlying channel implementations most efficiently.
  */
-static inline void ntc_req_cancel(struct ntc_dev *ntc, void *req)
-{
-	return ntc->dev_ops->req_cancel(ntc, req);
-}
+void ntc_req_cancel(struct ntc_dev *ntc, void *req);
 
 /**
  * ntc_req_submit() - submit a channel request
@@ -728,10 +499,7 @@ static inline void ntc_req_cancel(struct ntc_dev *ntc, void *req)
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_submit(struct ntc_dev *ntc, void *req)
-{
-	return ntc->dev_ops->req_submit(ntc, req);
-}
+int ntc_req_submit(struct ntc_dev *ntc, void *req);
 
 /**
  * ntc_req_memcpy() - append a buffer to buffer memory copy operation
@@ -766,15 +534,9 @@ static inline int ntc_req_submit(struct ntc_dev *ntc, void *req)
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_memcpy(struct ntc_dev *ntc, void *req,
-				dma_addr_t dst, dma_addr_t src, u64 len,
-				bool fence,
-				void (*cb)(void *cb_ctx), void *cb_ctx)
-{
-	return ntc->dev_ops->req_memcpy(ntc, req,
-					dst, src, len, fence,
-					cb, cb_ctx);
-}
+int ntc_req_memcpy(struct ntc_dev *ntc, void *req,
+		dma_addr_t dst, dma_addr_t src, u64 len,
+		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx);
 
 static inline bool ntc_segment_valid(u64 buf_size, u64 buf_offset, u64 len)
 {
@@ -801,6 +563,9 @@ static inline int _ntc_request_memcpy(struct ntc_dev *ntc, void *req,
 			fence, cb, cb_ctx);
 }
 
+static inline
+void ntc_phys_local_buf_prepare_to_copy(const struct ntc_local_buf *buf,
+					u64 offset, u64 len);
 static inline int ntc_request_memcpy_with_cb(void *req,
 					const struct ntc_remote_buf *dst,
 					u64 dst_offset,
@@ -818,9 +583,7 @@ static inline int ntc_request_memcpy_with_cb(void *req,
 	if (!ntc_segment_valid(dst->size, dst_offset, len))
 		return -EINVAL;
 
-	if (src->ntc->map_ops->local_buf_prepare_to_copy)
-		src->ntc->map_ops->local_buf_prepare_to_copy(src, src_offset,
-							len);
+	ntc_phys_local_buf_prepare_to_copy(src, src_offset, len);
 
 	return _ntc_request_memcpy(src->ntc, req,
 				dst->dma_addr, dst->size, dst_offset,
@@ -841,9 +604,7 @@ static inline int ntc_request_memcpy_fenced(void *req,
 	if (!ntc_segment_valid(dst->size, dst_offset, len))
 		return -EINVAL;
 
-	if (src->ntc->map_ops->local_buf_prepare_to_copy)
-		src->ntc->map_ops->local_buf_prepare_to_copy(src, src_offset,
-							len);
+	ntc_phys_local_buf_prepare_to_copy(src, src_offset, len);
 
 	return _ntc_request_memcpy(src->ntc, req,
 				dst->dma_addr, dst->size, dst_offset,
@@ -851,6 +612,9 @@ static inline int ntc_request_memcpy_fenced(void *req,
 				len, true, NULL, NULL);
 }
 
+static inline
+void ntc_phys_bidir_buf_prepare_to_copy(const struct ntc_bidir_buf *buf,
+					u64 offset, u64 len);
 static inline
 int ntc_bidir_request_memcpy_unfenced(void *req,
 				const struct ntc_remote_buf *dst,
@@ -865,15 +629,17 @@ int ntc_bidir_request_memcpy_unfenced(void *req,
 	if (!ntc_segment_valid(dst->size, dst_offset, len))
 		return -EINVAL;
 
-	if (src->ntc->map_ops->bidir_buf_prepare_to_copy)
-		src->ntc->map_ops->bidir_buf_prepare_to_copy(src, src_offset,
-							len);
+	ntc_phys_bidir_buf_prepare_to_copy(src, src_offset, len);
 
 	return _ntc_request_memcpy(src->ntc, req,
 				dst->dma_addr, dst->size, dst_offset,
 				src->dma_addr, src->size, src_offset,
 				len, false, NULL, NULL);
 }
+
+int ntc_req_imm(struct ntc_dev *ntc, void *req,
+		u64 dst, void *ptr, size_t len, bool fence,
+		void (*cb)(void *cb_ctx), void *cb_ctx);
 
 /**
  * ntc_req_imm32() - append a 32 bit immediate data write operation
@@ -899,12 +665,12 @@ int ntc_bidir_request_memcpy_unfenced(void *req,
  * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_imm32(struct ntc_dev *ntc, void *req,
-				dma_addr_t dst, u32 val, bool fence,
-				void (*cb)(void *cb_ctx), void *cb_ctx)
+				dma_addr_t dst, u32 val,
+				bool fence, void (*cb)(void *cb_ctx),
+				void *cb_ctx)
 {
-	return ntc->dev_ops->req_imm32(ntc, req,
-				       dst, val, fence,
-				       cb, cb_ctx);
+	return ntc_req_imm(ntc, req, dst, &val, sizeof(val),
+			fence, cb, cb_ctx);
 }
 
 static inline int _ntc_request_imm32(struct ntc_dev *ntc, void *req,
@@ -955,12 +721,12 @@ static inline int ntc_request_imm32(void *req,
  * Return: Zero on success, othewise an error number.
  */
 static inline int ntc_req_imm64(struct ntc_dev *ntc, void *req,
-				dma_addr_t dst, u64 val, bool fence,
-				void (*cb)(void *cb_ctx), void *cb_ctx)
+				dma_addr_t dst, u64 val,
+				bool fence, void (*cb)(void *cb_ctx),
+				void *cb_ctx)
 {
-	return ntc->dev_ops->req_imm64(ntc, req,
-				       dst, val, fence,
-				       cb, cb_ctx);
+	return ntc_req_imm(ntc, req, dst, &val, sizeof(val),
+			fence, cb, cb_ctx);
 }
 
 static inline int _ntc_request_imm64(struct ntc_dev *ntc, void *req,
@@ -1013,11 +779,50 @@ static inline int ntc_request_imm64(void *req,
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_signal(struct ntc_dev *ntc, void *req,
-				 void (*cb)(void *cb_ctx), void *cb_ctx, int vec)
+int ntc_req_signal(struct ntc_dev *ntc, void *req,
+		void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
+
+static inline int ntc_phys_local_buf_alloc(struct ntc_local_buf *buf, gfp_t gfp)
 {
-	return ntc->dev_ops->req_signal(ntc, req,
-					cb, cb_ctx, vec);
+	struct device *dev = buf->ntc->dma_engine_dev;
+
+	buf->ptr = kmalloc_node(buf->size, gfp, dev_to_node(dev));
+	if (!buf->ptr)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static inline int ntc_phys_local_buf_map(struct ntc_local_buf *buf)
+{
+	struct device *dev = buf->ntc->dma_engine_dev;
+
+	buf->dma_addr = dma_map_single(dev, buf->ptr, buf->size,
+				DMA_TO_DEVICE);
+	if (dma_mapping_error(dev, buf->dma_addr))
+		return -EIO;
+
+	return 0;
+}
+
+static inline void ntc_phys_local_buf_unmap(struct ntc_local_buf *buf)
+{
+	dma_unmap_single(buf->ntc->dma_engine_dev, buf->dma_addr, buf->size,
+			DMA_TO_DEVICE);
+}
+
+static inline void ntc_phys_local_buf_free(struct ntc_local_buf *buf)
+{
+	kfree(buf->ptr);
+}
+
+static inline
+void ntc_phys_local_buf_prepare_to_copy(const struct ntc_local_buf *buf,
+					u64 offset, u64 len)
+{
+	dma_sync_single_for_device(buf->ntc->dma_engine_dev,
+				buf->dma_addr + offset,
+				len, DMA_TO_DEVICE);
 }
 
 static inline void ntc_local_buf_clear(struct ntc_local_buf *buf)
@@ -1043,31 +848,23 @@ static inline int ntc_local_buf_alloc(struct ntc_local_buf *buf,
 	int rc;
 
 	buf->ntc = ntc;
-	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
 	buf->size = size;
 	buf->owned = true;
 	buf->mapped = true;
 
 	ntc_local_buf_clear(buf);
 
-	if (!buf->ntc->map_ops->local_buf_alloc)
-		return -ENOENT;
-
-	rc = buf->ntc->map_ops->local_buf_alloc(buf, gfp);
+	rc = ntc_phys_local_buf_alloc(buf, gfp);
 
 	if (rc < 0) {
 		ntc_local_buf_clear(buf);
 		return rc;
 	}
 
-	if (!buf->ntc->map_ops->local_buf_map)
-		return 0;
-
-	rc = buf->ntc->map_ops->local_buf_map(buf);
+	rc = ntc_phys_local_buf_map(buf);
 
 	if (rc < 0) {
-		if (buf->ntc->map_ops->local_buf_free)
-			buf->ntc->map_ops->local_buf_free(buf);
+		ntc_phys_local_buf_free(buf);
 		ntc_local_buf_clear(buf);
 	}
 
@@ -1108,7 +905,6 @@ static inline int ntc_local_buf_map_prealloced(struct ntc_local_buf *buf,
 	int rc;
 
 	buf->ntc = ntc;
-	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
 	buf->size = size;
 	buf->owned = false;
 	buf->mapped = true;
@@ -1117,10 +913,7 @@ static inline int ntc_local_buf_map_prealloced(struct ntc_local_buf *buf,
 
 	buf->ptr = ptr;
 
-	if (!buf->ntc->map_ops->local_buf_map)
-		return 0;
-
-	rc = buf->ntc->map_ops->local_buf_map(buf);
+	rc = ntc_phys_local_buf_map(buf);
 
 	if (rc < 0)
 		ntc_local_buf_clear(buf);
@@ -1141,7 +934,6 @@ static inline void ntc_local_buf_map_dma(struct ntc_local_buf *buf,
 					u64 size, dma_addr_t dma_addr)
 {
 	buf->ntc = ntc;
-	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
 	buf->size = size;
 	buf->owned = false;
 	buf->mapped = false;
@@ -1156,11 +948,11 @@ static inline void ntc_local_buf_map_dma(struct ntc_local_buf *buf,
  */
 static inline void ntc_local_buf_free(struct ntc_local_buf *buf)
 {
-	if (buf->mapped && buf->ntc->map_ops->local_buf_unmap)
-		buf->ntc->map_ops->local_buf_unmap(buf);
+	if (buf->mapped)
+		ntc_phys_local_buf_unmap(buf);
 
-	if (buf->owned && buf->ntc->map_ops->local_buf_free)
-		buf->ntc->map_ops->local_buf_free(buf);
+	if (buf->owned)
+		ntc_phys_local_buf_free(buf);
 
 	ntc_local_buf_clear(buf);
 }
@@ -1227,6 +1019,59 @@ static inline void ntc_chan_addr_clean(union ntc_chan_addr *chan_addr)
 	chan_addr->value = 0;
 }
 
+static inline int ntc_phys_export_buf_alloc(struct ntc_export_buf *buf)
+{
+	struct device *dev = buf->ntc->ntb_dev;
+	dma_addr_t dma_addr;
+
+	if (buf->gfp)
+		buf->ptr = kmalloc_node(buf->size, buf->gfp,
+					dev_to_node(dev));
+	if (!buf->ptr)
+		return -ENOMEM;
+
+	dma_addr = dma_map_single(dev, buf->ptr, buf->size, DMA_FROM_DEVICE);
+	if (dma_mapping_error(dev, dma_addr)) {
+		if (buf->gfp)
+			kfree(buf->ptr);
+		return -EIO;
+	}
+
+	buf->chan_addr.mw_desc = NTC_CHAN_MW1;
+	buf->chan_addr.offset = dma_addr;
+
+	return 0;
+}
+
+static inline void ntc_phys_export_buf_free(struct ntc_export_buf *buf)
+{
+	struct device *dev = buf->ntc->ntb_dev;
+	dma_addr_t dma_addr;
+
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		dma_addr = buf->chan_addr.offset;
+		dma_unmap_single(dev, dma_addr, buf->size, DMA_FROM_DEVICE);
+	}
+
+	if (buf->gfp && buf->ptr)
+		kfree(buf->ptr);
+}
+
+static inline
+const void *ntc_phys_export_buf_const_deref(struct ntc_export_buf *buf,
+					u64 offset, u64 len)
+{
+	struct device *dev = buf->ntc->ntb_dev;
+	dma_addr_t dma_addr;
+
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		dma_addr = buf->chan_addr.offset;
+		dma_sync_single_for_cpu(dev, dma_addr, len, DMA_FROM_DEVICE);
+	}
+
+	return buf->ptr + offset;
+}
+
 /**
  * ntc_export_buf_valid() - Check whether the buffer is valid.
  * @buf:	Export buffer.
@@ -1265,16 +1110,12 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 	int rc;
 
 	buf->ntc = ntc;
-	buf->ntb_dev = ntc_map_dev(ntc, NTB_DEV_ACCESS);
 	buf->size = size;
 	buf->gfp = gfp;
 
 	ntc_export_buf_clear(buf);
 
-	if (!buf->ntc->map_ops->export_buf_alloc)
-		return -ENOENT;
-
-	rc = buf->ntc->map_ops->export_buf_alloc(buf);
+	rc = ntc_phys_export_buf_alloc(buf);
 
 	if (rc < 0)
 		ntc_export_buf_clear(buf);
@@ -1407,7 +1248,7 @@ static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
 static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 {
 	if (buf->ptr)
-		buf->ntc->map_ops->export_buf_free(buf);
+		ntc_phys_export_buf_free(buf);
 
 	ntc_export_buf_clear(buf);
 }
@@ -1531,11 +1372,7 @@ static inline const void *ntc_export_buf_const_deref(struct ntc_export_buf *buf,
 	if (unlikely(!buf->ptr))
 		return NULL;
 
-	if (buf->ntc->map_ops->export_buf_const_deref)
-		return buf->ntc->map_ops->export_buf_const_deref(buf, offset,
-								len);
-	else
-		return buf->ptr + offset;
+	return ntc_phys_export_buf_const_deref(buf, offset, len);
 }
 
 /**
@@ -1556,6 +1393,122 @@ static inline int ntc_export_buf_seq_write(struct seq_file *s,
 		return 0;
 
 	return seq_write(s, p, buf->size);
+}
+
+static inline int ntc_phys_bidir_buf_alloc(struct ntc_bidir_buf *buf)
+{
+	struct device *ntb_dev = buf->ntc->ntb_dev;
+	struct device *dma_engine_dev = buf->ntc->dma_engine_dev;
+	dma_addr_t ntb_dma_addr;
+	dma_addr_t dma_engine_addr;
+	int rc;
+
+	if (buf->gfp)
+		buf->ptr = kmalloc_node(buf->size, buf->gfp,
+					dev_to_node(ntb_dev));
+	if (!buf->ptr)
+		return -ENOMEM;
+
+	ntb_dma_addr =
+		dma_map_single(ntb_dev, buf->ptr, buf->size, DMA_FROM_DEVICE);
+	if (dma_mapping_error(ntb_dev, ntb_dma_addr)) {
+		rc = -EIO;
+		goto err_ntb_map;
+	}
+
+	dma_engine_addr = dma_map_single(dma_engine_dev, buf->ptr, buf->size,
+					DMA_TO_DEVICE);
+	if (dma_mapping_error(dma_engine_dev, dma_engine_addr)) {
+		rc = -EIO;
+		goto err_dma_engine_map;
+	}
+
+	buf->chan_addr.mw_desc = NTC_CHAN_MW1;
+	buf->chan_addr.offset = ntb_dma_addr;
+	buf->dma_addr = dma_engine_addr;
+
+	return 0;
+
+ err_dma_engine_map:
+	dma_unmap_single(ntb_dev, ntb_dma_addr, buf->size, DMA_FROM_DEVICE);
+
+ err_ntb_map:
+	if (buf->gfp)
+		kfree(buf->ptr);
+
+	return rc;
+}
+
+static inline void ntc_phys_bidir_buf_free(struct ntc_bidir_buf *buf)
+{
+	struct device *ntb_dev = buf->ntc->ntb_dev;
+	struct device *dma_engine_dev = buf->ntc->dma_engine_dev;
+	dma_addr_t ntb_dma_addr;
+	dma_addr_t dma_engine_addr = buf->dma_addr;
+
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		ntb_dma_addr = buf->chan_addr.offset;
+		dma_unmap_single(ntb_dev, ntb_dma_addr, buf->size,
+				DMA_FROM_DEVICE);
+	}
+	dma_unmap_single(dma_engine_dev, dma_engine_addr, buf->size,
+			DMA_TO_DEVICE);
+
+	if (buf->gfp && buf->ptr)
+		kfree(buf->ptr);
+}
+
+static inline void *ntc_phys_bidir_buf_deref(struct ntc_bidir_buf *buf,
+					u64 offset, u64 len)
+{
+	struct device *ntb_dev = buf->ntc->ntb_dev;
+	dma_addr_t ntb_dma_addr;
+
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		ntb_dma_addr = buf->chan_addr.offset;
+		dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len,
+					DMA_FROM_DEVICE);
+	}
+
+	return buf->ptr + offset;
+}
+
+static inline void ntc_phys_bidir_buf_unref(struct ntc_bidir_buf *buf,
+					u64 offset, u64 len)
+{
+	struct device *ntb_dev = buf->ntc->ntb_dev;
+	dma_addr_t ntb_dma_addr;
+
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		ntb_dma_addr = buf->chan_addr.offset;
+		dma_sync_single_for_device(ntb_dev, ntb_dma_addr, len,
+					DMA_FROM_DEVICE);
+	}
+}
+
+static inline
+const void *ntc_phys_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
+					u64 offset, u64 len)
+{
+	struct device *ntb_dev = buf->ntc->ntb_dev;
+	dma_addr_t ntb_dma_addr;
+
+	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
+		ntb_dma_addr = buf->chan_addr.offset;
+		dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len,
+					DMA_FROM_DEVICE);
+	}
+
+	return buf->ptr + offset;
+}
+
+static inline
+void ntc_phys_bidir_buf_prepare_to_copy(const struct ntc_bidir_buf *buf,
+					u64 offset, u64 len)
+{
+	dma_sync_single_for_device(buf->ntc->dma_engine_dev,
+				buf->dma_addr + offset,
+				len, DMA_TO_DEVICE);
 }
 
 /**
@@ -1597,17 +1550,12 @@ static inline int ntc_bidir_buf_alloc(struct ntc_bidir_buf *buf,
 	int rc;
 
 	buf->ntc = ntc;
-	buf->ntb_dev = ntc_map_dev(ntc, NTB_DEV_ACCESS);
-	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
 	buf->size = size;
 	buf->gfp = gfp;
 
 	ntc_bidir_buf_clear(buf);
 
-	if (!buf->ntc->map_ops->bidir_buf_alloc)
-		return -ENOENT;
-
-	rc = buf->ntc->map_ops->bidir_buf_alloc(buf);
+	rc = ntc_phys_bidir_buf_alloc(buf);
 
 	if (rc < 0)
 		ntc_bidir_buf_clear(buf);
@@ -1762,7 +1710,7 @@ static inline int ntc_bidir_buf_make_prealloced(struct ntc_bidir_buf *buf,
 static inline void ntc_bidir_buf_free(struct ntc_bidir_buf *buf)
 {
 	if (buf->ptr)
-		buf->ntc->map_ops->bidir_buf_free(buf);
+		ntc_phys_bidir_buf_free(buf);
 
 	ntc_bidir_buf_clear(buf);
 }
@@ -1852,10 +1800,7 @@ static inline void *ntc_bidir_buf_deref(struct ntc_bidir_buf *buf,
 	if (unlikely(!buf->ptr))
 		return NULL;
 
-	if (buf->ntc->map_ops->bidir_buf_deref)
-		return buf->ntc->map_ops->bidir_buf_deref(buf, offset, len);
-	else
-		return buf->ptr + offset;
+	return ntc_phys_bidir_buf_deref(buf, offset, len);
 }
 
 /**
@@ -1874,8 +1819,7 @@ static inline void ntc_bidir_buf_unref(struct ntc_bidir_buf *buf,
 	if (unlikely(!buf->ptr))
 		return;
 
-	if (buf->ntc->map_ops->bidir_buf_unref)
-		buf->ntc->map_ops->bidir_buf_unref(buf, offset, len);
+	ntc_phys_bidir_buf_unref(buf, offset, len);
 }
 
 /**
@@ -1912,11 +1856,7 @@ static inline const void *ntc_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
 	if (unlikely(!buf->ptr))
 		return NULL;
 
-	if (buf->ntc->map_ops->bidir_buf_deref)
-		return buf->ntc->map_ops->bidir_buf_const_deref(buf, offset,
-								len);
-	else
-		return buf->ptr + offset;
+	return ntc_phys_bidir_buf_const_deref(buf, offset, len);
 }
 
 /**
@@ -1956,6 +1896,52 @@ ntc_remote_buf_desc_clip(struct ntc_remote_buf_desc *desc, u64 offset, u64 len)
 	return 0;
 }
 
+static inline int ntc_phys_remote_buf_map(struct ntc_remote_buf *buf,
+					const struct ntc_remote_buf_desc *desc)
+{
+	struct device *dev = buf->ntc->dma_engine_dev;
+
+	buf->ptr = ntc_peer_addr(buf->ntc, &desc->chan_addr);
+	if (!buf->ptr)
+		return -EIO;
+
+	buf->dma_addr = dma_map_resource(dev, buf->ptr, desc->size,
+					DMA_FROM_DEVICE, 0);
+
+	if (dma_mapping_error(dev, buf->dma_addr))
+		return -EIO;
+
+	buf->size = desc->size;
+
+	return 0;
+}
+
+static inline int ntc_phys_remote_buf_map_phys(struct ntc_remote_buf *buf,
+					phys_addr_t ptr, u64 size)
+{
+	struct device *dev = buf->ntc->dma_engine_dev;
+
+	if (!ptr)
+		return -EIO;
+
+	buf->ptr = ptr;
+	buf->dma_addr = dma_map_resource(dev, ptr, size, DMA_FROM_DEVICE, 0);
+
+	if (dma_mapping_error(dev, buf->dma_addr))
+		return -EIO;
+
+	buf->size = size;
+
+	return 0;
+}
+
+static inline void ntc_phys_remote_buf_unmap(struct ntc_remote_buf *buf)
+{
+	struct device *dev = buf->ntc->dma_engine_dev;
+
+	dma_unmap_resource(dev, buf->dma_addr, buf->size, DMA_FROM_DEVICE, 0);
+}
+
 static inline void ntc_remote_buf_clear(struct ntc_remote_buf *buf)
 {
 	buf->ptr = 0;
@@ -1982,12 +1968,8 @@ static inline int ntc_remote_buf_map(struct ntc_remote_buf *buf,
 	ntc_remote_buf_clear(buf);
 
 	buf->ntc = ntc;
-	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
 
-	if (!buf->ntc->map_ops->remote_buf_map)
-		return -ENOENT;
-
-	rc = buf->ntc->map_ops->remote_buf_map(buf, desc);
+	rc = ntc_phys_remote_buf_map(buf, desc);
 	if (rc < 0)
 		ntc_remote_buf_clear(buf);
 
@@ -2014,12 +1996,8 @@ static inline int ntc_remote_buf_map_phys(struct ntc_remote_buf *buf,
 	ntc_remote_buf_clear(buf);
 
 	buf->ntc = ntc;
-	buf->dma_engine_dev = ntc_map_dev(ntc, IOAT_DEV_ACCESS);
 
-	if (!buf->ntc->map_ops->remote_buf_map_phys)
-		return -ENOENT;
-
-	rc = buf->ntc->map_ops->remote_buf_map_phys(buf, ptr, size);
+	rc = ntc_phys_remote_buf_map_phys(buf, ptr, size);
 	if (rc < 0)
 		ntc_remote_buf_clear(buf);
 
@@ -2034,7 +2012,7 @@ static inline int ntc_remote_buf_map_phys(struct ntc_remote_buf *buf,
 static inline void ntc_remote_buf_unmap(struct ntc_remote_buf *buf)
 {
 	if (buf->dma_addr)
-		buf->ntc->map_ops->remote_buf_unmap(buf);
+		ntc_phys_remote_buf_unmap(buf);
 
 	ntc_remote_buf_clear(buf);
 }
@@ -2077,12 +2055,6 @@ static inline int ntc_umem_count(struct ntc_dev *ntc, struct ib_umem *ib_umem)
  *
  * Return: 1 for events waiting or 0 for no events.
  */
-static inline int ntc_clear_signal(struct ntc_dev *ntc, int vec)
-{
-	if (!ntc->dev_ops->clear_signal)
-		return 0;
-
-	return ntc->dev_ops->clear_signal(ntc, vec);
-}
+int ntc_clear_signal(struct ntc_dev *ntc, int vec);
 
 #endif
