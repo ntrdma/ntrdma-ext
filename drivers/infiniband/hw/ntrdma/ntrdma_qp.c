@@ -342,6 +342,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 
 	/* initialize synchronization */
 	mutex_init(&qp->send_post_lock);
+	spin_lock_init(&qp->send_post_slock);
 	spin_lock_init(&qp->send_prod_lock);
 	mutex_init(&qp->send_cmpl_lock);
 	mutex_init(&qp->recv_post_lock);
@@ -1209,12 +1210,16 @@ int ntrdma_qp_send_post_start(struct ntrdma_qp *qp)
 	/* TODO need to put this lock in rdma_core and not here */
 	if (qp->ibqp.qp_type != IB_QPT_GSI)
 		mutex_lock(&qp->send_post_lock);
+	else
+		spin_lock(&qp->send_post_slock);
 
 	if (!is_state_send_ready(atomic_read(&qp->state))) {
 		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
 				atomic_read(&qp->state));
 		if (qp->ibqp.qp_type != IB_QPT_GSI)
 			mutex_unlock(&qp->send_post_lock);
+		else
+			spin_unlock(&qp->send_post_slock);
 		ntrdma_dbg(dev, "invalid qp %d state %u\n", qp->res.key,
 				atomic_read(&qp->state));
 		return -EINVAL;
@@ -1228,6 +1233,8 @@ void ntrdma_qp_send_post_done(struct ntrdma_qp *qp)
 	tasklet_schedule(&qp->send_work);
 	if (qp->ibqp.qp_type != IB_QPT_GSI)
 		mutex_unlock(&qp->send_post_lock);
+	else
+		spin_unlock(&qp->send_post_slock);
 }
 
 void ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
