@@ -711,8 +711,6 @@ static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 	}
 
 	ntrdma_qp_enable_disable_cmpl_common(qp, dev, NULL, true);
-
-	ntrdma_res_done_cmds(&qp->res);
 	kfree(qpcb);
 
 	return 0;
