@@ -240,16 +240,20 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	{
-		vbell_buf = ntc_bidir_buf_const_deref(&dev->vbell_buf, 0,
-						dev->vbell_count * sizeof(u32));
-		for (i = 0; i < dev->vbell_count; ++i) {
-			head = &dev->vbell_vec[i];
-			vbell_val = vbell_buf[i];
-			if (ntrdma_vbell_cond(head->seq, vbell_val)) {
-				ntrdma_vbell_update_head(head->seq, vbell_val);
-				ntrdma_vbell_head_fire(head);
+		if (dev->vbell_enable) {
+			vbell_buf = ntc_bidir_buf_const_deref(&dev->vbell_buf,
+					0, dev->vbell_count * sizeof(u32));
+			for (i = 0; i < dev->vbell_count; ++i) {
+				head = &dev->vbell_vec[i];
+				vbell_val = vbell_buf[i];
+				if (ntrdma_vbell_cond(head->seq, vbell_val)) {
+					ntrdma_vbell_update_head(head->seq,
+							vbell_val);
+					ntrdma_vbell_head_fire(head);
+				}
 			}
-		}
+		} else
+			TRACE("vbell is not enabled\n");
 	}
 	spin_unlock_bh(&dev->vbell_self_lock);
 

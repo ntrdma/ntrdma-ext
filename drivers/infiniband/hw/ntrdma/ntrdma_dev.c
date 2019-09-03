@@ -229,6 +229,7 @@ void ntrdma_dev_disable(struct ntrdma_dev *dev)
 
 void ntrdma_dev_quiesce(struct ntrdma_dev *dev)
 {
+	ntrdma_dev_vbell_disable(dev);
 	ntrdma_dev_eth_quiesce(dev);
 	/* resource disable should block from new commands to be submitted */
 	ntrdma_dev_res_disable(dev);
