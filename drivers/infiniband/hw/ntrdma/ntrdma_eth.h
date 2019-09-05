@@ -43,7 +43,7 @@ struct ntrdma_eth {
 	struct napi_struct		napi;
 	struct ntrdma_dev		*dev;
 
-	void				*req;
+	struct dma_chan			*req;
 
 	bool				enable;
 	bool				ready; /* FIXME: dev enable common */

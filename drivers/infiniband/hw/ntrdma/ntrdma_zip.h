@@ -40,7 +40,7 @@ struct ntrdma_rpd;
 
 /* Append dma requests from snd entries in pd to rcv entries in rpd */
 /* Called on snd side. */
-int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
+int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct dma_chan *req, u32 *rdma_len,
 		const struct ntrdma_wr_rcv_sge *rcv_sg_list,
 		const struct ntrdma_wr_snd_sge *snd_sg_list,
 		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset);

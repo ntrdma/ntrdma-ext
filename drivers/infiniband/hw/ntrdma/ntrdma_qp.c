@@ -60,20 +60,20 @@ struct ntrdma_qp_cmd_cb {
 	container_of(__cb, struct ntrdma_qp_cmd_cb, cb)
 
 static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct ntrdma_req *req);
+				 union ntrdma_cmd *cmd, struct dma_chan *req);
 static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp,
-				struct ntrdma_req *req);
+				struct dma_chan *req);
 static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct ntrdma_req *req);
+				 union ntrdma_cmd *cmd, struct dma_chan *req);
 static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp,
-				struct ntrdma_req *req);
+				struct dma_chan *req);
 static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_cmd *cmd, struct ntrdma_req *req);
+				  union ntrdma_cmd *cmd, struct dma_chan *req);
 static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp,
-				struct ntrdma_req *req);
+				struct dma_chan *req);
 
 static int ntrdma_qp_enable(struct ntrdma_res *res);
 static int ntrdma_qp_disable(struct ntrdma_res *res);
@@ -448,7 +448,7 @@ err:
 }
 
 static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct ntrdma_req *req)
+				 union ntrdma_cmd *cmd, struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -469,7 +469,7 @@ static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
 
 static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp,
-				struct ntrdma_req *req)
+				struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -540,7 +540,7 @@ err:
 }
 
 static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct ntrdma_req *req)
+				 union ntrdma_cmd *cmd, struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -607,7 +607,7 @@ err_peer_recv_wqe_buf:
 
 static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp,
-				struct ntrdma_req *req)
+				struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -679,7 +679,7 @@ err:
 }
 
 static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_cmd *cmd, struct ntrdma_req *req)
+				  union ntrdma_cmd *cmd, struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -695,7 +695,7 @@ static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
 
 static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp,
-				struct ntrdma_req *req)
+				struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -1552,7 +1552,7 @@ const struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	struct ntrdma_req *req;
+	struct dma_chan *req;
 	u32 start, end, base;
 	size_t off, len;
 	int rc;
@@ -1620,7 +1620,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_rqp *rqp;
-	struct ntrdma_req *req;
+	struct dma_chan *req;
 	struct ntrdma_send_wqe *wqe;
 	const struct ntrdma_recv_wqe *recv_wqe = NULL;
 	u32 recv_wqe_recv_pos = 0;
@@ -1899,7 +1899,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 {
 	struct ntrdma_dev *dev = ntrdma_rqp_dev(rqp);
 	struct ntrdma_qp *qp;
-	struct ntrdma_req *req;
+	struct dma_chan *req;
 	struct ntrdma_cqe *cqe, *recv_cqe = NULL;
 	const struct ntrdma_send_wqe *wqe;
 	struct ntrdma_recv_wqe *recv_wqe = NULL;

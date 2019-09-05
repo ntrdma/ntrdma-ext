@@ -444,7 +444,7 @@ static inline u64 ntrdma_lrcv_cursor_next_io_size(struct ntrdma_lrcv_cursor *c)
 static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 					struct ntrdma_rcv_cursor *rcv,
 					struct ntrdma_snd_cursor *snd,
-					void *req)
+					struct dma_chan *req)
 {
 	s64 len = min_t(u64, ntrdma_snd_cursor_next_io_size(snd),
 			ntrdma_rcv_cursor_next_io_size(rcv));
@@ -512,7 +512,7 @@ static inline s64 ntrdma_lrcv_cursor_next_io_deref(struct ntrdma_lrcv_cursor *c)
 	return len;
 }
 
-int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
+int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct dma_chan *req, u32 *rdma_len,
 		const struct ntrdma_wr_rcv_sge *rcv_sg_list,
 		const struct ntrdma_wr_snd_sge *snd_sg_list,
 		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset)

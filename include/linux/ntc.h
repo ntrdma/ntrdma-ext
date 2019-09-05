@@ -462,7 +462,7 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
  *
  * Return: A channel request context, otherwise an error pointer.
  */
-void *ntc_req_create(struct ntc_dev *ntc);
+struct dma_chan *ntc_req_create(struct ntc_dev *ntc);
 
 /**
  * ntc_req_cancel() - cancel a channel request
@@ -479,7 +479,7 @@ void *ntc_req_create(struct ntc_dev *ntc);
  * function exists to provide a portable interface to use the varying
  * underlying channel implementations most efficiently.
  */
-void ntc_req_cancel(struct ntc_dev *ntc, void *req);
+void ntc_req_cancel(struct ntc_dev *ntc, struct dma_chan *req);
 
 /**
  * ntc_req_submit() - submit a channel request
@@ -499,7 +499,7 @@ void ntc_req_cancel(struct ntc_dev *ntc, void *req);
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_submit(struct ntc_dev *ntc, void *req);
+int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *req);
 
 /**
  * ntc_req_memcpy() - append a buffer to buffer memory copy operation
@@ -534,7 +534,7 @@ int ntc_req_submit(struct ntc_dev *ntc, void *req);
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_memcpy(struct ntc_dev *ntc, void *req,
+int ntc_req_memcpy(struct ntc_dev *ntc, struct dma_chan *req,
 		dma_addr_t dst, dma_addr_t src, u64 len,
 		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx);
 
@@ -550,7 +550,7 @@ static inline bool ntc_segment_valid(u64 buf_size, u64 buf_offset, u64 len)
 	return true;
 }
 
-static inline int _ntc_request_memcpy(struct ntc_dev *ntc, void *req,
+static inline int _ntc_request_memcpy(struct ntc_dev *ntc, struct dma_chan *req,
 				dma_addr_t dst_start,
 				u64 dst_size, u64 dst_offset,
 				dma_addr_t src_start,
@@ -566,7 +566,7 @@ static inline int _ntc_request_memcpy(struct ntc_dev *ntc, void *req,
 static inline
 void ntc_phys_local_buf_prepare_to_copy(const struct ntc_local_buf *buf,
 					u64 offset, u64 len);
-static inline int ntc_request_memcpy_with_cb(void *req,
+static inline int ntc_request_memcpy_with_cb(struct dma_chan *req,
 					const struct ntc_remote_buf *dst,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
@@ -591,7 +591,7 @@ static inline int ntc_request_memcpy_with_cb(void *req,
 				len, false, cb, cb_ctx);
 }
 
-static inline int ntc_request_memcpy_fenced(void *req,
+static inline int ntc_request_memcpy_fenced(struct dma_chan *req,
 					const struct ntc_remote_buf *dst,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
@@ -616,7 +616,7 @@ static inline
 void ntc_phys_bidir_buf_prepare_to_copy(const struct ntc_bidir_buf *buf,
 					u64 offset, u64 len);
 static inline
-int ntc_bidir_request_memcpy_unfenced(void *req,
+int ntc_bidir_request_memcpy_unfenced(struct dma_chan *req,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				const struct ntc_bidir_buf *src,
@@ -637,7 +637,7 @@ int ntc_bidir_request_memcpy_unfenced(void *req,
 				len, false, NULL, NULL);
 }
 
-int ntc_req_imm(struct ntc_dev *ntc, void *req,
+int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *req,
 		u64 dst, void *ptr, size_t len, bool fence,
 		void (*cb)(void *cb_ctx), void *cb_ctx);
 
@@ -664,7 +664,7 @@ int ntc_req_imm(struct ntc_dev *ntc, void *req,
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_imm32(struct ntc_dev *ntc, void *req,
+static inline int ntc_req_imm32(struct ntc_dev *ntc, struct dma_chan *req,
 				dma_addr_t dst, u32 val,
 				bool fence, void (*cb)(void *cb_ctx),
 				void *cb_ctx)
@@ -673,7 +673,7 @@ static inline int ntc_req_imm32(struct ntc_dev *ntc, void *req,
 			fence, cb, cb_ctx);
 }
 
-static inline int _ntc_request_imm32(struct ntc_dev *ntc, void *req,
+static inline int _ntc_request_imm32(struct ntc_dev *ntc, struct dma_chan *req,
 				dma_addr_t dst_start,
 				u64 dst_size, u64 dst_offset,
 				u32 val, bool fence,
@@ -686,7 +686,7 @@ static inline int _ntc_request_imm32(struct ntc_dev *ntc, void *req,
 			fence, cb, cb_ctx);
 }
 
-static inline int ntc_request_imm32(void *req,
+static inline int ntc_request_imm32(struct dma_chan *req,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				u32 val, bool fence,
@@ -720,7 +720,7 @@ static inline int ntc_request_imm32(void *req,
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_imm64(struct ntc_dev *ntc, void *req,
+static inline int ntc_req_imm64(struct ntc_dev *ntc, struct dma_chan *req,
 				dma_addr_t dst, u64 val,
 				bool fence, void (*cb)(void *cb_ctx),
 				void *cb_ctx)
@@ -729,7 +729,7 @@ static inline int ntc_req_imm64(struct ntc_dev *ntc, void *req,
 			fence, cb, cb_ctx);
 }
 
-static inline int _ntc_request_imm64(struct ntc_dev *ntc, void *req,
+static inline int _ntc_request_imm64(struct ntc_dev *ntc, struct dma_chan *req,
 				dma_addr_t dst_start,
 				u64 dst_size, u64 dst_offset,
 				u64 val, bool fence,
@@ -742,7 +742,7 @@ static inline int _ntc_request_imm64(struct ntc_dev *ntc, void *req,
 			fence, cb, cb_ctx);
 }
 
-static inline int ntc_request_imm64(void *req,
+static inline int ntc_request_imm64(struct dma_chan *req,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				u64 val, bool fence,
@@ -779,7 +779,7 @@ static inline int ntc_request_imm64(void *req,
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_signal(struct ntc_dev *ntc, void *req,
+int ntc_req_signal(struct ntc_dev *ntc, struct dma_chan *req,
 		void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
 
 static inline int ntc_phys_local_buf_alloc(struct ntc_local_buf *buf, gfp_t gfp)

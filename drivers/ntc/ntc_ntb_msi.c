@@ -995,7 +995,7 @@ int _ntc_link_reset(struct ntc_dev *ntc, const char *caller)
 }
 EXPORT_SYMBOL(_ntc_link_reset);
 
-void *ntc_req_create(struct ntc_dev *ntc)
+struct dma_chan *ntc_req_create(struct ntc_dev *ntc)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
 
@@ -1005,7 +1005,7 @@ void *ntc_req_create(struct ntc_dev *ntc)
 }
 EXPORT_SYMBOL(ntc_req_create);
 
-void ntc_req_cancel(struct ntc_dev *ntc, void *req)
+void ntc_req_cancel(struct ntc_dev *ntc, struct dma_chan *req)
 {
 	dev_vdbg(&ntc->dev, "cancel request\n");
 
@@ -1013,7 +1013,7 @@ void ntc_req_cancel(struct ntc_dev *ntc, void *req)
 }
 EXPORT_SYMBOL(ntc_req_cancel);
 
-int ntc_req_submit(struct ntc_dev *ntc, void *req)
+int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *req)
 {
 	struct dma_chan *chan = req;
 	struct dma_async_tx_descriptor *tx;
@@ -1057,7 +1057,7 @@ static int ntc_ntb_req_prep_flags(struct ntc_dev *ntc, bool fence)
 	return flags;
 }
 
-int ntc_req_memcpy(struct ntc_dev *ntc, void *req,
+int ntc_req_memcpy(struct ntc_dev *ntc, struct dma_chan *req,
 		dma_addr_t dst, dma_addr_t src, u64 len,
 		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx)
 {
@@ -1124,7 +1124,7 @@ static void ntc_req_imm_cb(void *ctx)
 	kfree(imm);
 }
 
-int ntc_req_imm(struct ntc_dev *ntc, void *req,
+int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *req,
 		u64 dst, void *ptr, size_t len, bool fence,
 		void (*cb)(void *cb_ctx), void *cb_ctx)
 {
@@ -1203,7 +1203,7 @@ err_imm:
 }
 EXPORT_SYMBOL(ntc_req_imm);
 
-int ntc_req_signal(struct ntc_dev *ntc, void *req,
+int ntc_req_signal(struct ntc_dev *ntc, struct dma_chan *req,
 		void (*cb)(void *cb_ctx), void *cb_ctx, int vec)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);

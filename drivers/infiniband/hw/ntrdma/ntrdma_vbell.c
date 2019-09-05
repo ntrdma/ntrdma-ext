@@ -342,7 +342,7 @@ int ntrdma_dev_vbell_add_clear(struct ntrdma_dev *dev,
 }
 
 void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
-			   void *req, u32 idx)
+			struct dma_chan *req, u32 idx)
 {
 	int rc;
 

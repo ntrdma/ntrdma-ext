@@ -84,7 +84,7 @@ int ntrdma_dev_vbell_add_clear(struct ntrdma_dev *dev,
 			       u32 idx);
 
 void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
-			   void *req, u32 idx);
+			struct dma_chan *req, u32 idx);
 
 static inline void ntrdma_vbell_init(struct ntrdma_vbell *vbell,
 				     void (*cb_fn)(void *cb_ctx),

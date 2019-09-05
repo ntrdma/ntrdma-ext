@@ -39,7 +39,6 @@
 #include "ntrdma_sg.h"
 
 struct ntrdma_dev;
-struct ntrdma_req;
 
 /* Command and response size in bytes */
 
@@ -199,12 +198,12 @@ struct ntrdma_cmd_cb {
 	/* prepare a command in-place in the ring buffer */
 	int (*cmd_prep)(struct ntrdma_cmd_cb *cb,
 			union ntrdma_cmd *cmd,
-			struct ntrdma_req *req);
+			struct dma_chan *req);
 
 	/* complete and free the command following a response */
 	int (*rsp_cmpl)(struct ntrdma_cmd_cb *cb,
 			const union ntrdma_rsp *rsp,
-			struct ntrdma_req *req);
+			struct dma_chan *req);
 };
 
 int ntrdma_dev_cmd_init(struct ntrdma_dev *dev,
