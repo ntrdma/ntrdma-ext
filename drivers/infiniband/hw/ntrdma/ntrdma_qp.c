@@ -651,7 +651,7 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 
 	if (qp && dev)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
-	TRACE("qp %p rqp %p - key %d", qp, rqp, qp ? qp->res.key : rqp ?
+	TRACE("qp %p rqp %p - key %d\n", qp, rqp, qp ? qp->res.key : rqp ?
 			rqp->rres.key : -1);
 	ntrdma_qp_send_stall(qp, rqp);
 	if (rqp)

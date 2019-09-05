@@ -874,7 +874,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 		new_state = ibqp_mask & IB_QP_STATE ?
 				ibqp_attr->qp_state : cur_state;
 
-		ntrdma_info(dev, "QP  %d state %d (%d) -> %d (ibqp_mask 0x%x)\n",
+		ntrdma_info(dev, "QP %d state %d (%d) -> %d (ibqp_mask 0x%x)\n",
 				qp->res.key, cur_state,
 				atomic_read(&qp->state), new_state, ibqp_mask);
 
