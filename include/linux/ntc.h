@@ -37,6 +37,7 @@
 
 #include <linux/ntc_mm.h>
 #include <linux/device.h>
+#include <linux/dmaengine.h>
 #include <linux/dma-direction.h>
 #include <linux/rwlock.h>
 #include <linux/dma-mapping.h>
@@ -110,7 +111,8 @@ static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
 
 enum ntc_chan_mw_desc {
 	NTC_CHAN_INVALID = 0,
-	NTC_CHAN_MW1 = 1,
+	NTC_CHAN_MW0 = 1,
+	NTC_CHAN_MW1 = 2,
 };
 
 union ntc_chan_addr {
@@ -119,6 +121,19 @@ union ntc_chan_addr {
 		enum ntc_chan_mw_desc mw_desc:MW_DESC_BIT_WIDTH;
 	};
 	u64 value;
+};
+
+struct ntc_own_mw {
+	dma_addr_t base;
+	resource_size_t size;
+	enum ntc_chan_mw_desc desc;
+	struct ntc_mm mm;
+};
+
+struct ntc_peer_mw {
+	phys_addr_t base;
+	resource_size_t size;
+	enum ntc_chan_mw_desc desc;
 };
 
 struct ntc_local_buf {
@@ -134,10 +149,12 @@ struct ntc_local_buf {
 struct ntc_export_buf {
 	struct ntc_dev *ntc;
 	u64 size;
-	gfp_t gfp;
+	bool owned;
+	bool use_mm;
 
 	void *ptr;
-	union ntc_chan_addr chan_addr;
+	struct ntc_own_mw *own_mw;
+	dma_addr_t ntb_dma_addr;
 };
 
 struct ntc_bidir_buf {
@@ -146,8 +163,9 @@ struct ntc_bidir_buf {
 	gfp_t gfp;
 
 	void *ptr;
-	union ntc_chan_addr chan_addr;
 	dma_addr_t dma_addr;
+	struct ntc_own_mw *own_mw;
+	dma_addr_t ntb_dma_addr;
 };
 
 struct ntc_remote_buf_desc {
@@ -161,16 +179,6 @@ struct ntc_remote_buf {
 
 	phys_addr_t ptr;
 	dma_addr_t dma_addr;
-};
-
-struct ntc_peer_mw {
-	phys_addr_t base;
-	resource_size_t size;
-};
-
-struct ntc_own_mw {
-	dma_addr_t base;
-	resource_size_t size;
 };
 
 /**
@@ -193,10 +201,13 @@ struct ntc_driver {
 struct ntc_dev {
 	struct device			dev;
 	struct device			*ntb_dev;
+	struct dma_chan			*dma_chan;
 	struct device			*dma_engine_dev;
 	const struct ntc_ctx_ops	*ctx_ops;
 	struct ntc_peer_mw		peer_dram_mw;
 	struct ntc_own_mw		own_dram_mw;
+	struct ntc_peer_mw		peer_info_mw;
+	struct ntc_own_mw		own_info_mw;
 	int				peer_irq_num;
 
 	/* negotiated protocol version for ntc */
@@ -400,6 +411,21 @@ int ntc_link_enable(struct ntc_dev *ntc);
 int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *f);
 #define ntc_link_reset(_ntc, _wait) _ntc_link_reset(_ntc, _wait, __func__)
 
+static inline struct ntc_peer_mw *ntc_peer_mw(struct ntc_dev *ntc,
+					const union ntc_chan_addr *chan_addr)
+{
+	if (chan_addr->mw_desc == ntc->peer_dram_mw.desc)
+		return &ntc->peer_dram_mw;
+
+	if (chan_addr->mw_desc == ntc->peer_info_mw.desc)
+		return &ntc->peer_info_mw;
+
+	dev_err(&ntc->dev, "Unsupported MW kind %d",
+		chan_addr->mw_desc);
+
+	return NULL;
+}
+
 /**
  * ntc_peer_addr() - transform a channel-mapped address into a peer address
  * @ntc:	Device context.
@@ -421,27 +447,19 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *f);
 static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 					const union ntc_chan_addr *chan_addr)
 {
-	struct ntc_peer_mw *peer_mw;
-	u64 addr = chan_addr->offset;
+	struct ntc_peer_mw *peer_mw = ntc_peer_mw(ntc, chan_addr);
+	u64 offset = chan_addr->offset;
 
-	switch (chan_addr->mw_desc) {
-	case NTC_CHAN_MW1:
-		peer_mw = &ntc->peer_dram_mw;
-		break;
-	default:
-		dev_err(&ntc->dev, "Unsupported MW kind %d",
-			chan_addr->mw_desc);
+	if (unlikely(!peer_mw))
+		return 0;
+
+	if (unlikely(offset >= peer_mw->size)) {
+		dev_err(&ntc->dev, "offset 0x%llx is beyond memory size %llu\n",
+			offset, peer_mw->size);
 		return 0;
 	}
 
-	if (addr > peer_mw->size) {
-		dev_err(&ntc->dev,
-			"off 0x%llx is larger than memory size %llu\n",
-			addr, peer_mw->size);
-		return 0;
-	}
-
-	return peer_mw->base + addr;
+	return peer_mw->base + offset;
 }
 
 /**
@@ -465,12 +483,15 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
  *
  * Return: A channel request context, otherwise an error pointer.
  */
-struct dma_chan *ntc_req_create(struct ntc_dev *ntc);
+static inline struct dma_chan *ntc_req_create(struct ntc_dev *ntc)
+{
+	return ntc->dma_chan;
+}
 
 /**
  * ntc_req_cancel() - cancel a channel request
  * @ntc:	Device context.
- * @req:	Channel request context.
+ * @chan:	Channel request context.
  *
  * Cancel a channel request instead of submitting it.  Ownership of the request
  * is passed from the caller back to the channel, and the caller no longer
@@ -482,12 +503,17 @@ struct dma_chan *ntc_req_create(struct ntc_dev *ntc);
  * function exists to provide a portable interface to use the varying
  * underlying channel implementations most efficiently.
  */
-void ntc_req_cancel(struct ntc_dev *ntc, struct dma_chan *req);
+static inline void ntc_req_cancel(struct ntc_dev *ntc, struct dma_chan *chan)
+{
+	dev_vdbg(&ntc->dev, "cancel request\n");
+
+	/* nothing to do */
+}
 
 /**
  * ntc_req_submit() - submit a channel request
  * @ntc:	Device context.
- * @req:	Channel request context.
+ * @chan:	Channel request context.
  *
  * Submit a channel request for processing.  Ownership of the request is passed
  * from the caller back to the channel, and the caller no longer holds a valid
@@ -502,12 +528,12 @@ void ntc_req_cancel(struct ntc_dev *ntc, struct dma_chan *req);
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *req);
+int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *chan);
 
 /**
  * ntc_req_memcpy() - append a buffer to buffer memory copy operation
  * @ntc:	Device context.
- * @req:	Channel request context.
+ * @chan:	Channel request context.
  * @dst:	Destination channel address.
  * @src:	Source channel address.
  * @len:	Number of bytes to copy.
@@ -537,7 +563,7 @@ int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *req);
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_memcpy(struct ntc_dev *ntc, struct dma_chan *req,
+int ntc_req_memcpy(struct ntc_dev *ntc, struct dma_chan *chan,
 		dma_addr_t dst, dma_addr_t src, u64 len,
 		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx);
 
@@ -553,23 +579,26 @@ static inline bool ntc_segment_valid(u64 buf_size, u64 buf_offset, u64 len)
 	return true;
 }
 
-static inline int _ntc_request_memcpy(struct ntc_dev *ntc, struct dma_chan *req,
-				dma_addr_t dst_start,
-				u64 dst_size, u64 dst_offset,
-				dma_addr_t src_start,
-				u64 src_size, u64 src_offset,
-				u64 len, bool fence,
-				void (*cb)(void *cb_ctx), void *cb_ctx)
+static inline
+int _ntc_request_memcpy(struct ntc_dev *ntc, struct dma_chan *chan,
+			dma_addr_t dst_start, u64 dst_size, u64 dst_offset,
+			dma_addr_t src_start, u64 src_size, u64 src_offset,
+			u64 len, bool fence,
+			void (*cb)(void *cb_ctx), void *cb_ctx)
 {
-	return ntc_req_memcpy(ntc, req,
+	return ntc_req_memcpy(ntc, chan,
 			dst_start + dst_offset, src_start + src_offset, len,
 			fence, cb, cb_ctx);
 }
 
 static inline
-void ntc_phys_local_buf_prepare_to_copy(const struct ntc_local_buf *buf,
-					u64 offset, u64 len);
-static inline int ntc_request_memcpy_with_cb(struct dma_chan *req,
+void ntc_prepare_to_copy(struct dma_chan *chan, dma_addr_t dma_addr, u64 len)
+{
+	dma_sync_single_for_device(chan->device->dev, dma_addr, len,
+				DMA_TO_DEVICE);
+}
+
+static inline int ntc_request_memcpy_with_cb(struct dma_chan *chan,
 					const struct ntc_remote_buf *dst,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
@@ -580,74 +609,71 @@ static inline int ntc_request_memcpy_with_cb(struct dma_chan *req,
 	if (unlikely(len == 0))
 		return 0;
 
-	if (!ntc_segment_valid(src->size, src_offset, len))
+	if (unlikely(!ntc_segment_valid(src->size, src_offset, len)))
 		return -EINVAL;
 
-	if (!ntc_segment_valid(dst->size, dst_offset, len))
+	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, len)))
 		return -EINVAL;
 
-	ntc_phys_local_buf_prepare_to_copy(src, src_offset, len);
+	ntc_prepare_to_copy(chan, src->dma_addr + src_offset, len);
 
-	return _ntc_request_memcpy(src->ntc, req,
+	return _ntc_request_memcpy(src->ntc, chan,
 				dst->dma_addr, dst->size, dst_offset,
 				src->dma_addr, src->size, src_offset,
 				len, false, cb, cb_ctx);
 }
 
-static inline int ntc_request_memcpy_fenced(struct dma_chan *req,
+static inline int ntc_request_memcpy_fenced(struct dma_chan *chan,
 					const struct ntc_remote_buf *dst,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
 					u64 src_offset,
 					u64 len)
 {
-	if (!ntc_segment_valid(src->size, src_offset, len))
+	if (unlikely(!ntc_segment_valid(src->size, src_offset, len)))
 		return -EINVAL;
 
-	if (!ntc_segment_valid(dst->size, dst_offset, len))
+	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, len)))
 		return -EINVAL;
 
-	ntc_phys_local_buf_prepare_to_copy(src, src_offset, len);
+	ntc_prepare_to_copy(chan, src->dma_addr + src_offset, len);
 
-	return _ntc_request_memcpy(src->ntc, req,
+	return _ntc_request_memcpy(src->ntc, chan,
 				dst->dma_addr, dst->size, dst_offset,
 				src->dma_addr, src->size, src_offset,
 				len, true, NULL, NULL);
 }
 
 static inline
-void ntc_phys_bidir_buf_prepare_to_copy(const struct ntc_bidir_buf *buf,
-					u64 offset, u64 len);
-static inline
-int ntc_bidir_request_memcpy_unfenced(struct dma_chan *req,
+int ntc_bidir_request_memcpy_unfenced(struct dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				const struct ntc_bidir_buf *src,
 				u64 src_offset,
 				u64 len)
 {
-	if (!ntc_segment_valid(src->size, src_offset, len))
+	if (unlikely(!ntc_segment_valid(src->size, src_offset, len)))
 		return -EINVAL;
 
-	if (!ntc_segment_valid(dst->size, dst_offset, len))
+	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, len)))
 		return -EINVAL;
 
-	ntc_phys_bidir_buf_prepare_to_copy(src, src_offset, len);
+	ntc_prepare_to_copy(chan, src->dma_addr + src_offset, len);
 
-	return _ntc_request_memcpy(src->ntc, req,
+	return _ntc_request_memcpy(src->ntc, chan,
 				dst->dma_addr, dst->size, dst_offset,
 				src->dma_addr, src->size, src_offset,
 				len, false, NULL, NULL);
 }
 
-int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *req,
+int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *chan,
 		u64 dst, void *ptr, size_t len, bool fence,
 		void (*cb)(void *cb_ctx), void *cb_ctx);
 
 /**
  * ntc_req_imm32() - append a 32 bit immediate data write operation
  * @ntc:	Device context.
- * @req:	Channel request context.
+ * @chan:	Channel request context.
  * @dst:	Destination channel address.
  * @val:	Immediate data value.
  * @fence:	Fence after this operation.
@@ -667,35 +693,35 @@ int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *req,
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_imm32(struct ntc_dev *ntc, struct dma_chan *req,
+static inline int ntc_req_imm32(struct ntc_dev *ntc, struct dma_chan *chan,
 				dma_addr_t dst, u32 val,
 				bool fence, void (*cb)(void *cb_ctx),
 				void *cb_ctx)
 {
-	return ntc_req_imm(ntc, req, dst, &val, sizeof(val),
+	return ntc_req_imm(ntc, chan, dst, &val, sizeof(val),
 			fence, cb, cb_ctx);
 }
 
-static inline int _ntc_request_imm32(struct ntc_dev *ntc, struct dma_chan *req,
+static inline int _ntc_request_imm32(struct ntc_dev *ntc, struct dma_chan *chan,
 				dma_addr_t dst_start,
 				u64 dst_size, u64 dst_offset,
 				u32 val, bool fence,
 				void (*cb)(void *cb_ctx), void *cb_ctx)
 {
-	if (!ntc_segment_valid(dst_size, dst_offset, sizeof(u32)))
+	if (unlikely(!ntc_segment_valid(dst_size, dst_offset, sizeof(u32))))
 		return -EINVAL;
 
-	return ntc_req_imm32(ntc, req, dst_start + dst_offset, val,
+	return ntc_req_imm32(ntc, chan, dst_start + dst_offset, val,
 			fence, cb, cb_ctx);
 }
 
-static inline int ntc_request_imm32(struct dma_chan *req,
+static inline int ntc_request_imm32(struct dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				u32 val, bool fence,
 				void (*cb)(void *cb_ctx), void *cb_ctx)
 {
-	return _ntc_request_imm32(dst->ntc, req,
+	return _ntc_request_imm32(dst->ntc, chan,
 				dst->dma_addr, dst->size, dst_offset,
 				val, fence, cb, cb_ctx);
 }
@@ -703,7 +729,7 @@ static inline int ntc_request_imm32(struct dma_chan *req,
 /**
  * ntc_req_imm64() - append a 64 bit immediate data write operation
  * @ntc:	Device context.
- * @req:	Channel request context.
+ * @chan:	Channel request context.
  * @dst:	Destination channel address.
  * @val:	Immediate data value.
  * @fence:	Fence after this operation.
@@ -723,35 +749,35 @@ static inline int ntc_request_imm32(struct dma_chan *req,
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_imm64(struct ntc_dev *ntc, struct dma_chan *req,
+static inline int ntc_req_imm64(struct ntc_dev *ntc, struct dma_chan *chan,
 				dma_addr_t dst, u64 val,
 				bool fence, void (*cb)(void *cb_ctx),
 				void *cb_ctx)
 {
-	return ntc_req_imm(ntc, req, dst, &val, sizeof(val),
+	return ntc_req_imm(ntc, chan, dst, &val, sizeof(val),
 			fence, cb, cb_ctx);
 }
 
-static inline int _ntc_request_imm64(struct ntc_dev *ntc, struct dma_chan *req,
+static inline int _ntc_request_imm64(struct ntc_dev *ntc, struct dma_chan *chan,
 				dma_addr_t dst_start,
 				u64 dst_size, u64 dst_offset,
 				u64 val, bool fence,
 				void (*cb)(void *cb_ctx), void *cb_ctx)
 {
-	if (!ntc_segment_valid(dst_size, dst_offset, sizeof(u64)))
+	if (unlikely(!ntc_segment_valid(dst_size, dst_offset, sizeof(u64))))
 		return -EINVAL;
 
-	return ntc_req_imm64(ntc, req, dst_start + dst_offset, val,
+	return ntc_req_imm64(ntc, chan, dst_start + dst_offset, val,
 			fence, cb, cb_ctx);
 }
 
-static inline int ntc_request_imm64(struct dma_chan *req,
+static inline int ntc_request_imm64(struct dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				u64 val, bool fence,
 				void (*cb)(void *cb_ctx), void *cb_ctx)
 {
-	return _ntc_request_imm64(dst->ntc, req,
+	return _ntc_request_imm64(dst->ntc, chan,
 				dst->dma_addr, dst->size, dst_offset,
 				val, fence, cb, cb_ctx);
 }
@@ -759,7 +785,7 @@ static inline int ntc_request_imm64(struct dma_chan *req,
 /**
  * ntc_req_signal() - append an operation to signal the peer
  * @ntc:	Device context.
- * @req:	Channel request context.
+ * @chan:	Channel request context.
  * @cb:		Callback after this operation.
  * @cb_ctx:	Callback context.
  *
@@ -782,27 +808,15 @@ static inline int ntc_request_imm64(struct dma_chan *req,
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_signal(struct ntc_dev *ntc, struct dma_chan *req,
+int ntc_req_signal(struct ntc_dev *ntc, struct dma_chan *chan,
 		void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
-
-static inline int ntc_phys_local_buf_alloc(struct ntc_local_buf *buf, gfp_t gfp)
-{
-	struct device *dev = buf->ntc->dma_engine_dev;
-
-	buf->ptr = kmalloc_node(buf->size, gfp, dev_to_node(dev));
-	if (!buf->ptr)
-		return -ENOMEM;
-
-	return 0;
-}
 
 static inline int ntc_phys_local_buf_map(struct ntc_local_buf *buf)
 {
 	struct device *dev = buf->ntc->dma_engine_dev;
 
-	buf->dma_addr = dma_map_single(dev, buf->ptr, buf->size,
-				DMA_TO_DEVICE);
-	if (dma_mapping_error(dev, buf->dma_addr))
+	buf->dma_addr = dma_map_single(dev, buf->ptr, buf->size, DMA_TO_DEVICE);
+	if (unlikely(dma_mapping_error(dev, buf->dma_addr)))
 		return -EIO;
 
 	return 0;
@@ -812,20 +826,6 @@ static inline void ntc_phys_local_buf_unmap(struct ntc_local_buf *buf)
 {
 	dma_unmap_single(buf->ntc->dma_engine_dev, buf->dma_addr, buf->size,
 			DMA_TO_DEVICE);
-}
-
-static inline void ntc_phys_local_buf_free(struct ntc_local_buf *buf)
-{
-	kfree(buf->ptr);
-}
-
-static inline
-void ntc_phys_local_buf_prepare_to_copy(const struct ntc_local_buf *buf,
-					u64 offset, u64 len)
-{
-	dma_sync_single_for_device(buf->ntc->dma_engine_dev,
-				buf->dma_addr + offset,
-				len, DMA_TO_DEVICE);
 }
 
 static inline void ntc_local_buf_clear(struct ntc_local_buf *buf)
@@ -857,17 +857,16 @@ static inline int ntc_local_buf_alloc(struct ntc_local_buf *buf,
 
 	ntc_local_buf_clear(buf);
 
-	rc = ntc_phys_local_buf_alloc(buf, gfp);
-
-	if (rc < 0) {
+	buf->ptr = kmalloc_node(buf->size, gfp, dev_to_node(&ntc->dev));
+	if (unlikely(!buf->ptr)) {
 		ntc_local_buf_clear(buf);
-		return rc;
+		return -ENOMEM;
 	}
 
 	rc = ntc_phys_local_buf_map(buf);
 
-	if (rc < 0) {
-		ntc_phys_local_buf_free(buf);
+	if (unlikely(rc < 0)) {
+		kfree(buf->ptr);
 		ntc_local_buf_clear(buf);
 	}
 
@@ -918,7 +917,7 @@ static inline int ntc_local_buf_map_prealloced(struct ntc_local_buf *buf,
 
 	rc = ntc_phys_local_buf_map(buf);
 
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		ntc_local_buf_clear(buf);
 
 	return rc;
@@ -940,7 +939,7 @@ static inline void ntc_local_buf_map_dma(struct ntc_local_buf *buf,
 	buf->size = size;
 	buf->owned = false;
 	buf->mapped = false;
-	buf->ptr = NULL;
+	buf->ptr = phys_to_virt(dma_addr);
 	buf->dma_addr = dma_addr;
 }
 
@@ -955,7 +954,7 @@ static inline void ntc_local_buf_free(struct ntc_local_buf *buf)
 		ntc_phys_local_buf_unmap(buf);
 
 	if (buf->owned)
-		ntc_phys_local_buf_free(buf);
+		kfree(buf->ptr);
 
 	ntc_local_buf_clear(buf);
 }
@@ -1017,62 +1016,40 @@ static inline bool ntc_chan_addr_valid(union ntc_chan_addr *chan_addr)
 	return !!chan_addr->value;
 }
 
-static inline void ntc_chan_addr_clean(union ntc_chan_addr *chan_addr)
+static inline int ntc_phys_export_buf_alloc(struct ntc_export_buf *buf,
+					gfp_t gfp)
 {
-	chan_addr->value = 0;
-}
-
-static inline int ntc_phys_export_buf_alloc(struct ntc_export_buf *buf)
-{
-	struct device *dev = buf->ntc->ntb_dev;
-	dma_addr_t dma_addr;
-
-	if (buf->gfp)
-		buf->ptr = kmalloc_node(buf->size, buf->gfp,
-					dev_to_node(dev));
-	if (!buf->ptr)
+	buf->ptr = kmalloc_node(buf->size, gfp, dev_to_node(&buf->ntc->dev));
+	if (unlikely(!buf->ptr))
 		return -ENOMEM;
-
-	dma_addr = dma_map_single(dev, buf->ptr, buf->size, DMA_FROM_DEVICE);
-	if (dma_mapping_error(dev, dma_addr)) {
-		if (buf->gfp)
-			kfree(buf->ptr);
-		return -EIO;
-	}
-
-	buf->chan_addr.mw_desc = NTC_CHAN_MW1;
-	buf->chan_addr.offset = dma_addr;
 
 	return 0;
 }
 
-static inline void ntc_phys_export_buf_free(struct ntc_export_buf *buf)
+static inline int ntc_phys_export_buf_map(struct ntc_export_buf *buf)
 {
-	struct device *dev = buf->ntc->ntb_dev;
-	dma_addr_t dma_addr;
+	dma_addr_t ntb_dma_addr;
 
-	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
-		dma_addr = buf->chan_addr.offset;
-		dma_unmap_single(dev, dma_addr, buf->size, DMA_FROM_DEVICE);
-	}
+	ntb_dma_addr = dma_map_single(buf->ntc->ntb_dev, buf->ptr, buf->size,
+				DMA_FROM_DEVICE);
+	if (unlikely(dma_mapping_error(buf->ntc->ntb_dev, ntb_dma_addr)))
+		return -EIO;
 
-	if (buf->gfp && buf->ptr)
-		kfree(buf->ptr);
+	buf->own_mw = &buf->ntc->own_dram_mw;
+	buf->ntb_dma_addr = ntb_dma_addr;
+
+	return 0;
 }
 
-static inline
-const void *ntc_phys_export_buf_const_deref(struct ntc_export_buf *buf,
-					u64 offset, u64 len)
+static inline void ntc_phys_export_buf_unmap(struct ntc_export_buf *buf)
 {
-	struct device *dev = buf->ntc->ntb_dev;
-	dma_addr_t dma_addr;
+	dma_unmap_single(buf->ntc->ntb_dev, buf->ntb_dma_addr, buf->size,
+			DMA_FROM_DEVICE);
+}
 
-	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
-		dma_addr = buf->chan_addr.offset;
-		dma_sync_single_for_cpu(dev, dma_addr, len, DMA_FROM_DEVICE);
-	}
-
-	return buf->ptr + offset;
+static inline void ntc_phys_export_buf_free(struct ntc_export_buf *buf)
+{
+	kfree(buf->ptr);
 }
 
 /**
@@ -1083,14 +1060,15 @@ const void *ntc_phys_export_buf_const_deref(struct ntc_export_buf *buf,
  */
 static inline bool ntc_export_buf_valid(struct ntc_export_buf *buf)
 {
-	return ntc_chan_addr_valid(&buf->chan_addr);
+	return !!buf->ntb_dma_addr;
 }
 
 static inline void ntc_export_buf_clear(struct ntc_export_buf *buf)
 {
-	if (buf->gfp)
+	if (buf->owned)
 		buf->ptr = NULL;
-	ntc_chan_addr_clean(&buf->chan_addr);
+	buf->own_mw = NULL;
+	buf->ntb_dma_addr = 0;
 }
 
 /**
@@ -1114,14 +1092,21 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 
 	buf->ntc = ntc;
 	buf->size = size;
-	buf->gfp = gfp;
+	buf->owned = !!gfp;
+	buf->use_mm = false;
 
 	ntc_export_buf_clear(buf);
 
-	rc = ntc_phys_export_buf_alloc(buf);
+	if (buf->owned) {
+		rc = ntc_phys_export_buf_alloc(buf, gfp);
+		if (unlikely(rc < 0))
+			ntc_export_buf_clear(buf);
+	} else if (!buf->ptr)
+		return -ENOMEM;
 
-	if (rc < 0)
-		ntc_export_buf_clear(buf);
+	rc = ntc_phys_export_buf_map(buf);
+	if (unlikely(rc < 0) && buf->owned)
+		ntc_phys_export_buf_free(buf);
 
 	return rc;
 }
@@ -1147,7 +1132,6 @@ static inline int ntc_export_buf_zalloc(struct ntc_export_buf *buf,
 					u64 size, gfp_t gfp)
 {
 	gfp_t new_gfp;
-	int rc;
 
 	if (gfp)
 		new_gfp = gfp | __GFP_ZERO;
@@ -1157,10 +1141,7 @@ static inline int ntc_export_buf_zalloc(struct ntc_export_buf *buf,
 			memset(buf->ptr, 0, size);
 	}
 
-	rc = ntc_export_buf_alloc(buf, ntc, size, new_gfp);
-	buf->gfp = gfp;
-
-	return rc;
+	return ntc_export_buf_alloc(buf, ntc, size, new_gfp);
 }
 
 /**
@@ -1191,11 +1172,11 @@ static inline int ntc_export_buf_alloc_init(struct ntc_export_buf *buf,
 	int rc;
 
 
-	if (!ntc_segment_valid(size, init_buf_offset, init_buf_size))
+	if (unlikely(!ntc_segment_valid(size, init_buf_offset, init_buf_size)))
 		return -EINVAL;
 
 	rc = ntc_export_buf_alloc(buf, ntc, size, gfp);
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		return rc;
 
 	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
@@ -1231,11 +1212,11 @@ static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
 {
 	int rc;
 
-	if (!ntc_segment_valid(size, init_buf_offset, init_buf_size))
+	if (unlikely(!ntc_segment_valid(size, init_buf_offset, init_buf_size)))
 		return -EINVAL;
 
 	rc = ntc_export_buf_zalloc(buf, ntc, size, gfp);
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		return rc;
 
 	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
@@ -1250,7 +1231,10 @@ static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
  */
 static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 {
-	if (buf->ptr)
+	if (buf->ntb_dma_addr)
+		ntc_phys_export_buf_unmap(buf);
+
+	if (buf->owned)
 		ntc_phys_export_buf_free(buf);
 
 	ntc_export_buf_clear(buf);
@@ -1271,7 +1255,7 @@ static inline void *ntc_export_buf_disown(struct ntc_export_buf *buf)
 {
 	void *ptr = buf->ptr;
 
-	buf->gfp = 0;
+	buf->owned = false;
 	ntc_export_buf_free(buf);
 
 	return ptr;
@@ -1286,8 +1270,9 @@ static inline void *ntc_export_buf_disown(struct ntc_export_buf *buf)
 static inline void ntc_export_buf_make_desc(struct ntc_remote_buf_desc *desc,
 					struct ntc_export_buf *buf)
 {
-	if (buf->ptr) {
-		desc->chan_addr = buf->chan_addr;
+	if (buf->own_mw) {
+		desc->chan_addr.mw_desc = buf->own_mw->desc;
+		desc->chan_addr.offset = buf->ntb_dma_addr - buf->own_mw->base;
 		desc->size = buf->size;
 	} else
 		memset(desc, 0, sizeof(*desc));
@@ -1306,14 +1291,14 @@ ntc_export_buf_make_partial_desc(struct ntc_remote_buf_desc *desc,
 				const struct ntc_export_buf *buf,
 				u64 offset, u64 len)
 {
-	if (!buf->ptr)
+	if (unlikely(!buf->ntb_dma_addr))
 		return -EINVAL;
 
-	if (!ntc_segment_valid(buf->size, offset, len))
+	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
 		return -EINVAL;
 
-	desc->chan_addr = buf->chan_addr;
-	desc->chan_addr.offset += offset;
+	desc->chan_addr.mw_desc = buf->own_mw->desc;
+	desc->chan_addr.offset = buf->ntb_dma_addr - buf->own_mw->base + offset;
 	desc->size = len;
 
 	return 0;
@@ -1336,21 +1321,25 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 {
 	s64 soffset;
 
-	soffset = desc->chan_addr.offset - buf->chan_addr.offset;
+	soffset = desc->chan_addr.offset -
+		(buf->ntb_dma_addr - buf->own_mw->base);
 
 	*offset = soffset;
 	*len = desc->size;
 
-	if (soffset < 0)
+	if (unlikely(!buf->ntb_dma_addr))
 		return -EINVAL;
 
-	if (!ntc_segment_valid(buf->size, soffset, desc->size))
+	if (unlikely(soffset < 0))
 		return -EINVAL;
 
-	if (!buf->ptr)
+	if (unlikely(!ntc_segment_valid(buf->size, soffset, desc->size)))
 		return -EINVAL;
 
-	if (buf->chan_addr.mw_desc != desc->chan_addr.mw_desc)
+	if (unlikely(!buf->ptr))
+		return -EINVAL;
+
+	if (unlikely(buf->own_mw->desc != desc->chan_addr.mw_desc))
 		return -EINVAL;
 
 	return 0;
@@ -1370,12 +1359,51 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 static inline const void *ntc_export_buf_const_deref(struct ntc_export_buf *buf,
 						u64 offset, u64 len)
 {
-	if (!ntc_segment_valid(buf->size, offset, len))
+	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
 		return NULL;
-	if (unlikely(!buf->ptr))
+	if (unlikely(!buf->ntb_dma_addr))
 		return NULL;
 
-	return ntc_phys_export_buf_const_deref(buf, offset, len);
+	dma_sync_single_for_cpu(buf->ntc->ntb_dev, buf->ntb_dma_addr + offset,
+				len, DMA_FROM_DEVICE);
+
+	return buf->ptr + offset;
+}
+
+static inline int ntc_export_buf_reinit(struct ntc_export_buf *buf,
+					void *init_buf, u64 offset, u64 len)
+{
+	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
+		return -EINVAL;
+
+	if (unlikely(!buf->ntb_dma_addr))
+		return -EINVAL;
+
+	memcpy(buf->ptr + offset, init_buf, len);
+
+	dma_sync_single_for_device(buf->ntc->ntb_dev,
+				buf->ntb_dma_addr + offset, len,
+				DMA_FROM_DEVICE);
+
+	return 0;
+}
+
+static inline int ntc_export_buf_reinit_by_zeroes(struct ntc_export_buf *buf,
+						u64 offset, u64 len)
+{
+	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
+		return -EINVAL;
+
+	if (unlikely(!buf->ntb_dma_addr))
+		return -EINVAL;
+
+	memset(buf->ptr + offset, 0, len);
+
+	dma_sync_single_for_device(buf->ntc->ntb_dev,
+				buf->ntb_dma_addr + offset, len,
+				DMA_FROM_DEVICE);
+
+	return 0;
 }
 
 /**
@@ -1400,40 +1428,40 @@ static inline int ntc_export_buf_seq_write(struct seq_file *s,
 
 static inline int ntc_phys_bidir_buf_alloc(struct ntc_bidir_buf *buf)
 {
-	struct device *ntb_dev = buf->ntc->ntb_dev;
-	struct device *dma_engine_dev = buf->ntc->dma_engine_dev;
 	dma_addr_t ntb_dma_addr;
 	dma_addr_t dma_engine_addr;
 	int rc;
 
 	if (buf->gfp)
 		buf->ptr = kmalloc_node(buf->size, buf->gfp,
-					dev_to_node(ntb_dev));
-	if (!buf->ptr)
+					dev_to_node(&buf->ntc->dev));
+	if (unlikely(!buf->ptr))
 		return -ENOMEM;
 
-	ntb_dma_addr =
-		dma_map_single(ntb_dev, buf->ptr, buf->size, DMA_FROM_DEVICE);
-	if (dma_mapping_error(ntb_dev, ntb_dma_addr)) {
+	ntb_dma_addr = dma_map_single(buf->ntc->ntb_dev, buf->ptr, buf->size,
+				DMA_FROM_DEVICE);
+	if (unlikely(dma_mapping_error(buf->ntc->ntb_dev, ntb_dma_addr))) {
 		rc = -EIO;
 		goto err_ntb_map;
 	}
 
-	dma_engine_addr = dma_map_single(dma_engine_dev, buf->ptr, buf->size,
-					DMA_TO_DEVICE);
-	if (dma_mapping_error(dma_engine_dev, dma_engine_addr)) {
+	dma_engine_addr = dma_map_single(buf->ntc->dma_engine_dev, buf->ptr,
+					buf->size, DMA_TO_DEVICE);
+	if (unlikely(dma_mapping_error(buf->ntc->dma_engine_dev,
+						dma_engine_addr))) {
 		rc = -EIO;
 		goto err_dma_engine_map;
 	}
 
-	buf->chan_addr.mw_desc = NTC_CHAN_MW1;
-	buf->chan_addr.offset = ntb_dma_addr;
+	buf->own_mw = &buf->ntc->own_dram_mw;
+	buf->ntb_dma_addr = ntb_dma_addr;
 	buf->dma_addr = dma_engine_addr;
 
 	return 0;
 
  err_dma_engine_map:
-	dma_unmap_single(ntb_dev, ntb_dma_addr, buf->size, DMA_FROM_DEVICE);
+	dma_unmap_single(buf->ntc->ntb_dev, ntb_dma_addr, buf->size,
+			DMA_FROM_DEVICE);
 
  err_ntb_map:
 	if (buf->gfp)
@@ -1444,74 +1472,16 @@ static inline int ntc_phys_bidir_buf_alloc(struct ntc_bidir_buf *buf)
 
 static inline void ntc_phys_bidir_buf_free(struct ntc_bidir_buf *buf)
 {
-	struct device *ntb_dev = buf->ntc->ntb_dev;
-	struct device *dma_engine_dev = buf->ntc->dma_engine_dev;
-	dma_addr_t ntb_dma_addr;
 	dma_addr_t dma_engine_addr = buf->dma_addr;
 
-	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
-		ntb_dma_addr = buf->chan_addr.offset;
-		dma_unmap_single(ntb_dev, ntb_dma_addr, buf->size,
-				DMA_FROM_DEVICE);
-	}
-	dma_unmap_single(dma_engine_dev, dma_engine_addr, buf->size,
+	dma_unmap_single(buf->ntc->ntb_dev, buf->ntb_dma_addr, buf->size,
+			DMA_FROM_DEVICE);
+
+	dma_unmap_single(buf->ntc->dma_engine_dev, dma_engine_addr, buf->size,
 			DMA_TO_DEVICE);
 
 	if (buf->gfp && buf->ptr)
 		kfree(buf->ptr);
-}
-
-static inline void *ntc_phys_bidir_buf_deref(struct ntc_bidir_buf *buf,
-					u64 offset, u64 len)
-{
-	struct device *ntb_dev = buf->ntc->ntb_dev;
-	dma_addr_t ntb_dma_addr;
-
-	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
-		ntb_dma_addr = buf->chan_addr.offset;
-		dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len,
-					DMA_FROM_DEVICE);
-	}
-
-	return buf->ptr + offset;
-}
-
-static inline void ntc_phys_bidir_buf_unref(struct ntc_bidir_buf *buf,
-					u64 offset, u64 len)
-{
-	struct device *ntb_dev = buf->ntc->ntb_dev;
-	dma_addr_t ntb_dma_addr;
-
-	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
-		ntb_dma_addr = buf->chan_addr.offset;
-		dma_sync_single_for_device(ntb_dev, ntb_dma_addr, len,
-					DMA_FROM_DEVICE);
-	}
-}
-
-static inline
-const void *ntc_phys_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
-					u64 offset, u64 len)
-{
-	struct device *ntb_dev = buf->ntc->ntb_dev;
-	dma_addr_t ntb_dma_addr;
-
-	if (buf->chan_addr.mw_desc == NTC_CHAN_MW1) {
-		ntb_dma_addr = buf->chan_addr.offset;
-		dma_sync_single_for_cpu(ntb_dev, ntb_dma_addr, len,
-					DMA_FROM_DEVICE);
-	}
-
-	return buf->ptr + offset;
-}
-
-static inline
-void ntc_phys_bidir_buf_prepare_to_copy(const struct ntc_bidir_buf *buf,
-					u64 offset, u64 len)
-{
-	dma_sync_single_for_device(buf->ntc->dma_engine_dev,
-				buf->dma_addr + offset,
-				len, DMA_TO_DEVICE);
 }
 
 /**
@@ -1522,14 +1492,16 @@ void ntc_phys_bidir_buf_prepare_to_copy(const struct ntc_bidir_buf *buf,
  */
 static inline bool ntc_bidir_buf_valid(struct ntc_bidir_buf *buf)
 {
-	return ntc_chan_addr_valid(&buf->chan_addr);
+	return !!buf->ntb_dma_addr;
 }
 
 static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
 {
 	if (buf->gfp)
 		buf->ptr = NULL;
-	ntc_chan_addr_clean(&buf->chan_addr);
+	buf->dma_addr = 0;
+	buf->own_mw = NULL;
+	buf->ntb_dma_addr = 0;
 }
 
 /**
@@ -1560,7 +1532,7 @@ static inline int ntc_bidir_buf_alloc(struct ntc_bidir_buf *buf,
 
 	rc = ntc_phys_bidir_buf_alloc(buf);
 
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		ntc_bidir_buf_clear(buf);
 
 	return rc;
@@ -1632,11 +1604,11 @@ static inline int ntc_bidir_buf_alloc_init(struct ntc_bidir_buf *buf,
 {
 	int rc;
 
-	if (!ntc_segment_valid(size, init_buf_offset, init_buf_size))
+	if (unlikely(!ntc_segment_valid(size, init_buf_offset, init_buf_size)))
 		return -EINVAL;
 
 	rc = ntc_bidir_buf_alloc(buf, ntc, size, gfp);
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		return rc;
 
 	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
@@ -1673,11 +1645,11 @@ static inline int ntc_bidir_buf_zalloc_init(struct ntc_bidir_buf *buf,
 {
 	int rc;
 
-	if (!ntc_segment_valid(size, init_buf_offset, init_buf_size))
+	if (unlikely(!ntc_segment_valid(size, init_buf_offset, init_buf_size)))
 		return -EINVAL;
 
 	rc = ntc_bidir_buf_zalloc(buf, ntc, size, gfp);
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		return rc;
 
 	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
@@ -1756,7 +1728,7 @@ static inline int ntc_bidir_buf_make_prealloced_sgl(struct ntc_bidir_buf *sgl,
 
 	for (i = 0; i < count; i++) {
 		rc = ntc_bidir_buf_make_prealloced(&sgl[i], ntc);
-		if (rc < 0)
+		if (unlikely(rc < 0))
 			goto err;
 	}
 
@@ -1775,8 +1747,9 @@ static inline int ntc_bidir_buf_make_prealloced_sgl(struct ntc_bidir_buf *sgl,
 static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
 					struct ntc_bidir_buf *buf)
 {
-	if (buf->ptr) {
-		desc->chan_addr = buf->chan_addr;
+	if (buf->own_mw) {
+		desc->chan_addr.mw_desc = buf->own_mw->desc;
+		desc->chan_addr.offset = buf->ntb_dma_addr - buf->own_mw->base;
 		desc->size = buf->size;
 	} else
 		memset(desc, 0, sizeof(*desc));
@@ -1798,12 +1771,15 @@ static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
 static inline void *ntc_bidir_buf_deref(struct ntc_bidir_buf *buf,
 					u64 offset, u64 len)
 {
-	if (!ntc_segment_valid(buf->size, offset, len))
+	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
 		return NULL;
 	if (unlikely(!buf->ptr))
 		return NULL;
 
-	return ntc_phys_bidir_buf_deref(buf, offset, len);
+	dma_sync_single_for_cpu(buf->ntc->ntb_dev, buf->ntb_dma_addr + offset,
+				len, DMA_FROM_DEVICE);
+
+	return buf->ptr + offset;
 }
 
 /**
@@ -1819,10 +1795,12 @@ static inline void ntc_bidir_buf_unref(struct ntc_bidir_buf *buf,
 {
 	if (!ntc_segment_valid(buf->size, offset, len))
 		return;
-	if (unlikely(!buf->ptr))
+	if (unlikely(!buf->ntb_dma_addr))
 		return;
 
-	ntc_phys_bidir_buf_unref(buf, offset, len);
+	dma_sync_single_for_device(buf->ntc->ntb_dev,
+				buf->ntb_dma_addr + offset, len,
+				DMA_FROM_DEVICE);
 }
 
 /**
@@ -1854,12 +1832,15 @@ static inline void *ntc_bidir_buf_full_deref(struct ntc_bidir_buf *buf)
 static inline const void *ntc_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
 						u64 offset, u64 len)
 {
-	if (!ntc_segment_valid(buf->size, offset, len))
+	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
 		return NULL;
-	if (unlikely(!buf->ptr))
+	if (unlikely(!buf->ntb_dma_addr))
 		return NULL;
 
-	return ntc_phys_bidir_buf_const_deref(buf, offset, len);
+	dma_sync_single_for_cpu(buf->ntc->ntb_dev, buf->ntb_dma_addr + offset,
+				len, DMA_FROM_DEVICE);
+
+	return buf->ptr + offset;
 }
 
 /**
@@ -1890,7 +1871,7 @@ static inline void ntc_remote_buf_desc_clear(struct ntc_remote_buf_desc *desc)
 static inline int
 ntc_remote_buf_desc_clip(struct ntc_remote_buf_desc *desc, u64 offset, u64 len)
 {
-	if (!ntc_segment_valid(desc->size, offset, len))
+	if (unlikely(!ntc_segment_valid(desc->size, offset, len)))
 		return -EINVAL;
 
 	desc->chan_addr.offset += offset;
@@ -1905,13 +1886,13 @@ static inline int ntc_phys_remote_buf_map(struct ntc_remote_buf *buf,
 	struct device *dev = buf->ntc->dma_engine_dev;
 
 	buf->ptr = ntc_peer_addr(buf->ntc, &desc->chan_addr);
-	if (!buf->ptr)
+	if (unlikely(!buf->ptr))
 		return -EIO;
 
 	buf->dma_addr = dma_map_resource(dev, buf->ptr, desc->size,
 					DMA_FROM_DEVICE, 0);
 
-	if (dma_mapping_error(dev, buf->dma_addr))
+	if (unlikely(dma_mapping_error(dev, buf->dma_addr)))
 		return -EIO;
 
 	buf->size = desc->size;
@@ -1924,13 +1905,13 @@ static inline int ntc_phys_remote_buf_map_phys(struct ntc_remote_buf *buf,
 {
 	struct device *dev = buf->ntc->dma_engine_dev;
 
-	if (!ptr)
+	if (unlikely(!ptr))
 		return -EIO;
 
 	buf->ptr = ptr;
 	buf->dma_addr = dma_map_resource(dev, ptr, size, DMA_FROM_DEVICE, 0);
 
-	if (dma_mapping_error(dev, buf->dma_addr))
+	if (unlikely(dma_mapping_error(dev, buf->dma_addr)))
 		return -EIO;
 
 	buf->size = size;
@@ -1973,7 +1954,7 @@ static inline int ntc_remote_buf_map(struct ntc_remote_buf *buf,
 	buf->ntc = ntc;
 
 	rc = ntc_phys_remote_buf_map(buf, desc);
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		ntc_remote_buf_clear(buf);
 
 	return rc;
@@ -2001,7 +1982,7 @@ static inline int ntc_remote_buf_map_phys(struct ntc_remote_buf *buf,
 	buf->ntc = ntc;
 
 	rc = ntc_phys_remote_buf_map_phys(buf, ptr, size);
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		ntc_remote_buf_clear(buf);
 
 	return rc;

@@ -113,7 +113,7 @@ struct ntrdma_dev {
 	u32				vbell_start;
 	u32				vbell_next;
 	struct ntrdma_vbell_head	*vbell_vec;
-	struct ntc_bidir_buf		vbell_buf;
+	struct ntc_export_buf		vbell_buf;
 
 	/* peer virtual doorbells */
 
@@ -160,7 +160,7 @@ struct ntrdma_dev {
 
 	/* command send ring buffers and consumer index */
 	struct ntc_local_buf		cmd_send_buf;
-	struct ntc_bidir_buf		cmd_send_rsp_buf;
+	struct ntc_export_buf		cmd_send_rsp_buf;
 	struct ntc_remote_buf		peer_cmd_recv_buf;
 	u64				peer_recv_prod_shift;
 	u32				peer_cmd_recv_vbell_idx;

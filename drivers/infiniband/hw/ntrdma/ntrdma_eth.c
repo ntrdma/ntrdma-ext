@@ -61,7 +61,7 @@ inline u32 ntrdma_eth_tx_prod(struct ntrdma_eth *eth)
 
 static inline const u32 *ntrdma_eth_rx_cons_buf(struct ntrdma_eth *eth)
 {
-	return ntc_bidir_buf_const_deref(&eth->rx_cons_buf, 0, sizeof(u32));
+	return ntc_export_buf_const_deref(&eth->rx_cons_buf, 0, sizeof(u32));
 }
 
 inline u32 ntrdma_eth_rx_cons(struct ntrdma_eth *eth)
@@ -151,9 +151,9 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	if (rc < 0)
 		goto err_rx_cqe_buf;
 
-	rc = ntc_bidir_buf_zalloc_init(&eth->rx_cons_buf, dev->ntc,
-				sizeof(u32),
-				GFP_KERNEL, &rx_cons, sizeof(u32), 0);
+	rc = ntc_export_buf_zalloc_init(&eth->rx_cons_buf, dev->ntc,
+					sizeof(u32),
+					GFP_KERNEL, &rx_cons, sizeof(u32), 0);
 	if (rc < 0)
 		goto err_rx_cons_buf;
 
@@ -198,7 +198,7 @@ deinit:
 	unregister_netdev(net);
 err_register:
 	netif_napi_del(&eth->napi);
-	ntc_bidir_buf_free(&eth->rx_cons_buf);
+	ntc_export_buf_free(&eth->rx_cons_buf);
 err_rx_cons_buf:
 	ntc_export_buf_free(&eth->rx_cqe_buf);
 err_rx_cqe_buf:
@@ -232,11 +232,11 @@ int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 	info->rx_cap = eth->rx_cap;
 	info->rx_idx = eth->rx_cmpl;
 	if (!ntc_export_buf_valid(&eth->rx_cqe_buf) ||
-		!ntc_bidir_buf_valid(&eth->rx_cons_buf))
+		!ntc_export_buf_valid(&eth->rx_cons_buf))
 		return -EINVAL;
 
 	ntc_export_buf_make_desc(&info->rx_cqe_buf_desc, &eth->rx_cqe_buf);
-	ntc_bidir_buf_make_desc(&info->rx_cons_buf_desc, &eth->rx_cons_buf);
+	ntc_export_buf_make_desc(&info->rx_cons_buf_desc, &eth->rx_cons_buf);
 	info->vbell_idx = eth->vbell_idx;
 
 	return 0;
@@ -421,11 +421,9 @@ void ntrdma_dev_eth_disable(struct ntrdma_dev *dev)
 void ntrdma_dev_eth_reset(struct ntrdma_dev *dev)
 {
 	struct ntrdma_eth *eth = dev->eth;
-	u32 *rx_cons_buf;
+	u32 rx_cons = eth->rx_cmpl;
 
-	rx_cons_buf = ntc_bidir_buf_deref(&eth->rx_cons_buf, 0, sizeof(u32));
-	*rx_cons_buf = eth->rx_cmpl;
-	ntc_bidir_buf_unref(&eth->rx_cons_buf, 0, sizeof(u32));
+	ntc_export_buf_reinit(&eth->rx_cons_buf, &rx_cons, 0, sizeof(rx_cons));
 
 	ntrdma_dev_eth_hello_done_undone(dev, NULL, true);
 	ntrdma_dev_eth_hello_prep_unperp(dev, NULL, NULL, true);
