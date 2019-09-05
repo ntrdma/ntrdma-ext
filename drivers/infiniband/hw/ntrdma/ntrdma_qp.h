@@ -376,6 +376,7 @@ static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 			qp->res.key, s, line);
 	if (qp->ibqp.qp_type == IB_QPT_GSI)
 		atomic_set(&qp->state, IB_QPS_SQE);
-	atomic_set(&qp->state, IB_QPS_ERR);
+	else
+		atomic_set(&qp->state, IB_QPS_ERR);
 }
 #endif
