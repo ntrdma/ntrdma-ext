@@ -112,7 +112,7 @@ struct ntrdma_qp {
 
 	/* send ring buffers and consumer index */
 	struct ntc_local_buf		send_wqe_buf;
-	struct ntc_bidir_buf		send_cqe_buf;
+	struct ntc_export_buf		send_cqe_buf;
 	struct ntc_remote_buf		peer_send_wqe_buf;
 	u64				peer_send_prod_shift;
 	u32				peer_send_vbell_idx;

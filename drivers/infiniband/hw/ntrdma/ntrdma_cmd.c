@@ -69,7 +69,7 @@ static inline bool ntrdma_cmd_done(struct ntrdma_dev *dev)
 
 static inline const u32 *ntrdma_dev_cmd_send_cons_buf(struct ntrdma_dev *dev)
 {
-	return ntc_bidir_buf_const_deref(&dev->cmd_send_rsp_buf,
+	return ntc_export_buf_const_deref(&dev->cmd_send_rsp_buf,
 					sizeof(union ntrdma_rsp) *
 					dev->cmd_send_cap,
 					sizeof(u32));
@@ -87,19 +87,11 @@ inline u32 ntrdma_dev_cmd_send_cons(struct ntrdma_dev *dev)
 
 static inline void ntrdma_dev_clear_cmd_send_cons(struct ntrdma_dev *dev)
 {
-	u32 *cmd_send_cons_buf =
-		ntc_bidir_buf_deref(&dev->cmd_send_rsp_buf,
-				sizeof(union ntrdma_rsp) * dev->cmd_send_cap,
-				sizeof(u32));
+	u32 cmd_send_cons = 0;
 
-	if (!cmd_send_cons_buf)
-		return;
-
-	*cmd_send_cons_buf = 0;
-
-	ntc_bidir_buf_unref(&dev->cmd_send_rsp_buf,
+	ntc_export_buf_reinit(&dev->cmd_send_rsp_buf, &cmd_send_cons,
 			sizeof(union ntrdma_rsp) * dev->cmd_send_cap,
-			sizeof(u32));
+			sizeof(cmd_send_cons));
 }
 
 static inline const u32 *ntrdma_dev_cmd_recv_prod_buf(struct ntrdma_dev *dev)
@@ -174,7 +166,7 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 		goto err_send_buf;
 	}
 
-	rc = ntc_bidir_buf_zalloc(&dev->cmd_send_rsp_buf, dev->ntc,
+	rc = ntc_export_buf_zalloc(&dev->cmd_send_rsp_buf, dev->ntc,
 				dev->cmd_send_cap * sizeof(union ntrdma_rsp)
 				+ sizeof(u32), /* for cmd_send_cons */
 				GFP_KERNEL);
@@ -193,7 +185,7 @@ deinit:
 	WARN(dev->is_cmd_prep, "Deinit while cmd prep not unprep");
 	cancel_work_sync(&dev->cmd_send_work);
 	cancel_work_sync(&dev->cmd_recv_work);
-	ntc_bidir_buf_free(&dev->cmd_send_rsp_buf);
+	ntc_export_buf_free(&dev->cmd_send_rsp_buf);
 err_send_rsp_buf:
 	ntc_local_buf_free(&dev->cmd_send_buf);
 err_send_buf:
@@ -247,7 +239,7 @@ void ntrdma_dev_cmd_deinit(struct ntrdma_dev *dev)
 void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
 			       struct ntrdma_cmd_hello_info *info)
 {
-	ntc_bidir_buf_make_desc(&info->send_rsp_buf_desc,
+	ntc_export_buf_make_desc(&info->send_rsp_buf_desc,
 				&dev->cmd_send_rsp_buf);
 	info->send_cons_shift = dev->cmd_send_cap * sizeof(union ntrdma_rsp);
 	info->send_cap = dev->cmd_send_cap;
@@ -509,7 +501,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 		cmd_send_buf = ntc_local_buf_deref(&dev->cmd_send_buf);
 
 		cmd_send_rsp_buf =
-			ntc_bidir_buf_const_deref(&dev->cmd_send_rsp_buf,
+			ntc_export_buf_const_deref(&dev->cmd_send_rsp_buf,
 						sizeof(*cmd_send_rsp_buf) *
 						start,
 						sizeof(*cmd_send_rsp_buf) *

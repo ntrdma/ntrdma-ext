@@ -158,7 +158,7 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	out->phase_magic = NTRDMA_V1_P2_MAGIC;
 
 	/* virtual doorbells */
-	ntc_bidir_buf_make_desc(&out->vbell_ntc_buf_desc, &dev->vbell_buf);
+	ntc_export_buf_make_desc(&out->vbell_ntc_buf_desc, &dev->vbell_buf);
 	out->vbell_count = dev->vbell_count;
 	out->vbell_reserved = 0;
 

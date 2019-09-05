@@ -164,7 +164,7 @@ static void ntrdma_send_fail(struct ntrdma_cqe *cqe,
 
 static inline const u32 *ntrdma_qp_send_cons_buf(struct ntrdma_qp *qp)
 {
-	return ntc_bidir_buf_const_deref(&qp->send_cqe_buf,
+	return ntc_export_buf_const_deref(&qp->send_cqe_buf,
 					qp->send_cap *
 					sizeof(struct ntrdma_cqe),
 					sizeof(u32));
@@ -182,22 +182,8 @@ inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp)
 
 static inline void ntrdma_qp_set_send_cons(struct ntrdma_qp *qp, u32 send_cons)
 {
-	u32 *send_cons_buf;
-
-	send_cons_buf = ntc_bidir_buf_deref(&qp->send_cqe_buf,
-					qp->send_cap *
-					sizeof(struct ntrdma_cqe),
-					sizeof(u32));
-
-	if (!send_cons_buf)
-		return;
-
-	*send_cons_buf = send_cons;
-
-	ntc_bidir_buf_unref(&qp->send_cqe_buf,
-			qp->send_cap *
-			sizeof(struct ntrdma_cqe),
-			sizeof(u32));
+	ntc_export_buf_reinit(&qp->send_cqe_buf, &send_cons,
+			qp->send_cap * sizeof(struct ntrdma_cqe), sizeof(u32));
 }
 
 static inline const u32 *ntrdma_rqp_send_prod_buf(struct ntrdma_rqp *rqp)
@@ -302,11 +288,11 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 
 	/* set up the send completion queue buffer */
 	send_cqes_total_size = qp->send_cap * sizeof(struct ntrdma_cqe);
-	rc = ntc_bidir_buf_zalloc_init(&qp->send_cqe_buf, dev->ntc,
-				send_cqes_total_size
-				+ sizeof(u32), /* for send_cons */
-				GFP_KERNEL, &send_cons, sizeof(u32),
-				send_cqes_total_size);
+	rc = ntc_export_buf_zalloc_init(&qp->send_cqe_buf, dev->ntc,
+					send_cqes_total_size
+					+ sizeof(u32), /* for send_cons */
+					GFP_KERNEL, &send_cons, sizeof(u32),
+					send_cqes_total_size);
 	if (rc < 0)
 		goto err_send_cqe_buf;
 
@@ -370,7 +356,7 @@ deinit:
 err_recv_cqe_buf:
 	ntc_local_buf_free(&qp->recv_wqe_buf);
 err_recv_wqe_buf:
-	ntc_bidir_buf_free(&qp->send_cqe_buf);
+	ntc_export_buf_free(&qp->send_cqe_buf);
 err_send_cqe_buf:
 	ntc_local_buf_free(&qp->send_wqe_buf);
 err_send_wqe_buf:
@@ -403,7 +389,7 @@ struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
 
 const struct ntrdma_cqe *ntrdma_qp_send_cqe(struct ntrdma_qp *qp, u32 pos)
 {
-	return ntc_bidir_buf_const_deref(&qp->send_cqe_buf,
+	return ntc_export_buf_const_deref(&qp->send_cqe_buf,
 					pos * sizeof(struct ntrdma_cqe),
 					sizeof(struct ntrdma_cqe));
 }
@@ -560,7 +546,7 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 	cmd->qp_create.send_wqe_cap = qp->send_cap;
 	cmd->qp_create.send_wqe_sg_cap = qp->send_wqe_sg_cap;
 	cmd->qp_create.send_ring_idx = ntrdma_qp_send_cons(qp);
-	ntc_bidir_buf_make_desc(&cmd->qp_create.send_cqe_buf_desc,
+	ntc_export_buf_make_desc(&cmd->qp_create.send_cqe_buf_desc,
 				&qp->send_cqe_buf);
 	cmd->qp_create.send_cons_shift =
 		qp->send_cap * sizeof(struct ntrdma_cqe);
@@ -968,9 +954,9 @@ void ntrdma_recv_wqe_sync(struct ntrdma_recv_wqe *wqe)
 		TRACE("DMA memcpy %#x bytes to %#lx virt %p\n",
 			(int)wqe->rcv_sg_list[i].exp_buf.size,
 			(long)wqe->rcv_sg_list[i].rcv_dma_buf.dma_addr,
-			phys_to_virt(wqe->rcv_sg_list[i].rcv_dma_buf.dma_addr));
+			wqe->rcv_sg_list[i].rcv_dma_buf.ptr);
 
-		memcpy(phys_to_virt(wqe->rcv_sg_list[i].rcv_dma_buf.dma_addr),
+		memcpy(wqe->rcv_sg_list[i].rcv_dma_buf.ptr,
 			wqe->rcv_sg_list[i].exp_buf.ptr,
 			wqe->rcv_sg_list[i].exp_buf.size);
 	}

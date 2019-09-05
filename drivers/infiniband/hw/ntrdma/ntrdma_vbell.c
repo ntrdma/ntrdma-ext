@@ -66,7 +66,7 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 		goto err_vec;
 	}
 
-	rc = ntc_bidir_buf_zalloc(&dev->vbell_buf, dev->ntc,
+	rc = ntc_export_buf_zalloc(&dev->vbell_buf, dev->ntc,
 				vbell_count * sizeof(u32),
 				GFP_KERNEL);
 	if (rc < 0)
@@ -97,7 +97,7 @@ void ntrdma_dev_vbell_deinit(struct ntrdma_dev *dev)
 	for (i = 0; i < NTB_MAX_IRQS; i++)
 		tasklet_kill(&dev->vbell_work[i]);
 
-	ntc_bidir_buf_free(&dev->vbell_buf);
+	ntc_export_buf_free(&dev->vbell_buf);
 	kfree(dev->vbell_vec);
 }
 
@@ -173,7 +173,6 @@ err_map:
 void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev)
 {
 	int i;
-	u32 *vbell_buf;
 
 	ntc_remote_buf_unmap(&dev->peer_vbell_buf);
 
@@ -181,14 +180,11 @@ void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev)
 	spin_lock_bh(&dev->vbell_peer_lock);
 	{
 		dev->vbell_enable = 0;
-		vbell_buf = ntc_bidir_buf_deref(&dev->vbell_buf, 0,
-						dev->vbell_count * sizeof(u32));
-		for (i = 0; i < dev->vbell_count; ++i) {
+		for (i = 0; i < dev->vbell_count; ++i)
 			ntrdma_vbell_head_reset(&dev->vbell_vec[i]);
-			vbell_buf[i] = 0;
-		}
-		ntc_bidir_buf_unref(&dev->vbell_buf, 0,
-				dev->vbell_count * sizeof(u32));
+
+		ntc_export_buf_reinit_by_zeroes(&dev->vbell_buf, 0,
+						dev->vbell_count * sizeof(u32));
 
 #ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 		kfree(dev->vbell_peer_seq);
@@ -241,7 +237,7 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 	spin_lock_bh(&dev->vbell_self_lock);
 	{
 		if (dev->vbell_enable) {
-			vbell_buf = ntc_bidir_buf_const_deref(&dev->vbell_buf,
+			vbell_buf = ntc_export_buf_const_deref(&dev->vbell_buf,
 					0, dev->vbell_count * sizeof(u32));
 			for (i = 0; i < dev->vbell_count; ++i) {
 				head = &dev->vbell_vec[i];

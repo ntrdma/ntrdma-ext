@@ -62,7 +62,7 @@ struct ntrdma_eth {
 	struct ntc_local_buf		rx_wqe_buf;
 	struct ntc_export_buf		rx_cqe_buf;
 
-	struct ntc_bidir_buf		rx_cons_buf;
+	struct ntc_export_buf		rx_cons_buf;
 
 	struct ntc_remote_buf		peer_tx_wqe_buf;
 	struct ntc_remote_buf		peer_tx_prod_buf;
