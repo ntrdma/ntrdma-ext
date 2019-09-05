@@ -39,6 +39,7 @@
 #include <linux/ntc_trace.h>
 #include <rdma/ib_mad.h>
 #include <rdma/ib_verbs.h>
+#include <rdma/ib_umem.h>
 
 #include "ntrdma_dev.h"
 #include "ntrdma_cmd.h"
@@ -434,8 +435,8 @@ static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code)
 }
 
 static int ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
-				 struct ntrdma_qp *qp,
-				 struct ntrdma_cqe *cqe)
+				struct ntrdma_qp *qp,
+				const struct ntrdma_cqe *cqe)
 {
 	ibwc->wr_id = cqe->ulp_handle;
 
@@ -463,7 +464,8 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
 	struct ntrdma_qp *qp;
-	struct ntrdma_cqe *cqe, abort_cqe;
+	const struct ntrdma_cqe *cqe;
+	struct ntrdma_cqe abort_cqe;
 	u32 pos, end, base;
 	int count = 0, rc = 0;
 
@@ -1078,10 +1080,19 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 	wqe->sg_count = ibwr->num_sge;
 
 	for (i = 0; i < ibwr->num_sge; ++i) {
-		wqe->sg_list[i].addr = ibwr->sg_list[i].addr;
-		wqe->sg_list[i].len = ibwr->sg_list[i].length;
-		wqe->sg_list[i].key = ibwr->sg_list[i].lkey;
-		this_cpu_add(dev_cnt.post_send_bytes, wqe->sg_list[i].len);
+		wqe->snd_sg_list[i].key = ibwr->sg_list[i].lkey;
+		if (ibwr->sg_list[i].lkey != NTRDMA_RESERVED_DMA_LEKY) {
+			wqe->snd_sg_list[i].addr = ibwr->sg_list[i].addr;
+			wqe->snd_sg_list[i].len = ibwr->sg_list[i].length;
+		} else {
+			TRACE("Mapping local buffer of size %#x at %#lx\n",
+				(int)ibwr->sg_list[i].length,
+				(long)(dma_addr_t)ibwr->sg_list[i].addr);
+			ntc_local_buf_map_dma(&wqe->snd_sg_list[i].snd_dma_buf,
+					dev->ntc, ibwr->sg_list[i].length,
+					(dma_addr_t)ibwr->sg_list[i].addr);
+		}
+		this_cpu_add(dev_cnt.post_send_bytes, ibwr->sg_list[i].length);
 	}
 
 	if (wqe->flags & IB_SEND_SIGNALED)
@@ -1160,11 +1171,13 @@ out:
 	return rc;
 }
 
-static int ntrdma_ib_recv_to_wqe(struct ntrdma_recv_wqe *wqe,
-				 struct ib_recv_wr *ibwr,
-				 int sg_cap)
+static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
+				struct ntrdma_recv_wqe *wqe,
+				struct ib_recv_wr *ibwr,
+				int sg_cap)
 {
 	int i;
+	int rc;
 
 	wqe->ulp_handle = ibwr->wr_id;
 
@@ -1175,12 +1188,40 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_recv_wqe *wqe,
 
 	wqe->sg_count = ibwr->num_sge;
 	for (i = 0; i < ibwr->num_sge; ++i) {
-		wqe->sg_list[i].addr = ibwr->sg_list[i].addr;
-		wqe->sg_list[i].len = ibwr->sg_list[i].length;
-		wqe->sg_list[i].key = ibwr->sg_list[i].lkey;
+		wqe->rcv_sg_list[i].key = ibwr->sg_list[i].lkey;
+		if (ibwr->sg_list[i].lkey != NTRDMA_RESERVED_DMA_LEKY) {
+			wqe->rcv_sg_list[i].addr = ibwr->sg_list[i].addr;
+			wqe->rcv_sg_list[i].len = ibwr->sg_list[i].length;
+		} else {
+			rc = ntc_export_buf_alloc(&wqe->rcv_sg_list[i].exp_buf,
+						dev->ntc,
+						ibwr->sg_list[i].length,
+						GFP_KERNEL);
+			if (rc < 0) {
+				ntrdma_err(dev, "FAILED %d", -rc);
+				goto err;
+			}
+			ntc_export_buf_make_desc(&wqe->rcv_sg_list[i].desc,
+						&wqe->rcv_sg_list[i].exp_buf);
+			ntc_local_buf_map_dma(&wqe->rcv_sg_list[i].rcv_dma_buf,
+					dev->ntc, ibwr->sg_list[i].length,
+					(dma_addr_t)ibwr->sg_list[i].addr);
+			TRACE("Allocating rcv buffer of size %d @DMA addr %#lx",
+				(int)ibwr->sg_list[i].length,
+				(long)(dma_addr_t)ibwr->sg_list[i].addr);
+			TRACE("with export buffer at %p chan_addr %#llx",
+				wqe->rcv_sg_list[i].exp_buf.ptr,
+				wqe->rcv_sg_list[i].exp_buf.chan_addr.value);
+		}
 	}
 
 	return 0;
+
+ err:
+	wqe->sg_count = i;
+	ntrdma_recv_wqe_cleanup(wqe);
+
+	return rc;
 }
 
 static int ntrdma_post_recv(struct ib_qp *ibqp,
@@ -1214,8 +1255,8 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 			wqe = ntrdma_qp_recv_wqe(qp, pos);
 
 			/* transform work request to queue entry */
-			rc = ntrdma_ib_recv_to_wqe(wqe, ibwr,
-						   qp->recv_wqe_sg_cap);
+			rc = ntrdma_ib_recv_to_wqe(dev, wqe, ibwr,
+						qp->recv_wqe_sg_cap);
 
 			TRACE("OPCODE %d: wrid %llu QP %d, rc = %d\n",
 					wqe->op_code, ibwr->wr_id,
@@ -1257,7 +1298,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
 	struct ntrdma_mr *mr;
-	void *umem;
+	struct ib_umem *ib_umem;
 	int rc, i, count;
 
 	ntrdma_vdbg(dev, "called user addr %llx len %lld:\n",
@@ -1281,35 +1322,35 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		goto err_umem;
 	}
 
-	umem = ntc_umem_get(dev->ntc, pd->ibpd.uobject->context,
-			    start, length, mr_access_flags, false);
+	ib_umem = ib_umem_get(pd->ibpd.uobject->context, start, length,
+			mr_access_flags, false);
 
-	if (!umem) {
-		rc = -ENOMEM;
+	if (IS_ERR(ib_umem)) {
+		rc = PTR_ERR(ib_umem);
 		goto err_umem;
 	}
 
-	count = ntc_umem_count(dev->ntc, umem);
+	count = ntc_umem_count(dev->ntc, ib_umem);
 	if (count < 0) {
 		rc = count;
 		goto err_mr;
 	}
 
-	/*
-	 * multiple count by 2 because we need save 2 SGLs,
-	 * one for IOAT and one for NTB.
-	 */
-
-	mr = kmalloc_node(sizeof(*mr) + 2 * count * sizeof(*mr->sg_list),
+	mr = kmalloc_node(sizeof(*mr) + count * sizeof(mr->sg_list[0]),
 			GFP_KERNEL, dev->node);
 	if (!mr) {
 		rc = -ENOMEM;
 		goto err_mr;
 	}
 
-	rc = ntrdma_mr_init(mr, dev, umem,
-			pd->key, mr_access_flags,
-			virt_addr, length, count);
+	mr->ib_umem = ib_umem;
+	mr->pd_key = pd->key;
+	mr->access = mr_access_flags;
+	mr->addr = virt_addr;
+	mr->len = length;
+	mr->sg_count = count;
+
+	rc = ntrdma_mr_init(mr, dev);
 	if (rc)
 		goto err_init;
 
@@ -1325,12 +1366,9 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	ntrdma_dbg(dev, "count %x\n", mr->sg_count);
 
 	for (i = 0; i < count; ++i) {
-		ntrdma_vdbg(dev, "local sgl[%d] dma %#llx len %#llx\n",
-				i, mr->local_dma[i].addr,
-				mr->local_dma[i].len);
-		ntrdma_vdbg(dev, "remote sgl[%d] dma %#llx len %#llx\n",
-				i, mr->remote_dma[i].addr,
-				mr->remote_dma[i].len);
+		ntrdma_vdbg(dev, "sgl[%d] chan %llx len %#llx\n", i,
+			mr->sg_list[i].chan_addr.value,
+			mr->sg_list[i].size);
 	}
 
 	return &mr->ibmr;
@@ -1341,7 +1379,7 @@ err_add:
 err_init:
 	kfree(mr);
 err_mr:
-	ntc_umem_put(dev->ntc, umem);
+	ib_umem_release(ib_umem);
 err_umem:
 	atomic_dec(&dev->mr_num);
 err_len:
@@ -1353,16 +1391,13 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 {
 	struct ntrdma_mr *mr = ntrdma_ib_mr(ibmr);
 	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
-	void *umem;
-
-	TRACE("dev %p, ibmr %p, mr %p (res key %d)\n",
-			dev, ibmr, mr, mr->res.key);
-	umem = mr->umem;
+	struct ib_umem *ib_umem = mr->ib_umem;
 
 	ntrdma_mr_del(mr);
 	ntrdma_mr_repo(mr);
+	ntrdma_mr_deinit(mr);
 	kfree(mr);
-	ntc_umem_put(dev->ntc, umem);
+	ib_umem_release(ib_umem);
 	atomic_dec(&dev->mr_num);
 	return 0;
 }
@@ -1447,7 +1482,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	/* TODO: maybe this should be the number of virtual doorbells */
 	ibdev->num_comp_vectors		= 1;
 
-	ibdev->dev.parent = ntc_map_dev(dev->ntc, NTB_DEV_ACCESS);
+	ibdev->dev.parent = dev->ntc->dma_engine_dev;
 
 	ibdev->uverbs_abi_ver		= 1;
 	ibdev->phys_port_cnt		= 1;

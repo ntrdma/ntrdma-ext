@@ -38,17 +38,17 @@
 struct ntrdma_pd;
 struct ntrdma_rpd;
 
-/* Append dma requests from src entries in pd to dst entries in rpd */
-int ntrdma_zip_rdma(struct ntrdma_dev *dev, void *req, u32 *rdma_len,
-		    struct ntrdma_wr_sge *dst_sg_list,
-		    struct ntrdma_wr_sge *src_sg_list,
-		    u32 dst_sg_count, u32 src_sg_count,
-		    bool rdma_read);
+/* Append dma requests from snd entries in pd to rcv entries in rpd */
+/* Called on snd side. */
+int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct dma_chan *req, u32 *rdma_len,
+		const struct ntrdma_wr_rcv_sge *rcv_sg_list,
+		const struct ntrdma_wr_snd_sge *snd_sg_list,
+		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset);
 
 /* Sync incoming data to dst entries in pd for the cpu */
+/* Called on rcv side. */
 int ntrdma_zip_sync(struct ntrdma_dev *dev,
-		    struct ntrdma_wr_sge *dst_sg_list,
-		    u32 dst_sg_count);
+		struct ntrdma_wr_rcv_sge *lrcv_sg_list, u32 lrcv_sg_count);
 
 #endif
 

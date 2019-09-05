@@ -43,8 +43,8 @@
 #define NTRDMA_V1_P3_MAGIC		0xe09005ed
 
 struct ntrdma_cmd_hello_info {
-	u64 send_rsp_buf_addr;
-	u64 send_cons_addr;
+	struct ntc_remote_buf_desc send_rsp_buf_desc;
+	u64 send_cons_shift;
 	u32 send_cap;
 	u32 send_idx;
 	u32 send_vbell_idx;
@@ -52,37 +52,37 @@ struct ntrdma_cmd_hello_info {
 };
 
 struct ntrdma_cmd_hello_prep {
-	u64 recv_buf_addr;
-	u64 recv_prod_addr;
+	struct ntc_remote_buf_desc recv_buf_desc;
+	u64 recv_prod_shift;
 };
 
 void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
 			       struct ntrdma_cmd_hello_info *info);
 int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
-			      struct ntrdma_cmd_hello_info *peer_info,
-			      struct ntrdma_cmd_hello_prep *prep);
+			const struct ntrdma_cmd_hello_info *peer_info,
+			struct ntrdma_cmd_hello_prep *prep);
 int ntrdma_dev_cmd_hello_done(struct ntrdma_dev *dev,
-			       struct ntrdma_cmd_hello_prep *peer_prep);
+			const struct ntrdma_cmd_hello_prep *peer_prep);
 
 struct ntrdma_eth_hello_info {
 	u32				rx_cap;
 	u32				rx_idx;
-	u64				rx_buf_addr;
-	u64				rx_idx_addr;
+	struct ntc_remote_buf_desc	rx_cqe_buf_desc;
+	struct ntc_remote_buf_desc	rx_cons_buf_desc;
 	u32				vbell_idx;
 };
 
 struct ntrdma_eth_hello_prep {
-	u64				tx_buf_addr;
-	u64				tx_idx_addr;
+	struct ntc_remote_buf_desc	tx_wqe_buf_desc;
+	struct ntc_remote_buf_desc	tx_prod_buf_desc;
 };
 
 int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 			       struct ntrdma_eth_hello_info *info);
 int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
-			      struct ntrdma_eth_hello_info *peer_info,
-			      struct ntrdma_eth_hello_prep *prep);
+			const struct ntrdma_eth_hello_info *peer_info,
+			struct ntrdma_eth_hello_prep *prep);
 int ntrdma_dev_eth_hello_done(struct ntrdma_dev *dev,
-			       struct ntrdma_eth_hello_prep *peer_prep);
+			const struct ntrdma_eth_hello_prep *peer_prep);
 
 #endif

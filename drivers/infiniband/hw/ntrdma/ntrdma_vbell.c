@@ -66,25 +66,18 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 		goto err_vec;
 	}
 
-	dev->vbell_buf_size = vbell_count * sizeof(*dev->vbell_buf);
-	dev->vbell_buf = ntc_buf_alloc(dev->ntc,
-				       dev->vbell_buf_size,
-				       &dev->vbell_buf_addr,
-				       dev->node);
-	if (!dev->vbell_buf) {
-		rc = -ENOMEM;
+	rc = ntc_bidir_buf_zalloc(&dev->vbell_buf, dev->ntc,
+				vbell_count * sizeof(u32),
+				GFP_KERNEL);
+	if (rc < 0)
 		goto err_buf;
-	}
 
-	for (i = 0; i < vbell_count; ++i) {
+	for (i = 0; i < vbell_count; ++i)
 		ntrdma_vbell_head_init(&dev->vbell_vec[i]);
-		dev->vbell_buf[i] = 0;
-	}
 
 #ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 	dev->vbell_peer_seq = NULL;
 #endif
-	dev->peer_vbell_buf_dma_addr = 0;
 	dev->peer_vbell_count = 0;
 
 	return 0;
@@ -104,10 +97,7 @@ void ntrdma_dev_vbell_deinit(struct ntrdma_dev *dev)
 	for (i = 0; i < NTB_MAX_IRQS; i++)
 		tasklet_kill(&dev->vbell_work[i]);
 
-	ntc_buf_free(dev->ntc,
-		     dev->vbell_buf_size,
-		     dev->vbell_buf,
-		     dev->vbell_buf_addr);
+	ntc_bidir_buf_free(&dev->vbell_buf);
 	kfree(dev->vbell_vec);
 }
 
@@ -128,25 +118,19 @@ u32 ntrdma_dev_vbell_next(struct ntrdma_dev *dev)
 }
 
 int ntrdma_dev_vbell_enable(struct ntrdma_dev *dev,
-			    u64 peer_vbell_buf_phys_addr,
-			    u32 peer_vbell_count)
+			const struct ntc_remote_buf_desc *vbell_ntc_buf_desc,
+			u32 peer_vbell_count)
 {
 	int rc;
 #ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 	int i;
 #endif
-	u64 vbell_peer_dma_addr;
+	struct ntc_remote_buf peer_vbell_buf;
 
-	vbell_peer_dma_addr = ntc_resource_map(dev->ntc,
-			peer_vbell_buf_phys_addr,
-			peer_vbell_count * sizeof(*dev->vbell_buf),
-			DMA_FROM_DEVICE,
-			IOAT_DEV_ACCESS);
-
-	if (unlikely(!vbell_peer_dma_addr)) {
-		rc = -EIO;
+	rc = ntc_remote_buf_map(&peer_vbell_buf, dev->ntc,
+				vbell_ntc_buf_desc);
+	if (rc < 0)
 		goto err_map;
-	}
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	spin_lock_bh(&dev->vbell_peer_lock);
@@ -167,7 +151,7 @@ int ntrdma_dev_vbell_enable(struct ntrdma_dev *dev,
 		}
 #endif
 
-		dev->peer_vbell_buf_dma_addr = vbell_peer_dma_addr;
+		dev->peer_vbell_buf = peer_vbell_buf;
 		dev->peer_vbell_count = peer_vbell_count;
 	}
 	spin_unlock_bh(&dev->vbell_peer_lock);
@@ -180,12 +164,7 @@ err_seq:
 	dev->vbell_enable = 0;
 	spin_unlock_bh(&dev->vbell_peer_lock);
 	spin_unlock_bh(&dev->vbell_self_lock);
-	ntc_resource_unmap(dev->ntc,
-			vbell_peer_dma_addr,
-			peer_vbell_count * sizeof(*dev->vbell_buf),
-			DMA_FROM_DEVICE,
-			IOAT_DEV_ACCESS);
-
+	ntc_remote_buf_unmap(&peer_vbell_buf);
 #endif
 err_map:
 	return rc;
@@ -194,30 +173,27 @@ err_map:
 void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev)
 {
 	int i;
+	u32 *vbell_buf;
 
-	if (dev->peer_vbell_buf_dma_addr) {
-		ntc_resource_unmap(dev->ntc,
-				dev->peer_vbell_buf_dma_addr,
-				dev->peer_vbell_count * sizeof(*dev->vbell_buf),
-				DMA_FROM_DEVICE,
-				IOAT_DEV_ACCESS);
-	}
+	ntc_remote_buf_unmap(&dev->peer_vbell_buf);
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	spin_lock_bh(&dev->vbell_peer_lock);
 	{
 		dev->vbell_enable = 0;
-
+		vbell_buf = ntc_bidir_buf_deref(&dev->vbell_buf, 0,
+						dev->vbell_count * sizeof(u32));
 		for (i = 0; i < dev->vbell_count; ++i) {
 			ntrdma_vbell_head_reset(&dev->vbell_vec[i]);
-			dev->vbell_buf[i] = 0;
+			vbell_buf[i] = 0;
 		}
+		ntc_bidir_buf_unref(&dev->vbell_buf, 0,
+				dev->vbell_count * sizeof(u32));
 
 #ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 		kfree(dev->vbell_peer_seq);
 		dev->vbell_peer_seq = NULL;
 #endif
-		dev->peer_vbell_buf_dma_addr = 0;
 		dev->peer_vbell_count = 0;
 	}
 	spin_unlock_bh(&dev->vbell_peer_lock);
@@ -256,18 +232,21 @@ void ntrdma_dev_vbell_reset(struct ntrdma_dev *dev)
 static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 {
 	struct ntrdma_vbell_head *head;
-	u32 *buf;
+	const u32 *vbell_buf;
+	u32 vbell_val;
 	int i;
 
 	ntrdma_vdbg(dev, "vbell work\n");
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	{
+		vbell_buf = ntc_bidir_buf_const_deref(&dev->vbell_buf, 0,
+						dev->vbell_count * sizeof(u32));
 		for (i = 0; i < dev->vbell_count; ++i) {
 			head = &dev->vbell_vec[i];
-			buf = &dev->vbell_buf[i];
-			if (ntrdma_vbell_cond(head->seq, *buf)) {
-				ntrdma_vbell_update_head(head->seq, *buf);
+			vbell_val = vbell_buf[i];
+			if (ntrdma_vbell_cond(head->seq, vbell_val)) {
+				ntrdma_vbell_update_head(head->seq, vbell_val);
 				ntrdma_vbell_head_fire(head);
 			}
 		}
@@ -363,20 +342,21 @@ int ntrdma_dev_vbell_add_clear(struct ntrdma_dev *dev,
 }
 
 void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
-			   void *req, u32 idx)
+			struct dma_chan *req, u32 idx)
 {
-	u64 dst;
-	u32 val;
+	int rc;
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	{
 		if (dev->vbell_enable) {
-			dst = dev->peer_vbell_buf_dma_addr + idx * sizeof(u32);
-			val = ntrdma_vbell_update_peer(dev, idx);
-
-			ntc_req_imm32(dev->ntc, req,
-				      dst, val, true,
-				      NULL, NULL);
+			rc = ntc_request_imm32(req,
+					&dev->peer_vbell_buf, idx * sizeof(u32),
+					ntrdma_vbell_update_peer(dev, idx),
+					true, NULL, NULL);
+			if (rc < 0)
+				ntrdma_err(dev,
+					"ntc_request_imm32 failed. rc=%d\n",
+					rc);
 		}
 	}
 	spin_unlock_bh(&dev->vbell_self_lock);

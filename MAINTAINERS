@@ -1,0 +1,14 @@
+NTC DRIVER FOR NTB
+M:	Leonid Ravich <Leonid.Ravich@dell.com>
+M:	Eyal BenNer <Eyal.BenNer@dell.com>
+M:	Alexander Barabash <Alexander.Barabash@dell.com>
+M:	Yuval Berger <Yuval.Berger@dell.com>
+S:	Maintained
+F:	include/linux/ntc.h
+F:	include/linux/ntc_mm.h
+F:	include/linux/ntc_internal.h
+F:	include/linux/ntc_trace.h
+F:	drivers/ntc/ntc.c
+F:	drivers/ntc/ntc_ntb_msi.c
+F:	drivers/ntc/ntc_phys.c
+F:	drivers/ntc/Makefile

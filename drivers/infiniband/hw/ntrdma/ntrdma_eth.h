@@ -39,16 +39,11 @@
 #include "ntrdma.h"
 #include "ntrdma_ring.h"
 
-struct ntrdma_eth_qe {
-	u64				addr;
-	u64				len;
-};
-
 struct ntrdma_eth {
 	struct napi_struct		napi;
 	struct ntrdma_dev		*dev;
 
-	void				*req;
+	struct dma_chan			*req;
 
 	bool				enable;
 	bool				ready; /* FIXME: dev enable common */
@@ -63,19 +58,14 @@ struct ntrdma_eth {
 
 	/* ethernet rx ring buffers */
 
-	void				**rx_buf;
-	struct ntrdma_eth_qe		*rx_wqe_buf;
-	u64				rx_wqe_buf_dma_addr;
-	size_t				rx_wqe_buf_size;
-	struct ntrdma_eth_qe		*rx_cqe_buf;
-	u64				rx_cqe_buf_addr;
-	size_t				rx_cqe_buf_size;
+	struct ntc_export_buf		*rx_buf;
+	struct ntc_local_buf		rx_wqe_buf;
+	struct ntc_export_buf		rx_cqe_buf;
 
-	u32				*rx_cons_buf;
-	u64				rx_cons_buf_addr;
+	struct ntc_bidir_buf		rx_cons_buf;
 
-	u64				peer_tx_wqe_buf_dma_addr;
-	u64				peer_tx_prod_buf_dma_addr;
+	struct ntc_remote_buf		peer_tx_wqe_buf;
+	struct ntc_remote_buf		peer_tx_prod_buf;
 
 	/* ethernet tx ring indices */
 
@@ -85,18 +75,13 @@ struct ntrdma_eth {
 
 	/* ethernet tx ring buffers */
 
-	struct ntrdma_eth_qe		*tx_wqe_buf;
-	u64				tx_wqe_buf_addr;
-	size_t				tx_wqe_buf_size;
-	struct ntrdma_eth_qe		*tx_cqe_buf;
-	u64				tx_cqe_buf_addr;
-	size_t				tx_cqe_buf_size;
+	struct ntc_export_buf		tx_wqe_buf;
+	struct ntc_local_buf		tx_cqe_buf;
 
-	u32				*tx_prod_buf;
-	u64				tx_prod_buf_addr;
+	struct ntc_export_buf		tx_prod_buf;
 
-	u64				peer_rx_cqe_buf_dma_addr;
-	u64				peer_rx_cons_buf_dma_addr;
+	struct ntc_remote_buf		peer_rx_cqe_buf;
+	struct ntc_remote_buf		peer_rx_cons_buf;
 	u32				peer_vbell_idx;
 
 	/* one at a time each: poster, producer, consumer, completer */
@@ -112,6 +97,9 @@ struct ntrdma_eth {
 	bool	is_hello_done;
 	bool	is_hello_prep;
 };
+
+inline u32 ntrdma_eth_tx_prod(struct ntrdma_eth *eth);
+inline u32 ntrdma_eth_rx_cons(struct ntrdma_eth *eth);
 
 #define ntrdma_napi_eth(__napi) \
 	container_of(__napi, struct ntrdma_eth, napi)

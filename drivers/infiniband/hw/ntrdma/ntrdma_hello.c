@@ -57,7 +57,7 @@ struct ntrdma_hello_phase2 {
 	u32				phase_magic;
 
 	/* virtual doorbells */
-	u64				vbell_addr;
+	struct ntc_remote_buf_desc	vbell_ntc_buf_desc;
 	u32				vbell_count;
 	u32				vbell_reserved;
 
@@ -91,8 +91,8 @@ static void ntrdma_buff_supported_versions(struct ntrdma_hello_phase1 *buff)
 }
 
 int ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
-				void *in_buf, size_t in_size,
-				void *out_buf, size_t out_size)
+			const void *in_buf, size_t in_size,
+			void *out_buf, size_t out_size)
 {
 	struct ntrdma_hello_phase1 *out = out_buf;
 	if (sizeof(struct ntrdma_hello_phase1) > out_size)
@@ -104,8 +104,8 @@ int ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
 }
 
 static inline u32 ntrdma_version_choose(struct ntrdma_dev *dev,
-		struct ntrdma_hello_phase1 *v1,
-		struct ntrdma_hello_phase1 *v2)
+					const struct ntrdma_hello_phase1 *v1,
+					const struct ntrdma_hello_phase1 *v2)
 {
 	int i, j;
 
@@ -127,10 +127,10 @@ static inline u32 ntrdma_version_choose(struct ntrdma_dev *dev,
 
 
 int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
-				void *in_buf, size_t in_size,
-				void *out_buf, size_t out_size)
+			const void *in_buf, size_t in_size,
+			void *out_buf, size_t out_size)
 {
-	struct ntrdma_hello_phase1 *in;
+	const struct ntrdma_hello_phase1 *in;
 	struct ntrdma_hello_phase1 local;
 	struct ntrdma_hello_phase2 *out;
 
@@ -158,7 +158,7 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	out->phase_magic = NTRDMA_V1_P2_MAGIC;
 
 	/* virtual doorbells */
-	out->vbell_addr = dev->vbell_buf_addr;
+	ntc_bidir_buf_make_desc(&out->vbell_ntc_buf_desc, &dev->vbell_buf);
 	out->vbell_count = dev->vbell_count;
 	out->vbell_reserved = 0;
 
@@ -170,10 +170,10 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 }
 
 int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
-				void *in_buf, size_t in_size,
-				void *out_buf, size_t out_size)
+			const void *in_buf, size_t in_size,
+			void *out_buf, size_t out_size)
 {
-	struct ntrdma_hello_phase2 *in;
+	const struct ntrdma_hello_phase2 *in;
 	struct ntrdma_hello_phase3 *out;
 	int rc;
 
@@ -197,11 +197,14 @@ int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 		ntrdma_err(dev, "vbell_count %d\n", in->vbell_count);
 		return -EINVAL;
 	}
+	if (in->vbell_count > in->vbell_ntc_buf_desc.size / sizeof(u32)) {
+		ntrdma_err(dev, "vbell_count %d vbell_ntc_buf_desc.size %lld\n",
+			in->vbell_count, in->vbell_ntc_buf_desc.size);
+		return -EINVAL;
+	}
 
-	rc = ntrdma_dev_vbell_enable(dev,
-				     ntc_peer_addr(dev->ntc,
-						   in->vbell_addr),
-				     in->vbell_count);
+	rc = ntrdma_dev_vbell_enable(dev, &in->vbell_ntc_buf_desc,
+				in->vbell_count);
 	if (rc) {
 		ntrdma_err(dev, "failed to enable vbell rc %d\n", rc);
 		return rc;
@@ -224,10 +227,10 @@ int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 }
 
 int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
-				void *in_buf, size_t in_size,
-				void *out_buf, size_t out_size)
+			const void *in_buf, size_t in_size,
+			void *out_buf, size_t out_size)
 {
-	struct ntrdma_hello_phase3 *in;
+	const struct ntrdma_hello_phase3 *in;
 	int rc;
 
 	if (in_size < sizeof(*in))
@@ -258,7 +261,7 @@ int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 
 int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase)
 {
-	void *in_buf;
+	const void *in_buf;
 	void *out_buf;
 	int in_size = dev->hello_local_buf_size/2;
 	int out_size = dev->hello_peer_buf_size/2;

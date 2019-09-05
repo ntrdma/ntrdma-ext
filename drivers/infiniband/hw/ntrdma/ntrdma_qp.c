@@ -60,17 +60,20 @@ struct ntrdma_qp_cmd_cb {
 	container_of(__cb, struct ntrdma_qp_cmd_cb, cb)
 
 static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct ntrdma_req *req);
+				 union ntrdma_cmd *cmd, struct dma_chan *req);
 static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_rsp *rsp, struct ntrdma_req *req);
+				const union ntrdma_rsp *rsp,
+				struct dma_chan *req);
 static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct ntrdma_req *req);
+				 union ntrdma_cmd *cmd, struct dma_chan *req);
 static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_rsp *rsp, struct ntrdma_req *req);
+				const union ntrdma_rsp *rsp,
+				struct dma_chan *req);
 static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_cmd *cmd, struct ntrdma_req *req);
+				  union ntrdma_cmd *cmd, struct dma_chan *req);
 static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_rsp *rsp, struct ntrdma_req *req);
+				const union ntrdma_rsp *rsp,
+				struct dma_chan *req);
 
 static int ntrdma_qp_enable(struct ntrdma_res *res);
 static int ntrdma_qp_disable(struct ntrdma_res *res);
@@ -132,16 +135,20 @@ static int ntrdma_qp_poll_recv_start_and_get(struct ntrdma_poll *poll,
 					     u32 *base);
 static void ntrdma_qp_poll_recv_put_and_done(struct ntrdma_poll *poll,
 					     u32 pos, u32 base);
-static struct ntrdma_cqe *ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
-						  struct ntrdma_cqe *abort_cqe, u32 pos);
+static
+const struct ntrdma_cqe *ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
+						struct ntrdma_cqe *abort_cqe,
+						u32 pos);
 
 static int ntrdma_qp_poll_send_start_and_get(struct ntrdma_poll *poll,
 					     struct ntrdma_qp **pqp, u32 *pos, u32 *end,
 					     u32 *base);
 static void ntrdma_qp_poll_send_put_and_done(struct ntrdma_poll *poll,
 					     u32 pos, u32 base);
-static struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
-						  struct ntrdma_cqe *abort_cqe, u32 pos);
+static
+const struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
+						struct ntrdma_cqe *abort_cqe,
+						u32 pos);
 
 static void ntrdma_qp_recv_work(struct ntrdma_qp *qp);
 static void ntrdma_qp_send_work(struct ntrdma_qp *qp);
@@ -151,9 +158,81 @@ static void ntrdma_qp_work_cb(unsigned long ptrhld);
 static void ntrdma_rqp_work_cb(unsigned long ptrhld);
 static void ntrdma_rqp_vbell_cb(void *ctx);
 static void ntrdma_send_fail(struct ntrdma_cqe *cqe,
-			     struct ntrdma_send_wqe *wqe, int op_status);
+			const struct ntrdma_send_wqe *wqe, int op_status);
 
 #define move_to_err_state(qp) move_to_err_state_d(qp, __func__, __LINE__)
+
+static inline const u32 *ntrdma_qp_send_cons_buf(struct ntrdma_qp *qp)
+{
+	return ntc_bidir_buf_const_deref(&qp->send_cqe_buf,
+					qp->send_cap *
+					sizeof(struct ntrdma_cqe),
+					sizeof(u32));
+}
+
+inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp)
+{
+	const u32 *send_cons_buf = ntrdma_qp_send_cons_buf(qp);
+
+	if (!send_cons_buf)
+		return 0;
+
+	return *send_cons_buf;
+}
+
+static inline void ntrdma_qp_set_send_cons(struct ntrdma_qp *qp, u32 send_cons)
+{
+	u32 *send_cons_buf;
+
+	send_cons_buf = ntc_bidir_buf_deref(&qp->send_cqe_buf,
+					qp->send_cap *
+					sizeof(struct ntrdma_cqe),
+					sizeof(u32));
+
+	if (!send_cons_buf)
+		return;
+
+	*send_cons_buf = send_cons;
+
+	ntc_bidir_buf_unref(&qp->send_cqe_buf,
+			qp->send_cap *
+			sizeof(struct ntrdma_cqe),
+			sizeof(u32));
+}
+
+static inline const u32 *ntrdma_rqp_send_prod_buf(struct ntrdma_rqp *rqp)
+{
+	return ntc_export_buf_const_deref(&rqp->send_wqe_buf,
+					rqp->send_cap * rqp->send_wqe_size,
+					sizeof(u32));
+}
+
+inline u32 ntrdma_rqp_send_prod(struct ntrdma_rqp *rqp)
+{
+	const u32 *send_prod_buf = ntrdma_rqp_send_prod_buf(rqp);
+
+	if (!send_prod_buf)
+		return 0;
+
+	return *send_prod_buf;
+}
+
+static inline const u32 *ntrdma_rqp_recv_prod_buf(struct ntrdma_rqp *rqp)
+{
+	return ntc_export_buf_const_deref(&rqp->recv_wqe_buf,
+					rqp->recv_cap * rqp->recv_wqe_size,
+					sizeof(u32));
+}
+
+inline u32 ntrdma_rqp_recv_prod(struct ntrdma_rqp *rqp)
+{
+	const u32 *recv_prod_buf = ntrdma_rqp_recv_prod_buf(rqp);
+
+	if (!recv_prod_buf)
+		return 0;
+
+	return *recv_prod_buf;
+}
 
 static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 		struct ntrdma_dev *dev,
@@ -163,6 +242,8 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 {
 	int rc;
 	int reserved_key = -1;
+	u32 send_cons = 0;
+	u64 send_cqes_total_size;
 
 	if (is_deinit)
 		goto deinit;
@@ -214,56 +295,23 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->send_cmpl = 0;
 
 	/* set up the send work queue buffer */
-	qp->send_wqe_buf_size = qp->send_cap * qp->send_wqe_size;
-
-	qp->send_wqe_buf = kzalloc_node(qp->send_wqe_buf_size,
-					GFP_KERNEL, dev->node);
-	if (!qp->send_wqe_buf) {
-		rc = -ENOMEM;
+	rc = ntc_local_buf_zalloc(&qp->send_wqe_buf, dev->ntc,
+				qp->send_cap * qp->send_wqe_size, GFP_KERNEL);
+	if (rc < 0)
 		goto err_send_wqe_buf;
-	}
-
-	/*Accessed by local (DMA)*/
-	qp->send_wqe_buf_addr = ntc_buf_map(dev->ntc,
-			qp->send_wqe_buf,
-			qp->send_wqe_buf_size,
-			DMA_TO_DEVICE,
-			IOAT_DEV_ACCESS);
-
-	if (!qp->send_wqe_buf_addr) {
-		rc = -EIO;
-		goto err_send_wqe_buf_addr;
-	}
 
 	/* set up the send completion queue buffer */
-	qp->send_cqe_buf_size = qp->send_cap * sizeof(struct ntrdma_cqe)
-		+ sizeof(*qp->send_cons_buf); /* space at end for cons buf */
-
-	qp->send_cqe_buf = kzalloc_node(qp->send_cqe_buf_size,
-					GFP_KERNEL, dev->node);
-	if (!qp->send_cqe_buf) {
-		rc = -ENOMEM;
+	send_cqes_total_size = qp->send_cap * sizeof(struct ntrdma_cqe);
+	rc = ntc_bidir_buf_zalloc_init(&qp->send_cqe_buf, dev->ntc,
+				send_cqes_total_size
+				+ sizeof(u32), /* for send_cons */
+				GFP_KERNEL, &send_cons, sizeof(u32),
+				send_cqes_total_size);
+	if (rc < 0)
 		goto err_send_cqe_buf;
-	}
-
-	qp->send_cons_buf = (void *)(qp->send_cqe_buf
-				     + qp->send_cap * sizeof(struct ntrdma_cqe));
-
-	*qp->send_cons_buf = 0;
-
-	qp->send_cqe_buf_addr = ntc_buf_map(dev->ntc,
-					    qp->send_cqe_buf,
-					    qp->send_cqe_buf_size,
-					    DMA_FROM_DEVICE,
-						NTB_DEV_ACCESS);
-	if (!qp->send_cqe_buf_addr) {
-		rc = -EIO;
-		goto err_send_cqe_buf_addr;
-	}
 
 	/* peer rqp send queue is zero until enabled */
-	qp->peer_send_wqe_buf_dma_addr = 0;
-	qp->peer_send_prod_dma_addr = 0;
+	ntc_remote_buf_clear(&qp->peer_send_wqe_buf);
 	qp->peer_send_vbell_idx = 0;
 
 	/* set up the recv work ring */
@@ -274,24 +322,10 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->recv_cmpl = 0;
 
 	/* set up the recv work queue buffer */
-	qp->recv_wqe_buf_size = qp->recv_cap * qp->recv_wqe_size;
-
-	qp->recv_wqe_buf = kzalloc_node(qp->recv_wqe_buf_size,
-					GFP_KERNEL, dev->node);
-	if (!qp->recv_wqe_buf) {
-		rc = -ENOMEM;
+	rc = ntc_local_buf_zalloc(&qp->recv_wqe_buf, dev->ntc,
+				qp->recv_cap * qp->recv_wqe_size, GFP_KERNEL);
+	if (rc < 0)
 		goto err_recv_wqe_buf;
-	}
-
-	qp->recv_wqe_buf_addr = ntc_buf_map(dev->ntc,
-					    qp->recv_wqe_buf,
-					    qp->recv_wqe_buf_size,
-					    DMA_TO_DEVICE,
-						IOAT_DEV_ACCESS);
-	if (!qp->recv_wqe_buf_addr) {
-		rc = -EIO;
-		goto err_recv_wqe_buf_addr;
-	}
 
 	/* set up the recv completion queue buffer */
 	qp->recv_cqe_buf_size = qp->recv_cap * sizeof(struct ntrdma_cqe);
@@ -304,8 +338,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	}
 
 	/* peer rqp recv queue is zero until enabled */
-	qp->peer_recv_wqe_buf_dma_addr = 0;
-	qp->peer_recv_prod_dma_addr = 0;
+	ntc_remote_buf_clear(&qp->peer_recv_wqe_buf);
 
 	/* initialize synchronization */
 	mutex_init(&qp->send_post_lock);
@@ -334,35 +367,11 @@ deinit:
 	kfree(qp->recv_cqe_buf);
 	qp->recv_cqe_buf = 0;
 err_recv_cqe_buf:
-	ntc_buf_unmap(dev->ntc,
-			qp->recv_wqe_buf_addr,
-			qp->recv_wqe_buf_size,
-			DMA_TO_DEVICE,
-			IOAT_DEV_ACCESS);
-	qp->recv_wqe_buf_addr = 0;
-err_recv_wqe_buf_addr:
-	kfree(qp->recv_wqe_buf);
-	qp->recv_wqe_buf = 0;
+	ntc_local_buf_free(&qp->recv_wqe_buf);
 err_recv_wqe_buf:
-	ntc_buf_unmap(dev->ntc,
-			qp->send_cqe_buf_addr,
-			qp->send_cqe_buf_size,
-			DMA_FROM_DEVICE,
-			NTB_DEV_ACCESS);
-	qp->send_cqe_buf_addr = 0;
-err_send_cqe_buf_addr:
-	kfree(qp->send_cqe_buf);
-	qp->send_cqe_buf = 0;
+	ntc_bidir_buf_free(&qp->send_cqe_buf);
 err_send_cqe_buf:
-	ntc_buf_unmap(dev->ntc,
-		      qp->send_wqe_buf_addr,
-		      qp->send_wqe_buf_size,
-		      DMA_TO_DEVICE,
-			  IOAT_DEV_ACCESS);
-	qp->send_wqe_buf_addr = 0;
-err_send_wqe_buf_addr:
-	kfree(qp->send_wqe_buf);
-	qp->send_wqe_buf = 0;
+	ntc_local_buf_free(&qp->send_wqe_buf);
 err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
 	ntrdma_cq_put(qp->recv_cq);
@@ -388,19 +397,20 @@ void ntrdma_qp_deinit(struct ntrdma_qp *qp)
 struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
 					   u32 pos)
 {
-	return (void *)(qp->send_wqe_buf + pos * qp->send_wqe_size);
+	return ntc_local_buf_deref(&qp->send_wqe_buf) + pos * qp->send_wqe_size;
 }
 
-struct ntrdma_cqe *ntrdma_qp_send_cqe(struct ntrdma_qp *qp,
-				      u32 pos)
+const struct ntrdma_cqe *ntrdma_qp_send_cqe(struct ntrdma_qp *qp, u32 pos)
 {
-	return (void *)(qp->send_cqe_buf + pos * sizeof(struct ntrdma_cqe));
+	return ntc_bidir_buf_const_deref(&qp->send_cqe_buf,
+					pos * sizeof(struct ntrdma_cqe),
+					sizeof(struct ntrdma_cqe));
 }
 
 struct ntrdma_recv_wqe *ntrdma_qp_recv_wqe(struct ntrdma_qp *qp,
 					   u32 pos)
 {
-	return (void *)(qp->recv_wqe_buf + pos * qp->recv_wqe_size);
+	return ntc_local_buf_deref(&qp->recv_wqe_buf) + pos * qp->recv_wqe_size;
 }
 
 struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,
@@ -438,7 +448,7 @@ err:
 }
 
 static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct ntrdma_req *req)
+				 union ntrdma_cmd *cmd, struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -458,7 +468,8 @@ static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
 }
 
 static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_rsp *rsp, struct ntrdma_req *req)
+				const union ntrdma_rsp *rsp,
+				struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -529,7 +540,7 @@ err:
 }
 
 static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct ntrdma_req *req)
+				 union ntrdma_cmd *cmd, struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -547,120 +558,56 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 	cmd->qp_create.recv_ring_idx = qp->recv_cons;
 	cmd->qp_create.send_wqe_cap = qp->send_cap;
 	cmd->qp_create.send_wqe_sg_cap = qp->send_wqe_sg_cap;
-	cmd->qp_create.send_ring_idx = *qp->send_cons_buf;
-	cmd->qp_create.send_cqe_buf_addr = qp->send_cqe_buf_addr;
-	cmd->qp_create.send_cons_addr = qp->send_cqe_buf_addr
-		+ qp->send_cap * sizeof(struct ntrdma_cqe);
+	cmd->qp_create.send_ring_idx = ntrdma_qp_send_cons(qp);
+	ntc_bidir_buf_make_desc(&cmd->qp_create.send_cqe_buf_desc,
+				&qp->send_cqe_buf);
+	cmd->qp_create.send_cons_shift =
+		qp->send_cap * sizeof(struct ntrdma_cqe);
 	cmd->qp_create.cmpl_vbell_idx = qp->send_cq->vbell_idx;
 
 	return 0;
 }
 
 static int ntrdma_qp_enable_disable_cmpl_common(struct ntrdma_qp *qp,
-		struct ntrdma_dev *dev, union ntrdma_rsp *rsp,
-		int is_disable)
+						const struct ntrdma_dev *dev,
+						const union ntrdma_rsp *rsp,
+						int is_disable)
 {
 	int rc;
-	u64 peer_recv_wqe_buf_phys_addr;
-	u64 peer_recv_prod_phys_addr;
-	u64 peer_send_wqe_buf_phys_addr;
-	u64 peer_send_prod_phys_addr;
 
 	if (is_disable)
 		goto disable;
 
-	peer_recv_wqe_buf_phys_addr =
-		ntc_peer_addr(dev->ntc, rsp->qp_create.recv_wqe_buf_addr);
-	peer_recv_prod_phys_addr =
-		ntc_peer_addr(dev->ntc, rsp->qp_create.recv_prod_addr);
-	peer_send_wqe_buf_phys_addr =
-		ntc_peer_addr(dev->ntc, rsp->qp_create.send_wqe_buf_addr);
-	peer_send_prod_phys_addr =
-		ntc_peer_addr(dev->ntc, rsp->qp_create.send_prod_addr);
+	rc = ntc_remote_buf_map(&qp->peer_recv_wqe_buf, dev->ntc,
+				&rsp->qp_create.recv_wqe_buf_desc);
+	if (rc < 0)
+		goto err_peer_recv_wqe_buf;
 
-	qp->peer_recv_wqe_buf_dma_addr =
-		ntc_resource_map(dev->ntc,
-				peer_recv_wqe_buf_phys_addr,
-				qp->recv_wqe_buf_size,
-				DMA_FROM_DEVICE,
-				IOAT_DEV_ACCESS);
-	if (unlikely(!qp->peer_recv_wqe_buf_dma_addr)) {
-		rc = -EIO;
-		goto err_peer_recv_wqe_buf_dma_addr;
-	}
+	qp->peer_recv_prod_shift = rsp->qp_create.recv_prod_shift;
 
-	qp->peer_recv_prod_dma_addr =
-		ntc_resource_map(dev->ntc,
-				peer_recv_prod_phys_addr,
-				sizeof(u32),
-				DMA_FROM_DEVICE,
-				IOAT_DEV_ACCESS);
-	if (unlikely(!qp->peer_recv_prod_dma_addr)) {
-		rc = -EIO;
-		goto err_peer_recv_prod_dma_addr;
-	}
+	rc = ntc_remote_buf_map(&qp->peer_send_wqe_buf, dev->ntc,
+				&rsp->qp_create.send_wqe_buf_desc);
+	if (rc < 0)
+		goto err_peer_send_wqe_buf;
 
-	qp->peer_send_wqe_buf_dma_addr =
-		ntc_resource_map(dev->ntc,
-				peer_send_wqe_buf_phys_addr,
-				qp->send_wqe_buf_size,
-				DMA_FROM_DEVICE,
-				IOAT_DEV_ACCESS);
-	if (unlikely(!qp->peer_send_wqe_buf_dma_addr)) {
-		rc = -EIO;
-		goto err_peer_send_wqe_buf_dma_addr;
-	}
-
-	qp->peer_send_prod_dma_addr =
-		ntc_resource_map(dev->ntc,
-				peer_send_prod_phys_addr,
-				sizeof(u32),
-				DMA_FROM_DEVICE,
-				IOAT_DEV_ACCESS);
-	if (unlikely(!qp->peer_send_prod_dma_addr)) {
-		rc = -EIO;
-		goto err_peer_send_prod_dma_addr;
-	}
+	qp->peer_send_prod_shift = rsp->qp_create.send_prod_shift;
 
 	qp->peer_send_vbell_idx = rsp->qp_create.send_vbell_idx;
 
 
 	return 0;
 disable:
-	ntc_resource_unmap(dev->ntc,
-			qp->peer_send_prod_dma_addr,
-			sizeof(u32),
-			DMA_FROM_DEVICE,
-			IOAT_DEV_ACCESS);
-	qp->peer_send_prod_dma_addr = 0;
-err_peer_send_prod_dma_addr:
-	ntc_resource_unmap(dev->ntc,
-			qp->peer_send_wqe_buf_dma_addr,
-			qp->send_wqe_buf_size,
-			DMA_FROM_DEVICE,
-			IOAT_DEV_ACCESS);
-	qp->peer_send_wqe_buf_dma_addr = 0;
-err_peer_send_wqe_buf_dma_addr:
-	ntc_resource_unmap(dev->ntc,
-			qp->peer_recv_prod_dma_addr,
-			sizeof(u32),
-			DMA_FROM_DEVICE,
-			IOAT_DEV_ACCESS);
-	qp->peer_recv_prod_dma_addr = 0;
-err_peer_recv_prod_dma_addr:
-	ntc_resource_unmap(dev->ntc,
-			qp->peer_recv_wqe_buf_dma_addr,
-			qp->recv_wqe_buf_size,
-			DMA_FROM_DEVICE,
-			IOAT_DEV_ACCESS);
-	qp->peer_recv_wqe_buf_dma_addr = 0;
-err_peer_recv_wqe_buf_dma_addr:
+	ntc_remote_buf_unmap(&qp->peer_send_wqe_buf);
+err_peer_send_wqe_buf:
+	ntc_remote_buf_unmap(&qp->peer_recv_wqe_buf);
+err_peer_recv_wqe_buf:
 	ntrdma_res_done_cmds(&qp->res);
 	return rc;
 }
 
 static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_rsp *rsp, struct ntrdma_req *req)
+				const union ntrdma_rsp *rsp,
+				struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -732,7 +679,7 @@ err:
 }
 
 static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_cmd *cmd, struct ntrdma_req *req)
+				  union ntrdma_cmd *cmd, struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -747,7 +694,8 @@ static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
 }
 
 static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_rsp *rsp, struct ntrdma_req *req)
+				const union ntrdma_rsp *rsp,
+				struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
@@ -794,15 +742,13 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	{
 		if (qp->ibqp.qp_type != IB_QPT_GSI)
 			move_to_err_state(qp);
-		qp->peer_recv_wqe_buf_dma_addr = 0;
-		qp->peer_recv_prod_dma_addr = 0;
+		ntc_remote_buf_clear(&qp->peer_recv_wqe_buf);
 	}
 	spin_unlock_bh(&qp->recv_prod_lock);
 
 	spin_lock_bh(&qp->send_prod_lock);
 	{
-		qp->peer_send_wqe_buf_dma_addr = 0;
-		qp->peer_send_prod_dma_addr = 0;
+		ntc_remote_buf_clear(&qp->peer_send_wqe_buf);
 		qp->peer_send_vbell_idx = 0;
 	}
 	spin_unlock_bh(&qp->send_prod_lock);
@@ -814,7 +760,7 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	if (qp->ibqp.qp_type == IB_QPT_GSI) {
 		ntrdma_qp_send_cmpl_start(qp);
 		ntrdma_ring_consume(qp->send_abort ? qp->send_post :
-				*qp->send_cons_buf, qp->send_cmpl,
+				ntrdma_qp_send_cons(qp), qp->send_cmpl,
 				qp->send_cap, &start, &end, &base);
 		ntrdma_qp_send_cmpl_done(qp);
 		if (start != end)
@@ -842,6 +788,10 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 		u32 key, int is_deinit)
 {
 	int rc;
+	u32 send_prod;
+	u64 send_wqes_total_size;
+	u32 recv_prod;
+	u64 recv_wqes_total_size;
 
 	if (is_deinit)
 		goto deinit;
@@ -868,59 +818,27 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	rqp->send_cons = attr->send_wqe_idx;
 
 	/* set up the send work queue buffer */
-
-	rqp->send_wqe_buf_size = rqp->send_cap * rqp->send_wqe_size
-		+ sizeof(*rqp->send_prod_buf); /* space at end for prod buf */
-
-	rqp->send_wqe_buf = kzalloc_node(rqp->send_wqe_buf_size,
-					 GFP_KERNEL, dev->node);
-	if (!rqp->send_wqe_buf) {
-		rc = -ENOMEM;
+	send_prod = attr->send_wqe_idx;
+	send_wqes_total_size = rqp->send_cap * rqp->send_wqe_size;
+	rc = ntc_export_buf_zalloc_init(&rqp->send_wqe_buf, dev->ntc,
+					send_wqes_total_size
+					+ sizeof(u32), /* for send_prod */
+					GFP_KERNEL, &send_prod, sizeof(u32),
+					send_wqes_total_size);
+	if (rc < 0)
 		goto err_send_wqe_buf;
-	}
-
-	rqp->send_prod_buf = (void *)(rqp->send_wqe_buf
-				      + rqp->send_cap * rqp->send_wqe_size);
-
-	*rqp->send_prod_buf = attr->send_wqe_idx;
-
-	/* Accessed by remote (NTB)*/
-	rqp->send_wqe_buf_addr = ntc_buf_map(dev->ntc,
-			rqp->send_wqe_buf,
-			rqp->send_wqe_buf_size,
-			DMA_FROM_DEVICE,
-			NTB_DEV_ACCESS);
-
-	if (!rqp->send_wqe_buf_addr) {
-		rc = -EIO;
-		goto err_send_wqe_buf_addr;
-	}
 
 	/* set up the send completion queue buffer */
-
-	rqp->send_cqe_buf_size = rqp->send_cap * sizeof(struct ntrdma_cqe);
-
-	rqp->send_cqe_buf = kzalloc_node(rqp->send_cqe_buf_size,
-					 GFP_KERNEL, dev->node);
-	if (!rqp->send_cqe_buf) {
-		rc = -ENOMEM;
+	rc = ntc_local_buf_zalloc(&rqp->send_cqe_buf, dev->ntc,
+				rqp->send_cap * sizeof(struct ntrdma_cqe),
+				GFP_KERNEL);
+	if (rc < 0)
 		goto err_send_cqe_buf;
-	}
-
-	rqp->send_cqe_buf_addr = ntc_buf_map(dev->ntc,
-					     rqp->send_cqe_buf,
-					     rqp->send_cqe_buf_size,
-					     DMA_TO_DEVICE,
-						 IOAT_DEV_ACCESS);
-	if (!rqp->send_cqe_buf_addr) {
-		rc = -EIO;
-		goto err_send_cqe_buf_addr;
-	}
 
 	/* peer qp send queue info is provided */
 
-	rqp->peer_send_cqe_buf_dma_addr = attr->peer_send_cqe_buf_dma_addr;
-	rqp->peer_send_cons_dma_addr = attr->peer_send_cons_dma_addr;
+	rqp->peer_send_cqe_buf = attr->peer_send_cqe_buf;
+	rqp->peer_send_cons_shift = attr->peer_send_cons_shift;
 	rqp->peer_cmpl_vbell_idx = attr->peer_cmpl_vbell_idx;
 
 	/* set up the recv work ring */
@@ -929,31 +847,15 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	rqp->recv_cons = attr->recv_wqe_idx;
 
 	/* set up the recv work queue buffer */
-
-	rqp->recv_wqe_buf_size = rqp->recv_cap * rqp->recv_wqe_size
-		+ sizeof(*rqp->recv_prod_buf); /* space at end for prod buf */
-
-	rqp->recv_wqe_buf = kzalloc_node(rqp->recv_wqe_buf_size,
-					 GFP_KERNEL, dev->node);
-	if (!rqp->recv_wqe_buf) {
-		rc = -ENOMEM;
+	recv_prod = attr->recv_wqe_idx;
+	recv_wqes_total_size = rqp->recv_cap * rqp->recv_wqe_size;
+	rc = ntc_export_buf_zalloc_init(&rqp->recv_wqe_buf, dev->ntc,
+					recv_wqes_total_size
+					+ sizeof(u32), /* for recv_prod */
+					GFP_KERNEL, &recv_prod, sizeof(u32),
+					recv_wqes_total_size);
+	if (rc < 0)
 		goto err_recv_wqe_buf;
-	}
-
-	rqp->recv_prod_buf = (u32 *)(rqp->recv_wqe_buf
-				     + rqp->recv_cap * rqp->recv_wqe_size);
-
-	*rqp->recv_prod_buf = attr->recv_wqe_idx;
-
-	rqp->recv_wqe_buf_addr = ntc_buf_map(dev->ntc,
-					     rqp->recv_wqe_buf,
-					     rqp->recv_wqe_buf_size,
-					     DMA_FROM_DEVICE,
-						 NTB_DEV_ACCESS);
-	if (!rqp->recv_wqe_buf_addr) {
-		rc = -EIO;
-		goto err_recv_wqe_buf_addr;
-	}
 
 	/* initialize synchronization */
 
@@ -973,35 +875,11 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	return 0;
 deinit:
 	tasklet_kill(&rqp->send_work);
-	ntc_buf_unmap(dev->ntc,
-			rqp->recv_wqe_buf_addr,
-			rqp->recv_wqe_buf_size,
-			DMA_FROM_DEVICE,
-			NTB_DEV_ACCESS);
-	rqp->recv_wqe_buf_addr = 0;
-err_recv_wqe_buf_addr:
-	kfree(rqp->recv_wqe_buf);
-	rqp->recv_wqe_buf = 0;
+	ntc_export_buf_free(&rqp->recv_wqe_buf);
 err_recv_wqe_buf:
-	ntc_buf_unmap(dev->ntc,
-			rqp->send_cqe_buf_addr,
-			rqp->send_cqe_buf_size,
-			DMA_TO_DEVICE,
-			IOAT_DEV_ACCESS);
-	rqp->send_cqe_buf_addr = 0;
-err_send_cqe_buf_addr:
-	kfree(rqp->send_cqe_buf);
-	rqp->send_cqe_buf = 0;
+	ntc_local_buf_free(&rqp->send_cqe_buf);
 err_send_cqe_buf:
-	ntc_buf_unmap(dev->ntc,
-			rqp->send_wqe_buf_addr,
-			rqp->send_wqe_buf_size,
-			DMA_FROM_DEVICE,
-			NTB_DEV_ACCESS);
-	rqp->send_wqe_buf_addr = 0;
-err_send_wqe_buf_addr:
-	kfree(rqp->send_wqe_buf);
-	rqp->send_wqe_buf = 0;
+	ntc_export_buf_free(&rqp->send_wqe_buf);
 err_send_wqe_buf:
 	ntrdma_rres_deinit(&rqp->rres);
 err_rres:
@@ -1034,26 +912,31 @@ void ntrdma_rqp_del(struct ntrdma_rqp *rqp)
 	ntrdma_debugfs_rqp_del(rqp);
 }
 
-struct ntrdma_recv_wqe *ntrdma_rqp_recv_wqe(struct ntrdma_rqp *rqp,
-					    u32 pos)
+const struct ntrdma_recv_wqe *ntrdma_rqp_recv_wqe(struct ntrdma_rqp *rqp,
+						u32 pos)
 {
-	return (void *)(rqp->recv_wqe_buf + pos * rqp->recv_wqe_size);
+	return ntc_export_buf_const_deref(&rqp->recv_wqe_buf,
+					pos * rqp->recv_wqe_size,
+					rqp->recv_wqe_size);
 }
 
-struct ntrdma_send_wqe *ntrdma_rqp_send_wqe(struct ntrdma_rqp *rqp,
-					    u32 pos)
+const struct ntrdma_send_wqe *ntrdma_rqp_send_wqe(struct ntrdma_rqp *rqp,
+						u32 pos)
 {
-	return (void *)(rqp->send_wqe_buf + pos * rqp->send_wqe_size);
+	return ntc_export_buf_const_deref(&rqp->send_wqe_buf,
+					pos * rqp->send_wqe_size,
+					rqp->send_wqe_size);
 }
 
 struct ntrdma_cqe *ntrdma_rqp_send_cqe(struct ntrdma_rqp *rqp,
 				       u32 pos)
 {
-	return (void *)(rqp->send_cqe_buf + pos * sizeof(struct ntrdma_cqe));
+	return ntc_local_buf_deref(&rqp->send_cqe_buf) +
+		pos * sizeof(struct ntrdma_cqe);
 }
 
 static void ntrdma_send_fail(struct ntrdma_cqe *cqe,
-			     struct ntrdma_send_wqe *wqe, int op_status)
+			const struct ntrdma_send_wqe *wqe, int op_status)
 {
 	cqe->ulp_handle = wqe->ulp_handle;
 	cqe->op_code = wqe->op_code;
@@ -1064,8 +947,8 @@ static void ntrdma_send_fail(struct ntrdma_cqe *cqe,
 }
 
 static void ntrdma_send_done(struct ntrdma_cqe *cqe,
-			     struct ntrdma_send_wqe *wqe,
-			     u32 rdma_len)
+			const struct ntrdma_send_wqe *wqe,
+			u32 rdma_len)
 {
 	cqe->ulp_handle = wqe->ulp_handle;
 	cqe->op_code = wqe->op_code;
@@ -1075,17 +958,48 @@ static void ntrdma_send_done(struct ntrdma_cqe *cqe,
 	cqe->flags = wqe->flags;
 }
 
+void ntrdma_recv_wqe_sync(struct ntrdma_recv_wqe *wqe)
+{
+	int i;
+
+	for (i = 0; i < wqe->sg_count; ++i) {
+		if (wqe->rcv_sg_list[i].key != NTRDMA_RESERVED_DMA_LEKY)
+			continue;
+
+		TRACE("DMA memcpy %#x bytes to %#lx virt %p\n",
+			(int)wqe->rcv_sg_list[i].exp_buf.size,
+			(long)wqe->rcv_sg_list[i].rcv_dma_buf.dma_addr,
+			phys_to_virt(wqe->rcv_sg_list[i].rcv_dma_buf.dma_addr));
+
+		memcpy(phys_to_virt(wqe->rcv_sg_list[i].rcv_dma_buf.dma_addr),
+			wqe->rcv_sg_list[i].exp_buf.ptr,
+			wqe->rcv_sg_list[i].exp_buf.size);
+	}
+}
+
+void ntrdma_recv_wqe_cleanup(struct ntrdma_recv_wqe *wqe)
+{
+	int i;
+
+	for (i = 0; i < wqe->sg_count; ++i)
+		if (wqe->rcv_sg_list[i].key == NTRDMA_RESERVED_DMA_LEKY)
+			ntc_export_buf_free(&wqe->rcv_sg_list[i].exp_buf);
+
+	wqe->sg_count = 0;
+}
+
 static void ntrdma_recv_fail(struct ntrdma_cqe *recv_cqe,
-			     struct ntrdma_recv_wqe *recv_wqe, int op_status)
+			struct ntrdma_recv_wqe *recv_wqe, int op_status)
 {
 	recv_cqe->ulp_handle = recv_wqe->ulp_handle;
 	recv_cqe->op_code = recv_wqe->op_code;
 	recv_cqe->op_status = op_status;
 	recv_cqe->rdma_len = 0;
 	recv_cqe->imm_data = 0;
+	ntrdma_recv_wqe_cleanup(recv_wqe);
 }
 
-static u16 ntrdma_send_recv_opcode(struct ntrdma_send_wqe *send_wqe)
+static u16 ntrdma_send_recv_opcode(const struct ntrdma_send_wqe *send_wqe)
 {
 	switch (send_wqe->op_code) {
 	case NTRDMA_WR_SEND_INV:
@@ -1098,7 +1012,7 @@ static u16 ntrdma_send_recv_opcode(struct ntrdma_send_wqe *send_wqe)
 	return NTRDMA_WR_RECV;
 }
 
-static u32 ntrdma_send_recv_len(struct ntrdma_send_wqe *send_wqe)
+static u32 ntrdma_send_recv_len(const struct ntrdma_send_wqe *send_wqe)
 {
 	switch (send_wqe->op_code) {
 	case NTRDMA_WR_SEND:
@@ -1109,7 +1023,7 @@ static u32 ntrdma_send_recv_len(struct ntrdma_send_wqe *send_wqe)
 	return 0;
 }
 
-static u32 ntrdma_send_recv_imm(struct ntrdma_send_wqe *send_wqe)
+static u32 ntrdma_send_recv_imm(const struct ntrdma_send_wqe *send_wqe)
 {
 	switch (send_wqe->op_code) {
 	case NTRDMA_WR_SEND_INV:
@@ -1121,14 +1035,16 @@ static u32 ntrdma_send_recv_imm(struct ntrdma_send_wqe *send_wqe)
 }
 
 static void ntrdma_recv_done(struct ntrdma_cqe *recv_cqe,
-			     struct ntrdma_recv_wqe *recv_wqe,
-			     struct ntrdma_send_wqe *send_wqe)
+			struct ntrdma_recv_wqe *recv_wqe,
+			const struct ntrdma_send_wqe *send_wqe)
 {
 	recv_cqe->ulp_handle = recv_wqe->ulp_handle;
 	recv_cqe->op_code = ntrdma_send_recv_opcode(send_wqe);
 	recv_cqe->op_status = NTRDMA_WC_SUCCESS;
 	recv_cqe->rdma_len = ntrdma_send_recv_len(send_wqe);
 	recv_cqe->imm_data = ntrdma_send_recv_imm(send_wqe);
+	ntrdma_recv_wqe_sync(recv_wqe);
+	ntrdma_recv_wqe_cleanup(recv_wqe);
 }
 
 int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp)
@@ -1177,8 +1093,8 @@ static int ntrdma_qp_recv_prod_start(struct ntrdma_qp *qp)
 	spin_lock_bh(&qp->recv_prod_lock);
 	if (!is_state_recv_ready(atomic_read(&qp->state))) {
 		dev = ntrdma_qp_dev(qp);
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
-				atomic_read(&qp->state));
+		ntrdma_info(dev, "qp %d state %d will retry", qp->res.key,
+			atomic_read(&qp->state));
 		spin_unlock_bh(&qp->recv_prod_lock);
 		return -EAGAIN;
 	}
@@ -1334,8 +1250,8 @@ static int ntrdma_qp_send_prod_start(struct ntrdma_qp *qp)
 	spin_lock_bh(&qp->send_prod_lock);
 	if (atomic_read(&qp->state) != IB_QPS_RTS) {
 		dev = ntrdma_qp_dev(qp);
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
-				atomic_read(&qp->state));
+		ntrdma_info(dev, "qp %d state %d will retry", qp->res.key,
+			atomic_read(&qp->state));
 		spin_unlock_bh(&qp->send_prod_lock);
 		return -EAGAIN;
 	}
@@ -1381,10 +1297,10 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 	if (qp->send_abort) {
 		TRACE("qp %d (already in abort)\n", qp->res.key);
 		send_cons = qp->send_post;
-		*qp->send_cons_buf = send_cons;
+		ntrdma_qp_set_send_cons(qp, send_cons);
 	}
 	else
-		send_cons = *qp->send_cons_buf;
+		send_cons = ntrdma_qp_send_cons(qp);
 
 	ntrdma_ring_consume(send_cons, qp->send_cmpl, qp->send_cap,
 			    pos, end, base);
@@ -1397,11 +1313,10 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 				qp->send_post);
 	}
 	if (qp->send_aborting && (*pos != *end))
-		TRACE(
-				"qp %p (res key: %d): send_bort %d, post %d, cons %d, cmpl %d, cap %d, pos %d, end %d, base %d\n",
+		TRACE("qp %p (res key: %d): send_abort %d, post %d, cons %d, cmpl %d, cap %d, pos %d, end %d, base %d\n",
 			qp, qp->res.key, qp->send_abort, qp->send_post,
-			*qp->send_cons_buf, qp->send_cmpl, qp->send_cap, *pos,
-			*end, *base);
+			ntrdma_qp_send_cons(qp), qp->send_cmpl, qp->send_cap,
+			*pos, *end, *base);
 }
 
 static void ntrdma_qp_send_cmpl_put(struct ntrdma_qp *qp,
@@ -1432,7 +1347,7 @@ static void ntrdma_rqp_recv_cons_done(struct ntrdma_rqp *rqp)
 static void ntrdma_rqp_recv_cons_get(struct ntrdma_rqp *rqp,
 				     u32 *pos, u32 *end, u32 *base)
 {
-	u32 recv_prod = *rqp->recv_prod_buf;
+	u32 recv_prod = ntrdma_rqp_recv_prod(rqp);
 
 	ntrdma_ring_consume(recv_prod, rqp->recv_cons, rqp->recv_cap,
 			    pos, end, base);
@@ -1451,7 +1366,8 @@ static int ntrdma_rqp_send_cons_start(struct ntrdma_rqp *rqp)
 	spin_lock_bh(&rqp->send_cons_lock);
 	if (!is_state_send_ready(rqp->state)) {
 		dev = ntrdma_rqp_dev(rqp);
-		ntrdma_err(dev, "rqp %d state %d\n", rqp->rres.key, rqp->state);
+		ntrdma_info(dev, "rqp %d state %d will retry",
+			rqp->rres.key, rqp->state);
 		spin_unlock_bh(&rqp->send_cons_lock);
 		return -EAGAIN;
 	}
@@ -1466,7 +1382,7 @@ static void ntrdma_rqp_send_cons_done(struct ntrdma_rqp *rqp)
 static void ntrdma_rqp_send_cons_get(struct ntrdma_rqp *rqp,
 				     u32 *pos, u32 *end, u32 *base)
 {
-	u32 send_prod = *rqp->send_prod_buf;
+	u32 send_prod = ntrdma_rqp_send_prod(rqp);
 
 	ntrdma_ring_consume(send_prod, rqp->send_cons, rqp->send_cap,
 			    pos, end, base);
@@ -1518,11 +1434,13 @@ static void ntrdma_qp_poll_recv_put_and_done(struct ntrdma_poll *poll,
 	ntrdma_qp_recv_cmpl_done(qp);
 }
 
-static struct ntrdma_cqe *ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
-						  struct ntrdma_cqe *abort_cqe, u32 pos)
+static
+const struct ntrdma_cqe *ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
+						struct ntrdma_cqe *abort_cqe,
+						u32 pos)
 {
 	struct ntrdma_qp *qp = ntrdma_recv_poll_qp(poll);
-	struct ntrdma_cqe *cqe = ntrdma_qp_recv_cqe(qp, pos);
+	const struct ntrdma_cqe *cqe = ntrdma_qp_recv_cqe(qp, pos);
 	struct ntrdma_recv_wqe *wqe = ntrdma_qp_recv_wqe(qp, pos);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	int opt;
@@ -1590,12 +1508,14 @@ static void ntrdma_qp_poll_send_put_and_done(struct ntrdma_poll *poll,
 	ntrdma_qp_send_cmpl_done(qp);
 }
 
-static struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
-						  struct ntrdma_cqe *abort_cqe, u32 pos)
+static
+const struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
+						struct ntrdma_cqe *abort_cqe,
+						u32 pos)
 {
 	struct ntrdma_qp *qp = ntrdma_send_poll_qp(poll);
-	struct ntrdma_cqe *cqe = ntrdma_qp_send_cqe(qp, pos);
-	struct ntrdma_send_wqe *wqe = ntrdma_qp_send_wqe(qp, pos);
+	const struct ntrdma_cqe *cqe = ntrdma_qp_send_cqe(qp, pos);
+	const struct ntrdma_send_wqe *wqe = ntrdma_qp_send_wqe(qp, pos);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	int opt;
 
@@ -1632,9 +1552,8 @@ static struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	struct ntrdma_req *req;
+	struct dma_chan *req;
 	u32 start, end, base;
-	u64 dst, src;
 	size_t off, len;
 	int rc;
 
@@ -1656,33 +1575,24 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	if (!req)
 		goto out;
 
-	/* sync the ring buffer for the device */
-	ntc_buf_sync_dev(dev->ntc,
-			qp->recv_wqe_buf_addr,
-			qp->recv_wqe_buf_size,
-			DMA_TO_DEVICE,
-			IOAT_DEV_ACCESS);
-
 	for (;;) {
 		ntrdma_qp_recv_prod_put(qp, end, base);
 
 		/* send the portion of the ring */
 		off = start * qp->recv_wqe_size;
 		len = (end - start) * qp->recv_wqe_size;
-		src = qp->recv_wqe_buf_addr + off;
-		dst = qp->peer_recv_wqe_buf_dma_addr + off;
-
-		rc = ntc_req_memcpy(dev->ntc, req,
-				dst, src, len,
-				true, NULL, NULL);
+		rc = ntc_request_memcpy_fenced(req,
+					&qp->peer_recv_wqe_buf, off,
+					&qp->recv_wqe_buf, off,
+					len);
 
 		TRACE("QP %d start %u end %u\n",
 				qp->res.key, start, end);
 
-		if (rc) {
+		if (rc < 0) {
 			ntrdma_err(dev,
-					"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
-					src, dst, len, rc);
+				"ntc_request_memcpy (len=%zu) error %d",
+				len, -rc);
 			break;
 		}
 
@@ -1692,10 +1602,11 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	}
 
 	/* send the prod idx */
-	ntc_req_imm32(dev->ntc, req,
-		      qp->peer_recv_prod_dma_addr,
-		      qp->recv_prod,
-		      true, NULL, NULL);
+	rc = ntc_request_imm32(req,
+			&qp->peer_recv_wqe_buf, qp->peer_recv_prod_shift,
+			qp->recv_prod, true, NULL, NULL);
+	if (rc < 0)
+		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d\n", rc);
 
 	/* submit the request */
 	ntc_req_submit(dev->ntc, req);
@@ -1709,14 +1620,15 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_rqp *rqp;
-	struct ntrdma_req *req;
+	struct dma_chan *req;
 	struct ntrdma_send_wqe *wqe;
-	struct ntrdma_recv_wqe *recv_wqe = NULL;
-	struct ntrdma_wr_sge rdma_sge;
+	const struct ntrdma_recv_wqe *recv_wqe = NULL;
+	u32 recv_wqe_recv_pos = 0;
+	struct ntrdma_wr_rcv_sge rdma_sge;
 	u32 start, pos, end, base;
 	u32 recv_pos, recv_end, recv_base;
+	u32 rcv_start_offset;
 	u32 rdma_len;
-	u64 dst, src;
 	size_t off, len;
 	int rc;
 	bool abort = false;
@@ -1785,7 +1697,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						"send but no recv QP %d, pos %u end %u base %u prod %u cons %u\n",
 						qp->res.key,
 						recv_pos, recv_end, recv_base,
-						*rqp->recv_prod_buf, rqp->recv_cons);
+						ntrdma_rqp_recv_prod(rqp),
+						rqp->recv_cons);
 
 #ifdef CONFIG_NTRDMA_RETRY_RECV
 				--pos;
@@ -1800,6 +1713,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				break;
 			}
 
+			recv_wqe_recv_pos = recv_pos;
 			recv_wqe = ntrdma_rqp_recv_wqe(rqp, recv_pos++);
 
 			if (recv_wqe->op_status) {
@@ -1836,22 +1750,31 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 		if (ntrdma_wr_code_push_data(wqe->op_code)) {
 			if (ntrdma_wr_code_is_rdma(wqe->op_code)) {
-				rdma_sge.addr = wqe->rdma_addr;
-				rdma_sge.len = ~(u32)0;
-				rdma_sge.key = wqe->rdma_key;
-
-				rc = ntrdma_zip_rdma(dev, req, &rdma_len,
-						     &rdma_sge, wqe->sg_list,
-						     1, wqe->sg_count,
-						     false);
+				if (wqe->rdma_key != NTRDMA_RESERVED_DMA_LEKY) {
+					rdma_sge.addr = wqe->rdma_addr;
+					rdma_sge.len = ~(u32)0;
+					rdma_sge.key = wqe->rdma_key;
+					/* From send to RDMA address. */
+					rc = ntrdma_zip_rdma(dev, req,
+							&rdma_len,
+							&rdma_sge,
+							wqe->snd_sg_list,
+							1, wqe->sg_count, 0);
+				} else
+					rc = -EINVAL;
 			} else {
-				if (qp->ibqp.qp_type == IB_QPT_GSI) {
-					recv_wqe->sg_list[0].addr += sizeof(struct ib_grh);
-				}
+				if (qp->ibqp.qp_type == IB_QPT_GSI)
+					rcv_start_offset =
+						sizeof(struct ib_grh);
+				else
+					rcv_start_offset = 0;
+				/* This goes from send to post recv */
 				rc = ntrdma_zip_rdma(dev, req, &rdma_len,
-						     recv_wqe->sg_list, wqe->sg_list,
-						     recv_wqe->sg_count, wqe->sg_count,
-						     false);
+						recv_wqe->rcv_sg_list,
+						wqe->snd_sg_list,
+						recv_wqe->sg_count,
+						wqe->sg_count,
+						rcv_start_offset);
 			}
 			if (rc) {
 				ntrdma_err(dev,
@@ -1885,27 +1808,15 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		goto done;
 	}
 
-	/* sync the ring buffer for the device */
-	ntc_buf_sync_dev(dev->ntc,
-			 qp->send_wqe_buf_addr,
-			 qp->send_wqe_buf_size,
-			 DMA_TO_DEVICE,
-			 IOAT_DEV_ACCESS);
-
 	/* send the portion of the ring */
 	off = start * qp->send_wqe_size;
 	len = (pos - start) * qp->send_wqe_size;
-	src = qp->send_wqe_buf_addr + off;
-	dst = qp->peer_send_wqe_buf_dma_addr + off;
-
-	rc = ntc_req_memcpy(dev->ntc, req,
-			dst, src, len,
-			true, NULL, NULL);
-
-	if (rc) {
+	rc = ntc_request_memcpy_fenced(req,
+				&qp->peer_send_wqe_buf, off,
+				&qp->send_wqe_buf, off, len);
+	if (rc < 0) {
 		ntrdma_err(dev,
-				"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d\n",
-				src, dst, len, rc);
+			"ntc_request_memcpy (len=%zu) error %d", len, -rc);
 
 		abort = true;
 		move_to_err_state(qp);
@@ -1914,16 +1825,12 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	this_cpu_add(dev_cnt.qp_send_work_bytes, len);
 
-		/* send the prod idx */
-	rc = ntc_req_imm32(dev->ntc, req,
-		      qp->peer_send_prod_dma_addr,
-		      qp->send_prod,
-		      true, NULL, NULL);
-
-	if (rc) {
-		ntrdma_err(dev,
-				"ntc_req_imm32 %#lx -> %#llx failed rc = %d\n",
-				qp->send_prod, qp->peer_send_prod_dma_addr, rc);
+	/* send the prod idx */
+	rc = ntc_request_imm32(req,
+			&qp->peer_send_wqe_buf, qp->peer_send_prod_shift,
+			qp->send_prod, true, NULL, NULL);
+	if (rc < 0) {
+		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d\n", rc);
 
 		abort = true;
 		move_to_err_state(qp);
@@ -1992,15 +1899,13 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 {
 	struct ntrdma_dev *dev = ntrdma_rqp_dev(rqp);
 	struct ntrdma_qp *qp;
-	struct ntrdma_req *req;
+	struct dma_chan *req;
 	struct ntrdma_cqe *cqe, *recv_cqe = NULL;
-	struct ntrdma_send_wqe *wqe;
+	const struct ntrdma_send_wqe *wqe;
 	struct ntrdma_recv_wqe *recv_wqe = NULL;
-	struct ntrdma_wr_sge rdma_sge;
+	struct ntrdma_wr_rcv_sge rdma_sge;
 	u32 start, pos, end, base;
 	u32 recv_pos, recv_end, recv_base;
-	u32 rdma_len;
-	u64 dst, src;
 	size_t off, len;
 	bool cue_recv = false;
 	int rc;
@@ -2010,9 +1915,10 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	/* verify the rqp state and lock for consuming sends */
 	rc = ntrdma_rqp_send_cons_start(rqp);
 	if (rc) {
-		ntrdma_err(dev,
-			"ntrdma_rqp_send_cons_start failed - rc = %d on rqp %p\n",
-			rc, rqp);
+		if (rc != -EAGAIN)
+			ntrdma_err(dev,
+				"ntrdma_rqp_send_cons_start error %d rqp=%p",
+				-rc, rqp);
 		return;
 	}
 
@@ -2144,14 +2050,17 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 		if (ntrdma_wr_code_push_data(wqe->op_code)) {
 			if (ntrdma_wr_code_is_rdma(wqe->op_code)) {
-				rdma_sge.addr = wqe->rdma_addr;
-				rdma_sge.len = wqe->rdma_len;
-				rdma_sge.key = wqe->rdma_key;
+				if (wqe->rdma_key != NTRDMA_RESERVED_DMA_LEKY) {
+					rdma_sge.addr = wqe->rdma_addr;
+					rdma_sge.len = wqe->rdma_len;
+					rdma_sge.key = wqe->rdma_key;
 
-				rc = ntrdma_zip_sync(dev, &rdma_sge, 1);
+					rc = ntrdma_zip_sync(dev, &rdma_sge, 1);
+				} else
+					rc = -EINVAL;
 			} else {
 				/* TODO: sync less than sg_count using rdma_len */
-				rc = ntrdma_zip_sync(dev, recv_wqe->sg_list,
+				rc = ntrdma_zip_sync(dev, recv_wqe->rcv_sg_list,
 						     recv_wqe->sg_count);
 			}
 
@@ -2166,19 +2075,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		}
 
 		if (ntrdma_wr_code_pull_data(wqe->op_code)) {
-			rdma_sge.addr = wqe->rdma_addr;
-			rdma_sge.len = ~(u32)0;
-			rdma_sge.key = wqe->rdma_key;
-
-			rc = ntrdma_zip_rdma(dev, req, &rdma_len,
-					     wqe->sg_list, &rdma_sge,
-					     wqe->sg_count, 1,
-					     true);
-
-			WARN_ON(rc);
-			/* FIXME: handle rdma read error */
-
-			ntrdma_send_done(cqe, wqe, rdma_len);
+			/* We do not support RDMA read. */
+			rc = -EINVAL;
+			ntrdma_send_fail(cqe, wqe, NTRDMA_WC_ERR_RDMA_ACCESS);
 		}
 
 		if (recv_pos == recv_end) {
@@ -2209,43 +2108,27 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		goto err_memcpy;
 	}
 
-	/* sync the ring buffer for the device */
-	ntc_buf_sync_dev(dev->ntc,
-			 rqp->send_cqe_buf_addr,
-			 rqp->send_cqe_buf_size,
-			 DMA_TO_DEVICE,
-			 IOAT_DEV_ACCESS);
-
 	/* send the portion of the ring */
 	off = start * sizeof(struct ntrdma_cqe);
 	len = (pos - start) * sizeof(struct ntrdma_cqe);
-	src = rqp->send_cqe_buf_addr + off;
-	dst = rqp->peer_send_cqe_buf_dma_addr + off;
-
-	rc = ntc_req_memcpy(dev->ntc, req,
-			dst, src, len,
-			true, NULL, NULL);
-
-	if (rc) {
+	rc = ntc_request_memcpy_fenced(req,
+				&rqp->peer_send_cqe_buf, off,
+				&rqp->send_cqe_buf, off, len);
+	if (rc < 0) {
 		ntrdma_err(dev,
-				"ntc_req_memcpy %#llx -> %#llx (%zu) failed rc = %d qp key %d\n",
-				src, dst, len, rc, rqp->qp_key);
+			"ntc_request_memcpy (len=%zu) error %d qp key %d",
+			len, -rc, rqp->qp_key);
 
 		goto err_memcpy;
 	}
 
 	this_cpu_add(dev_cnt.tx_cqes, pos - start);
 	/* send the cons idx */
-	rc = ntc_req_imm32(dev->ntc, req,
-		      rqp->peer_send_cons_dma_addr,
-		      rqp->send_cons,
-		      true, NULL, NULL);
-
-	if (rc) {
-		ntrdma_err(dev,
-			"ntc_req_imm32 %#lx -> %#llx failed rc = %d qp key %d\n",
-			rqp->send_cons, rqp->peer_send_cons_dma_addr,
-			rc, rqp->qp_key);
+	rc = ntc_request_imm32(req,
+			&rqp->peer_send_cqe_buf, rqp->peer_send_cons_shift,
+			rqp->send_cons, true, NULL, NULL);
+	if (rc < 0) {
+		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d\n", rc);
 		goto err_memcpy;
 	}
 
