@@ -443,7 +443,7 @@ void ntrdma_dev_eth_quiesce(struct ntrdma_dev *dev)
 static void ntrdma_eth_rx_fill(struct ntrdma_eth *eth)
 {
 	struct ntrdma_dev *dev = eth->dev;
-	void *req;
+	struct dma_chan *req;
 	size_t off, len;
 	u32 start, pos, end, base;
 	struct ntc_remote_buf_desc *rx_wqe_buf;
@@ -633,7 +633,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 {
 	struct ntrdma_eth *eth = ntrdma_net_eth(net);
 	struct ntrdma_dev *dev = eth->dev;
-	void *req;
+	struct dma_chan *req;
 	size_t off, len, tx_off;
 	u32 pos, end, base;
 	struct ntrdma_skb_cb *skb_ctx;

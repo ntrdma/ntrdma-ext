@@ -55,7 +55,7 @@ static void ntrdma_cmd_send_work_cb(struct work_struct *ws);
 static void ntrdma_cmd_send_vbell_cb(void *ctx);
 
 static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
-			   union ntrdma_rsp *rsp, void *req);
+			   union ntrdma_rsp *rsp, struct dma_chan *req);
 
 static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev);
 static void ntrdma_cmd_recv_work_cb(struct work_struct *ws);
@@ -483,7 +483,7 @@ static inline int ntrdma_cmd_send_vbell_add(struct ntrdma_dev *dev)
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 {
-	void *req;
+	struct dma_chan *req;
 	struct ntrdma_cmd_cb *cb;
 	u32 start, pos, end, base;
 	size_t off, len;
@@ -1118,7 +1118,7 @@ err_sanity:
 }
 
 static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
-			   union ntrdma_rsp *rsp, void *req)
+			union ntrdma_rsp *rsp, struct dma_chan *req)
 {
 	TRACE("CMD: received: op %d\n",
 			cmd->hdr.op);
@@ -1169,7 +1169,7 @@ static inline int ntrdma_cmd_recv_vbell_add(struct ntrdma_dev *dev)
 
 static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 {
-	void *req;
+	struct dma_chan *req;
 	u32 start, pos, end, base;
 	size_t off, len;
 	int rc;
