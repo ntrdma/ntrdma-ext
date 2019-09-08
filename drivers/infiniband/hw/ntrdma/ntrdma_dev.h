@@ -90,6 +90,7 @@ struct ntrdma_dev {
 
 	/* The non-transparent channel back end implementation */
 	struct ntc_dev			*ntc;
+	struct work_struct		ntc_link_reset_work;
 
 	/* debugfs */
 	struct dentry			*debug;
@@ -210,6 +211,8 @@ inline u32 ntrdma_dev_cmd_recv_prod(struct ntrdma_dev *dev);
 #define ntrdma_ib_dev(__ibdev) \
 	container_of(__ibdev, struct ntrdma_dev, ibdev)
 
+#define ntrdma_ntc_link_reset_work_dev(__ws) \
+	container_of(__ws, struct ntrdma_dev, ntc_link_reset_work)
 #define ntrdma_cmd_send_work_dev(__ws) \
 	container_of(__ws, struct ntrdma_dev, cmd_send_work)
 #define ntrdma_cmd_recv_work_dev(__ws) \

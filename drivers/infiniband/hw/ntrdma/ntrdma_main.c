@@ -148,7 +148,7 @@ static void ntrdma_remove(struct ntc_driver *self, struct ntc_dev *ntc)
 	device_remove_file((struct device *)&dev->ibdev.dev, &attr);
 	ntrdma_dev_ib_deinit(dev);
 	ntc_link_disable(ntc);
-	ntc_link_reset(dev->ntc);
+	ntc_link_reset(dev->ntc, SYNC_RESET);
 	/* Prevent callbacks from the lower layer */
 	ntc_clear_ctx(dev->ntc);
 	ntrdma_dev_deinit(dev);
