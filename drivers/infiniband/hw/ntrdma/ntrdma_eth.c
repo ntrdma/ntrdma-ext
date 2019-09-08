@@ -533,7 +533,7 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 	struct sk_buff *skb;
 	void *buf;
 	u64 rx_offset;
-	u64 len, rx_len;
+	u64 len, rx_len, buf_len;
 	u32 start, pos, end, base;
 	int count;
 	const struct ntc_remote_buf_desc *rx_cqe_buf;
@@ -569,19 +569,39 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 		rc = ntc_export_buf_get_part_params(&eth->rx_buf[pos],
 						&rx_cqe_buf[pos],
 						&rx_offset, &rx_len);
+		buf_len = rx_offset + rx_len + SKINFO_SIZE;
 
-		if (!rx_len || WARN_ON(rc < 0)) {
+		if (!rx_len || WARN_ON(rc < 0) ||
+			(buf_len > eth->rx_buf[pos].size)) {
 			ntc_export_buf_free(&eth->rx_buf[pos]);
 			eth->napi.dev->stats.rx_errors++;
 			eth->napi.dev->stats.rx_length_errors++;
-			TRACE("POLL ERROR: len %lu rx_len %lu rx_offset %lu.\n",
-				(long)len, (long)rx_len, (long)rx_offset);
+			TRACE("POLL ERROR: len %lu buf_len %lu.\n",
+				(long)len, (long)buf_len);
+			TRACE("POLL ERROR: rx_len %lu rx_offset %lu.\n",
+				(long)rx_len, (long)rx_offset);
+			ntrdma_info(dev, "POLL ERROR: len %lu buf_len %lu.\n",
+				(long)len, (long)buf_len);
+			ntrdma_info(dev,
+				"POLL ERROR: rx_len %lu rx_offset %lu.\n",
+				(long)rx_len, (long)rx_offset);
 			continue;
 		}
 
-		buf = ntc_export_buf_disown(&eth->rx_buf[pos]);
-		ntrdma_info(dev, "ATTN: buf %p len %ld rx_len %ld rx_offset %ld",
-			buf, (long)len, (long)rx_len, (long)rx_offset);
+		ntrdma_info(dev, "len %lu buf_len %lu rx_len %lu rx_offset %lu",
+			(long)len, (long)buf_len,
+			(long)rx_len, (long)rx_offset);
+		buf = kmalloc(buf_len, GFP_KERNEL);
+		if (!buf) {
+			ntc_export_buf_free(&eth->rx_buf[pos]);
+			eth->napi.dev->stats.rx_errors++;
+			eth->napi.dev->stats.rx_dropped++;
+			continue;
+		}
+		memcpy(buf, ntc_export_buf_const_deref(&eth->rx_buf[pos], 0,
+							buf_len), buf_len);
+		ntc_export_buf_free(&eth->rx_buf[pos]);
+
 		skb = build_skb(buf, 0);
 		if (!skb) {
 			kfree(buf);

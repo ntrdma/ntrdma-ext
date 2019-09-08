@@ -1241,27 +1241,6 @@ static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 }
 
 /**
- * ntc_export_buf_disown() - Mark the buffer memory as not owned
- *                           by the buffer and return pointer to it.
- *                           This memory must be kfree()-d.
- *
- * @buf:	Export buffer.
- *
- * After this, the memory will not be freed by ntc_export_buf_free().
- *
- * Return:	Pointer to the buffer's memory.
- */
-static inline void *ntc_export_buf_disown(struct ntc_export_buf *buf)
-{
-	void *ptr = buf->ptr;
-
-	buf->owned = false;
-	ntc_export_buf_free(buf);
-
-	return ptr;
-}
-
-/**
  * ntc_export_buf_make_desc() - Make serializable description of buffer.
  *
  * @desc:	OUTPUT buffer description, which can be sent to peer.
