@@ -50,6 +50,7 @@
 
 DEFINE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 EXPORT_PER_CPU_SYMBOL(dev_cnt);
+static void ntrdma_ntc_link_reset_cb(struct work_struct *ws);
 
 static int ntrdma_ntc_hello(void *ctx, int phase,
 				void *in_buf, size_t in_size,
@@ -159,6 +160,7 @@ int ntrdma_dev_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 	atomic_set(&dev->cq_num, 0);
 	atomic_set(&dev->mr_num, 0);
 	atomic_set(&dev->pd_num, 0);
+	INIT_WORK(&dev->ntc_link_reset_work, ntrdma_ntc_link_reset_cb);
 
 	return 0;
 
@@ -207,6 +209,7 @@ void ntrdma_dev_deinit(struct ntrdma_dev *dev)
 	ntrdma_dev_res_deinit(dev);
 	ntrdma_dev_cmd_deinit(dev);
 	ntrdma_dev_vbell_deinit(dev);
+	cancel_work_sync(&dev->ntc_link_reset_work);
 	ntrdma_info(dev, "Dev deinit finished\n");
 }
 
@@ -245,6 +248,14 @@ void ntrdma_dev_reset(struct ntrdma_dev *dev)
 	ntrdma_dev_vbell_reset(dev);
 }
 
+static void ntrdma_ntc_link_reset_cb(struct work_struct *ws)
+{
+	struct ntrdma_dev *dev;
+
+	dev = ntrdma_ntc_link_reset_work_dev(ws);
+	ntc_link_reset(dev->ntc, ASYNC_RESET);
+}
+
 void _ntrdma_unrecoverable_err(struct ntrdma_dev *dev,
 		const char *f)
 {
@@ -252,7 +263,7 @@ void _ntrdma_unrecoverable_err(struct ntrdma_dev *dev,
 	ntrdma_err(dev, "disabling NTB link...\n");
 	ntc_link_disable(dev->ntc);
 	ntrdma_err(dev, "NTB link disabled, resetting NTC state machine\n");
-	ntc_link_reset(dev->ntc);
+	schedule_work(&dev->ntc_link_reset_work);
 	ntrdma_err(dev, "NTC state machine reset finished\n");
 }
 

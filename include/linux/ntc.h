@@ -44,6 +44,8 @@
 
 #include "linux/ntc_trace.h"
 #define NTB_MAX_IRQS (64)
+#define SYNC_RESET 1
+#define ASYNC_RESET 0
 
 struct ntc_driver;
 struct ntc_dev;
@@ -388,14 +390,15 @@ int ntc_link_enable(struct ntc_dev *ntc);
 /**
  * ntc_link_reset() - reset the link
  * @ntc:	Device context.
+ * @wait	Sync reset.
  *
  * Tear down any active connection and coordinate renegotiating the connection
  * with the peer.
  *
  * Return: Zero on success, otherwise an error number.
  */
-int _ntc_link_reset(struct ntc_dev *ntc, const char *f);
-#define ntc_link_reset(_ntc) _ntc_link_reset(_ntc, __func__)
+int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *f);
+#define ntc_link_reset(_ntc, _wait) _ntc_link_reset(_ntc, _wait, __func__)
 
 /**
  * ntc_peer_addr() - transform a channel-mapped address into a peer address

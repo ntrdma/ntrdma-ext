@@ -952,45 +952,45 @@ int ntc_link_enable(struct ntc_dev *ntc)
 EXPORT_SYMBOL(ntc_link_enable);
 
 #define RESET_TIMEOUT (1000) /*1 sec*/
-int _ntc_link_reset(struct ntc_dev *ntc, const char *caller)
+int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
 	uint tmp_reset_cnt;
 	int ret;
 
-	dev_dbg(&dev->ntc.dev, "link reset requested by upper layer (%s)",
-		caller);
-
+	dev_dbg(&dev->ntc.dev, "link reset requested by upper layer\n");
 	mutex_lock(&dev->link_lock);
 
 	if (dev->link_state > NTC_NTB_LINK_START)
 		ntc_ntb_error(dev);
-
-	if (dev->link_state == NTC_NTB_LINK_START) {
-		mutex_unlock(&dev->link_lock);
-		dev_dbg(&dev->ntc.dev,
+	if (wait) {
+		if (dev->link_state == NTC_NTB_LINK_START) {
+			mutex_unlock(&dev->link_lock);
+			dev_dbg(&dev->ntc.dev,
 				"link reset requested by upper layer but already reseted\n");
-		return 0;
-	}
+			return 0;
+		}
 
-	tmp_reset_cnt = dev->reset_cnt;
+		tmp_reset_cnt = dev->reset_cnt;
+	}
 	mutex_unlock(&dev->link_lock);
 
-	ret = wait_event_timeout(dev->reset_done,
-			dev->reset_cnt - tmp_reset_cnt,
-			RESET_TIMEOUT);
+	if (wait) {
+		ret = wait_event_timeout(dev->reset_done,
+				dev->reset_cnt - tmp_reset_cnt,
+				RESET_TIMEOUT);
 
-	if (unlikely(!ret)) {
-		dev_err(&dev->ntc.dev,
-				"link reset timeout after %d current state %d",
-				RESET_TIMEOUT, dev->link_state);
-		return -ETIME;
+		if (unlikely(!ret)) {
+			dev_err(&dev->ntc.dev,
+					"link reset timeout after %d current state %d",
+					RESET_TIMEOUT, dev->link_state);
+			return -ETIME;
+		}
+
+		dev_dbg(&dev->ntc.dev,
+				"link reset done, state %d\n",
+				dev->link_state);
 	}
-
-	dev_dbg(&dev->ntc.dev,
-			"link reset done, state %d\n",
-			dev->link_state);
-
 	return 0;
 }
 EXPORT_SYMBOL(_ntc_link_reset);
