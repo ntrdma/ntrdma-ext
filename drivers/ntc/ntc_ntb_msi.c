@@ -1273,8 +1273,6 @@ static struct ntb_ctx_ops ntc_ntb_ctx_ops = {
 
 static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 {
-	phys_addr_t mw_base;
-	resource_size_t mw_size;
 	int rc, i, mw_idx, mw_count;
 	resource_size_t own_dram_addr_align, own_dram_size_align,
 		own_dram_size_max;
@@ -1316,7 +1314,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	/* this is the window we'll translate to local dram */
 	ntb_peer_mw_get_addr(dev->ntb, mw_idx,
 			&ntc->peer_dram_mw.base, &ntc->peer_dram_mw.size);
-	pr_info("PEER MW: idx %d base %#llx size %#llx",
+	pr_info("PEER DRAM MW: idx %d base %#llx size %#llx",
 		mw_idx, ntc->peer_dram_mw.base,
 		ntc->peer_dram_mw.size);
 	ntc->peer_dram_mw.desc = NTC_CHAN_MW1;
@@ -1351,20 +1349,19 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	}
 
 	/* a local buffer for peer driver to write */
-	ntb_peer_mw_get_addr(dev->ntb, mw_idx - 1, &mw_base, &mw_size);
-	pr_info("PEER: mw_idx %d mw_base %#lx mw_size %#lx info size %#lx",
-		mw_idx - 1, (long)mw_base, (long)mw_size,
-		sizeof(struct ntc_ntb_info));
+	ntb_peer_mw_get_addr(dev->ntb, mw_idx - 1,
+			&ntc->peer_info_mw.base, &ntc->peer_info_mw.size);
+	pr_info("PEER INFO MW: idx %d base %#llx size %#llx",
+		mw_idx - 1, ntc->peer_info_mw.base,
+		ntc->peer_info_mw.size);
 
-	if (mw_size < ntc_ntb_info_size) {
+	if (ntc->peer_info_mw.size < ntc_ntb_info_size) {
 		pr_debug("invalid alignement of peer info for new device %s\n",
 			 dev_name(&dev->ntb->dev));
 		rc = -ENOMEM;
 		goto err_info;
 	}
 
-	ntc->peer_info_mw.base = mw_base;
-	ntc->peer_info_mw.size = mw_size;
 	ntc->peer_info_mw.desc = NTC_CHAN_MW0;
 
 	ntb_mw_get_align(dev->ntb, NTB_DEF_PEER_IDX, mw_idx - 1,

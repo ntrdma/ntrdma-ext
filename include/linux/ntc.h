@@ -149,8 +149,6 @@ struct ntc_local_buf {
 struct ntc_export_buf {
 	struct ntc_dev *ntc;
 	u64 size;
-	bool owned;
-	bool use_mm;
 
 	void *ptr;
 	struct ntc_own_mw *own_mw;
@@ -1019,9 +1017,16 @@ static inline bool ntc_chan_addr_valid(union ntc_chan_addr *chan_addr)
 static inline int ntc_phys_export_buf_alloc(struct ntc_export_buf *buf,
 					gfp_t gfp)
 {
-	buf->ptr = kmalloc_node(buf->size, gfp, dev_to_node(&buf->ntc->dev));
-	if (unlikely(!buf->ptr))
-		return -ENOMEM;
+	int rc;
+
+	buf->own_mw = &buf->ntc->own_info_mw;
+
+	buf->ptr = ntc_mm_alloc(&buf->own_mw->mm, buf->size, gfp);
+	if (unlikely(IS_ERR(buf->ptr))) {
+		rc = PTR_ERR(buf->ptr);
+		buf->ptr = NULL;
+		return rc;
+	}
 
 	return 0;
 }
@@ -1035,7 +1040,6 @@ static inline int ntc_phys_export_buf_map(struct ntc_export_buf *buf)
 	if (unlikely(dma_mapping_error(buf->ntc->ntb_dev, ntb_dma_addr)))
 		return -EIO;
 
-	buf->own_mw = &buf->ntc->own_dram_mw;
 	buf->ntb_dma_addr = ntb_dma_addr;
 
 	return 0;
@@ -1049,7 +1053,7 @@ static inline void ntc_phys_export_buf_unmap(struct ntc_export_buf *buf)
 
 static inline void ntc_phys_export_buf_free(struct ntc_export_buf *buf)
 {
-	kfree(buf->ptr);
+	ntc_mm_free(&buf->own_mw->mm, buf->ptr, buf->size);
 }
 
 /**
@@ -1065,9 +1069,7 @@ static inline bool ntc_export_buf_valid(struct ntc_export_buf *buf)
 
 static inline void ntc_export_buf_clear(struct ntc_export_buf *buf)
 {
-	if (buf->owned)
-		buf->ptr = NULL;
-	buf->own_mw = NULL;
+	buf->ptr = NULL;
 	buf->ntb_dma_addr = 0;
 }
 
@@ -1077,10 +1079,7 @@ static inline void ntc_export_buf_clear(struct ntc_export_buf *buf)
  * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
  * @size:	Size of the buffer to allocate.
- * @gfp:	Allocation flags from gfp.h, or zero.
- * @buf->ptr:	If gfp is zero, buf->ptr must be preset
- *		to the pointer to preallocated buffer.
- *		No memory allocation occurs in this case.
+ * @gfp:	Allocation flags from gfp.h.
  *
  * Return: zero on success, negative error value on failure.
  */
@@ -1092,20 +1091,15 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 
 	buf->ntc = ntc;
 	buf->size = size;
-	buf->owned = !!gfp;
-	buf->use_mm = false;
 
 	ntc_export_buf_clear(buf);
 
-	if (buf->owned) {
-		rc = ntc_phys_export_buf_alloc(buf, gfp);
-		if (unlikely(rc < 0))
-			ntc_export_buf_clear(buf);
-	} else if (!buf->ptr)
-		return -ENOMEM;
+	rc = ntc_phys_export_buf_alloc(buf, gfp);
+	if (unlikely(rc < 0))
+		ntc_export_buf_clear(buf);
 
 	rc = ntc_phys_export_buf_map(buf);
-	if (unlikely(rc < 0) && buf->owned)
+	if (unlikely(rc < 0))
 		ntc_phys_export_buf_free(buf);
 
 	return rc;
@@ -1118,10 +1112,7 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
  * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
  * @size:	Size of the buffer to allocate.
- * @gfp:	Allocation flags from gfp.h, or zero.
- * @buf->ptr:	If gfp is zero, buf->ptr must be preset
- *		to the pointer to preallocated buffer.
- *		No memory allocation occurs in this case.
+ * @gfp:	Allocation flags from gfp.h.
  *
  * Calls ntc_export_buf_alloc().
  *
@@ -1131,17 +1122,7 @@ static inline int ntc_export_buf_zalloc(struct ntc_export_buf *buf,
 					struct ntc_dev *ntc,
 					u64 size, gfp_t gfp)
 {
-	gfp_t new_gfp;
-
-	if (gfp)
-		new_gfp = gfp | __GFP_ZERO;
-	else {
-		new_gfp = 0;
-		if (size && buf->ptr)
-			memset(buf->ptr, 0, size);
-	}
-
-	return ntc_export_buf_alloc(buf, ntc, size, new_gfp);
+	return ntc_export_buf_alloc(buf, ntc, size, gfp | __GFP_ZERO);
 }
 
 /**
@@ -1151,10 +1132,7 @@ static inline int ntc_export_buf_zalloc(struct ntc_export_buf *buf,
  * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
  * @size:	Size of the buffer to allocate.
- * @gfp:	Allocation flags from gfp.h, or zero.
- * @buf->ptr:	If gfp is zero, buf->ptr must be preset
- *		to the pointer to preallocated buffer.
- *		No memory allocation occurs in this case.
+ * @gfp:	Allocation flags from gfp.h.
  * @init_buf:	Pointer to initialization data.
  * @init_buf_size: Size of initialization data.
  * @init_buf_offset: Offset of the initialized data in the buffer.
@@ -1192,10 +1170,7 @@ static inline int ntc_export_buf_alloc_init(struct ntc_export_buf *buf,
  * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
  * @size:	Size of the buffer to allocate.
- * @gfp:	Allocation flags from gfp.h, or zero.
- * @buf->ptr:	If gfp is zero, buf->ptr must be preset
- *		to the pointer to preallocated buffer.
- *		No memory allocation occurs in this case.
+ * @gfp:	Allocation flags from gfp.h.
  * @init_buf:	Pointer to initialization data.
  * @init_buf_size: Size of initialization data.
  * @init_buf_offset: Offset of the initialized data in the buffer.
@@ -1234,7 +1209,7 @@ static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 	if (buf->ntb_dma_addr)
 		ntc_phys_export_buf_unmap(buf);
 
-	if (buf->owned)
+	if (buf->ptr)
 		ntc_phys_export_buf_free(buf);
 
 	ntc_export_buf_clear(buf);
@@ -1249,7 +1224,7 @@ static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 static inline void ntc_export_buf_make_desc(struct ntc_remote_buf_desc *desc,
 					struct ntc_export_buf *buf)
 {
-	if (buf->own_mw) {
+	if (buf->ntb_dma_addr) {
 		desc->chan_addr.mw_desc = buf->own_mw->desc;
 		desc->chan_addr.offset = buf->ntb_dma_addr - buf->own_mw->base;
 		desc->size = buf->size;
@@ -1313,9 +1288,6 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 		return -EINVAL;
 
 	if (unlikely(!ntc_segment_valid(buf->size, soffset, desc->size)))
-		return -EINVAL;
-
-	if (unlikely(!buf->ptr))
 		return -EINVAL;
 
 	if (unlikely(buf->own_mw->desc != desc->chan_addr.mw_desc))
@@ -1479,7 +1451,6 @@ static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
 	if (buf->gfp)
 		buf->ptr = NULL;
 	buf->dma_addr = 0;
-	buf->own_mw = NULL;
 	buf->ntb_dma_addr = 0;
 }
 
@@ -1726,7 +1697,7 @@ static inline int ntc_bidir_buf_make_prealloced_sgl(struct ntc_bidir_buf *sgl,
 static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
 					struct ntc_bidir_buf *buf)
 {
-	if (buf->own_mw) {
+	if (buf->ntb_dma_addr) {
 		desc->chan_addr.mw_desc = buf->own_mw->desc;
 		desc->chan_addr.offset = buf->ntb_dma_addr - buf->own_mw->base;
 		desc->size = buf->size;
