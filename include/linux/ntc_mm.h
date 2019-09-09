@@ -57,7 +57,7 @@ struct ntc_mm {
 
 static inline int _ntc_mm_round_size(int size)
 {
-	BUILD_BUG_ON((sizeof(struct ntc_mm_free_entry) - 1) ^
+	BUILD_BUG_ON((sizeof(struct ntc_mm_free_entry) - 1) &
 		sizeof(struct ntc_mm_free_entry));
 	return ALIGN(size, sizeof(struct ntc_mm_free_entry));
 }
@@ -69,6 +69,7 @@ static inline void *_ntc_mm_round_up_ptr(void *ptr)
 
 static inline void ntc_mm_fixed_init(struct ntc_fixed_mm *fixed)
 {
+	fixed->free = NULL;
 	spin_lock_init(&fixed->lock);
 }
 
@@ -216,6 +217,8 @@ static inline int ntc_mm_preinit(struct ntc_mm *mm, int size, int num_els)
 
 	TRACE("mm %p: added %d buffers of size %d. brk is %ld",
 		mm, num_els, size, mm->brk - mm->memory);
+	pr_info("mm %p: added %d buffers of size %d. brk is %ld",
+		mm, num_els, size, mm->brk - mm->memory);
 
 	return num_els;
 }
@@ -232,12 +235,22 @@ static inline void *ntc_mm_alloc(struct ntc_mm *mm, int size, gfp_t gfp)
 		return fixed;
 
 	ptr = ntc_mm_fixed_alloc(fixed);
-	if (likely(!IS_ERR(ptr)))
+	if (likely(!IS_ERR(ptr))) {
+		if (gfp & __GFP_ZERO)
+			memset(ptr, 0, size);
 		return ptr;
+	}
 
 	ptr = ntc_mm_sbrk(mm, size);
+	if (unlikely(IS_ERR(ptr)))
+		return ptr;
+
+	if (gfp & __GFP_ZERO)
+		memset(ptr, 0, size);
 
 	TRACE("mm %p: added buffer of size %d. brk is %ld",
+		mm, size, mm->brk - mm->memory);
+	pr_info("mm %p: added buffer of size %d. brk is %ld",
 		mm, size, mm->brk - mm->memory);
 
 	return ptr;
