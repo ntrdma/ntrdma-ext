@@ -175,7 +175,6 @@ struct ntc_remote_buf {
 	struct ntc_dev *ntc;
 	u64 size;
 
-	phys_addr_t ptr;
 	dma_addr_t dma_addr;
 };
 
@@ -1834,12 +1833,13 @@ static inline int ntc_phys_remote_buf_map(struct ntc_remote_buf *buf,
 					const struct ntc_remote_buf_desc *desc)
 {
 	struct device *dev = buf->ntc->dma_engine_dev;
+	phys_addr_t ptr;
 
-	buf->ptr = ntc_peer_addr(buf->ntc, &desc->chan_addr);
-	if (unlikely(!buf->ptr))
+	ptr = ntc_peer_addr(buf->ntc, &desc->chan_addr);
+	if (unlikely(!ptr))
 		return -EIO;
 
-	buf->dma_addr = dma_map_resource(dev, buf->ptr, desc->size,
+	buf->dma_addr = dma_map_resource(dev, ptr, desc->size,
 					DMA_FROM_DEVICE, 0);
 
 	if (unlikely(dma_mapping_error(dev, buf->dma_addr)))
@@ -1858,7 +1858,6 @@ static inline int ntc_phys_remote_buf_map_phys(struct ntc_remote_buf *buf,
 	if (unlikely(!ptr))
 		return -EIO;
 
-	buf->ptr = ptr;
 	buf->dma_addr = dma_map_resource(dev, ptr, size, DMA_FROM_DEVICE, 0);
 
 	if (unlikely(dma_mapping_error(dev, buf->dma_addr)))
@@ -1878,7 +1877,6 @@ static inline void ntc_phys_remote_buf_unmap(struct ntc_remote_buf *buf)
 
 static inline void ntc_remote_buf_clear(struct ntc_remote_buf *buf)
 {
-	buf->ptr = 0;
 	buf->dma_addr = 0;
 }
 
