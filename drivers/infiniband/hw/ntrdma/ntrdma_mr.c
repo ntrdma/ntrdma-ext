@@ -68,30 +68,27 @@ static void ntrdma_rmr_free(struct ntrdma_rres *rres);
 
 int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 {
+	int count;
 	int rc;
 
-	rc = ntc_umem_sgl(dev->ntc, mr->ib_umem,
-			mr->sg_list, mr->sg_count);
-	if (rc != mr->sg_count) {
-		rc = -EFAULT;
-		goto err_umem_sgl;
+	count = ntc_umem_sgl(dev->ntc, mr->ib_umem,
+			mr->sg_list, mr->sg_count, &rc);
+	if (count != mr->sg_count) {
+		if (!rc)
+			rc = -EFAULT;
+		goto err;
 	}
-
-	rc = ntc_bidir_buf_make_prealloced_sgl(mr->sg_list,
-					mr->sg_count, dev->ntc);
-	if (rc < 0)
-		goto err_umem_sgl;
 
 	rc = ntrdma_res_init(&mr->res, dev, &dev->mr_vec,
 			ntrdma_mr_enable, ntrdma_mr_disable, NULL, -1);
 	if (rc)
-		goto err_res_init;
+		goto err;
 
 	return 0;
 
- err_res_init:
-	ntc_bidir_buf_unmap_sgl(mr->sg_list, mr->sg_count);
- err_umem_sgl:
+ err:
+	ntc_bidir_buf_unmap_sgl(mr->sg_list, count);
+
 	return rc;
 }
 
