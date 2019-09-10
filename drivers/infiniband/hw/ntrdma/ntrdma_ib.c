@@ -935,10 +935,10 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 				atomic_cmpxchg(&qp->state, cur_state,
 					new_state) == cur_state;
 			TRACE(
-				"try qp %d move to state %d, s_a %d, s_aing %d, r_a %d, r_aing %d\n",
-				qp->res.key, new_state, qp->send_abort,
-				qp->send_aborting, qp->recv_abort,
-				qp->recv_aborting);
+				"try qp %d move from state %d to state %d (success %d), s_a %d, s_aing %d, r_a %d, r_aing %d\n",
+				qp->res.key, cur_state, new_state, success,
+				qp->send_abort, qp->send_aborting,
+				qp->recv_abort, qp->recv_aborting);
 			if (success) {
 				if (!is_state_error(new_state)) {
 					qp->send_aborting = false;

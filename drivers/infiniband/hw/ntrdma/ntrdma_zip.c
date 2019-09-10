@@ -206,7 +206,7 @@ ntrdma_snd_cursor_update(struct ntrdma_snd_cursor *c, int *rc)
 		/* Get a reference to snd mr */
 		c->mr = ntrdma_dev_mr_look(c->dev, c->mr_key);
 		if (!c->mr) {
-			ntrdma_err(c->dev, "Invalid snd mr key");
+			ntrdma_err(c->dev, "Invalid snd mr key\n");
 			*rc = -EINVAL;
 			return false;
 		}
@@ -229,7 +229,7 @@ ntrdma_snd_cursor_update(struct ntrdma_snd_cursor *c, int *rc)
 			c->next_io_off -= c->mr_sge->size;
 
 		if (c->mr_sge == c->mr_sg_end) {
-			ntrdma_err(c->dev, "out of bounds of snd mr");
+			ntrdma_err(c->dev, "out of bounds of snd mr\n");
 			*rc = -EINVAL;
 			return false;
 		}
@@ -258,7 +258,7 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 	}
 
 	if (c->rcv_sge == c->rcv_sg_end) {
-		ntrdma_err(c->dev, "Out of bounds rcv work request");
+		ntrdma_err(c->dev, "Out of bounds rcv work request\n");
 		*rc = -EINVAL;
 		return false;
 	}
@@ -275,7 +275,7 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 		/* Get a reference to rcv mr */
 		c->rmr = ntrdma_dev_rmr_look(c->dev, remote_key);
 		if (!c->rmr) {
-			ntrdma_err(c->dev, "Invalid rcv rmr key");
+			ntrdma_err(c->dev, "Invalid rcv rmr key\n");
 			*rc = -EINVAL;
 			return false;
 		}
@@ -298,7 +298,7 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 			c->next_io_off -= c->rmr_sge->size;
 
 		if (c->rmr_sge == c->rmr_sg_end) {
-			ntrdma_err(c->dev, "out of bounds of rcv rmr");
+			ntrdma_err(c->dev, "out of bounds of rcv rmr\n");
 			*rc = -EINVAL;
 			return false;
 		}
@@ -454,7 +454,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 					&rcv->rcv_sge->exp_buf_desc);
 		if (rc < 0)
 			return rc;
-		TRACE("DMA copy %#lx bytes to remote at %#lx offset %#lx",
+		TRACE("DMA copy %#lx bytes to remote at %#lx offset %#lx\n",
 			(long)len,
 			(long)rcv->rcv_sge->exp_buf_desc.chan_addr.value,
 			(long)rcv->next_io_off);
@@ -482,7 +482,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 
 	if (rc < 0) {
 		ntrdma_err(snd->dev,
-			"ntc_request_memcpy (len=%lu) error %d",
+			"ntc_request_memcpy (len=%lu) error %d\n",
 			(long)len, -rc);
 		return rc;
 	} else
@@ -531,7 +531,7 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct dma_chan *req, u32 *rdma_len,
 		if (total_len + len != total_len + (u32)len) {
 			/* total len would overflow u32 */
 			rc = -EINVAL;
-			ntrdma_err(dev, "total len would overflow u32");
+			ntrdma_err(dev, "total len would overflow u32\n");
 			break;
 		}
 		total_len += len;

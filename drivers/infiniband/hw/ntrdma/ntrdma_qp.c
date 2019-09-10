@@ -752,6 +752,10 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 				ntrdma_qp_send_cons(qp), qp->send_cmpl,
 				qp->send_cap, &start, &end, &base);
 		ntrdma_qp_send_cmpl_done(qp);
+		ntrdma_info(dev, "QP %d, start %d, end %d, base %d: send_abort %d, send_post %d, cons %d, send_cmpl %d, send_prod %d\n",
+				qp->res.key, start, end, base, qp->send_abort,
+				qp->send_post, ntrdma_qp_send_cons(qp),
+				qp->send_cmpl, qp->send_prod);
 		if (start != end)
 			qp->send_aborting = true;
 	} else
@@ -1898,11 +1902,10 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* TODO: return value is ignored! */
 	ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
 
-	TRACE("start %u pos %u QP %d RQP %d prod %u peer vbell idx %d\n",
-			start, pos,
-			qp->res.key, rqp->qp_key,
-			qp->send_prod,
-			qp->peer_send_vbell_idx);
+	TRACE(
+		"start %u pos %u QP %d RQP %d prod %u peer vbell idx %d (recv_pos %d, recv_base %d)\n",
+		start, pos, qp->res.key, rqp->qp_key, qp->send_prod,
+		qp->peer_send_vbell_idx, recv_pos, recv_base);
 
 	/* submit the request */
 	/* TODO: return value is ignored! */
