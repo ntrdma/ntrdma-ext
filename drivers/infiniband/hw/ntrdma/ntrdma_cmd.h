@@ -121,6 +121,7 @@ struct ntrdma_cmd_qp_create {
 	u32				recv_ring_idx;
 	u32				send_wqe_cap;
 	u32				send_wqe_sg_cap;
+	u32				send_wqe_inline_cap;
 	u32				send_ring_idx;
 	struct ntc_remote_buf_desc	send_cqe_buf_desc;
 	u64				send_cons_shift;

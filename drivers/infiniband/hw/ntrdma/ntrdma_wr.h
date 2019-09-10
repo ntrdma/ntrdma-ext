@@ -60,6 +60,7 @@
 #define NTRDMA_WC_ERR_RDMA_ACCESS	9
 #define NTRDMA_WC_ERR_LOC_PORT		10
 
+
 struct ntrdma_send_wqe {
 	u64				ulp_handle;
 	u16				op_code;
@@ -69,9 +70,13 @@ struct ntrdma_send_wqe {
 	u32				rdma_len;
 	u64				rdma_addr;
 	u32				imm_data;
-	u32				sg_count;
+
+	union {
+		u32	sg_count;
+		u8 inline_len;
+	};
+
 	int				flags;
-	struct ntrdma_wr_snd_sge	snd_sg_list[];
 };
 
 struct ntrdma_recv_wqe {
@@ -91,9 +96,26 @@ struct ntrdma_cqe {
 	int				flags;
 };
 
+
 static inline size_t ntrdma_wqe_snd_sg_list_size(u32 sg_cap)
 {
 	return sg_cap * sizeof(struct ntrdma_wr_snd_sge);
+}
+
+static inline size_t ntrdma_wqe_snd_inline_size(u32 inline_cap)
+{
+	return inline_cap;
+}
+
+static inline struct ntrdma_wr_snd_sge *snd_sg_list(int index,
+		const struct ntrdma_send_wqe * const wqe)
+{
+	return (struct ntrdma_wr_snd_sge *)(wqe + 1) + index;
+}
+
+static inline u8 *snd_inline_data(struct ntrdma_send_wqe *wqe)
+{
+	return (u8 *)(wqe + 1);
 }
 
 static inline size_t ntrdma_wqe_rcv_sg_list_size(u32 sg_cap)
@@ -101,10 +123,11 @@ static inline size_t ntrdma_wqe_rcv_sg_list_size(u32 sg_cap)
 	return sg_cap * sizeof(struct ntrdma_wr_rcv_sge);
 }
 
-static inline size_t ntrdma_send_wqe_size(u32 sg_cap)
+static inline size_t ntrdma_send_wqe_size(u32 sg_cap, u32 inline_cap)
 {
 	return sizeof(struct ntrdma_send_wqe) +
-		ntrdma_wqe_snd_sg_list_size(sg_cap);
+			max(ntrdma_wqe_snd_sg_list_size(sg_cap),
+			ntrdma_wqe_snd_inline_size(inline_cap));
 }
 
 static inline size_t ntrdma_recv_wqe_size(u32 sg_cap)

@@ -644,6 +644,13 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	qp_attr.send_wqe_sg_cap = ibqp_attr->cap.max_send_sge;
 	qp_attr.qp_type = ibqp_attr->qp_type;
 
+	if (ibqp_attr->cap.max_inline_data > NTRDMA_DEV_MAX_INLINE_DATA)
+		qp_attr.send_wqe_inline_cap = NTRDMA_DEV_MAX_INLINE_DATA;
+	else
+		qp_attr.send_wqe_inline_cap = ibqp_attr->cap.max_inline_data;
+
+	ntrdma_dbg(dev, "max inline data was set to %d\n",
+			qp_attr.send_wqe_inline_cap);
 	if (qp_attr.recv_wqe_cap > NTRDMA_DEV_MAX_QP_WR ||
 		qp_attr.send_wqe_cap > NTRDMA_DEV_MAX_QP_WR ||
 		qp_attr.send_wqe_sg_cap > NTRDMA_DEV_MAX_SGE ||
@@ -740,6 +747,8 @@ static int ntrdma_query_qp(struct ib_qp *ibqp,
 
 	if (ibqp_mask & IB_QP_DEST_QPN)
 		ibqp_attr->dest_qp_num = qp->rqp_key;
+
+	ibqp_attr->cap.max_inline_data = qp->send_wqe_inline_cap;
 
 	return 0;
 }
@@ -1011,6 +1020,52 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	return 0;
 }
 
+#define NUM_SUPPORTED_INLINE_SGE 1
+static int ntrdma_ib_send_to_inline_wqe(struct ntrdma_dev *dev,
+		struct ntrdma_send_wqe *wqe,
+		struct ib_send_wr *ibwr,
+		struct ntrdma_qp *qp)
+{
+	int rc = 0;
+	if (ibwr->num_sge > NUM_SUPPORTED_INLINE_SGE) {
+		ntrdma_err(dev, "inline: num_sge %d is not supported\n",
+					   ibwr->num_sge);
+		return -EINVAL; // not supporting sge of inlines
+	}
+
+	if (ibwr->sg_list[0].length > qp->send_wqe_inline_cap) {
+		ntrdma_err(dev, "inline: length %d > MAX \n", ibwr->sg_list[0].length);
+		return -EIO;
+	}
+
+	wqe->sg_count = NUM_SUPPORTED_INLINE_SGE;
+
+	rc = copy_from_user(snd_inline_data(wqe),
+			(void *)ibwr->sg_list[0].addr,
+			ibwr->sg_list[0].length);
+
+	if (rc) {
+		ntrdma_err(dev, "copy from user failed (%d) for len %d\n",
+				wqe->inline_len,
+				ibwr->sg_list[0].length);
+
+		return -EIO;
+	}
+
+	wqe->inline_len = ibwr->sg_list[0].length;
+
+	this_cpu_add(dev_cnt.post_send_bytes,
+						ibwr->sg_list[0].length);
+
+	if (wqe->flags & IB_SEND_SIGNALED)
+		this_cpu_inc(dev_cnt.post_send_wqes_signalled);
+
+	this_cpu_inc(dev_cnt.post_send_wqes);
+
+	return 0;
+}
+
+
 static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		struct ntrdma_send_wqe *wqe,
 		struct ib_send_wr *ibwr,
@@ -1018,7 +1073,6 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 {
 	int i;
 	int sg_cap = qp->send_wqe_sg_cap;
-
 	wqe->ulp_handle = ibwr->wr_id;
 	wqe->flags = ibwr->send_flags;
 
@@ -1058,6 +1112,8 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		wqe->rdma_len = 0;
 		wqe->rdma_addr = rdma_wr(ibwr)->remote_addr;
 		wqe->imm_data = 0;
+		if (ibwr->send_flags & IB_SEND_INLINE)
+			return ntrdma_ib_send_to_inline_wqe(dev, wqe, ibwr, qp);
 		break;
 	case IB_WR_RDMA_READ:
 		wqe->op_code = NTRDMA_WR_RDMA_READ;
@@ -1082,27 +1138,30 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 
 	wqe->sg_count = ibwr->num_sge;
 
+
 	for (i = 0; i < ibwr->num_sge; ++i) {
-		wqe->snd_sg_list[i].key = ibwr->sg_list[i].lkey;
+		snd_sg_list(i, wqe)->key = ibwr->sg_list[i].lkey;
 		if (ibwr->sg_list[i].lkey != NTRDMA_RESERVED_DMA_LEKY) {
-			wqe->snd_sg_list[i].addr = ibwr->sg_list[i].addr;
-			wqe->snd_sg_list[i].len = ibwr->sg_list[i].length;
+			snd_sg_list(i, wqe)->addr = ibwr->sg_list[i].addr;
+			snd_sg_list(i, wqe)->len = ibwr->sg_list[i].length;
 		} else {
 			TRACE("Mapping local buffer of size %#x at %#lx\n",
 				(int)ibwr->sg_list[i].length,
 				(long)(dma_addr_t)ibwr->sg_list[i].addr);
-			ntc_local_buf_map_dma(&wqe->snd_sg_list[i].snd_dma_buf,
+
+			ntc_local_buf_map_dma(&(snd_sg_list(i, wqe)->snd_dma_buf),
 					dev->ntc, ibwr->sg_list[i].length,
 					(dma_addr_t)ibwr->sg_list[i].addr);
 		}
-		this_cpu_add(dev_cnt.post_send_bytes, ibwr->sg_list[i].length);
+		this_cpu_add(dev_cnt.post_send_bytes,
+				ibwr->sg_list[i].length);
 	}
 
 	if (wqe->flags & IB_SEND_SIGNALED)
-		this_cpu_add(dev_cnt.post_send_wqes_signalled, wqe->sg_count);
+		this_cpu_add(dev_cnt.post_send_wqes_signalled,
+				wqe->sg_count);
 
 	this_cpu_add(dev_cnt.post_send_wqes, wqe->sg_count);
-
 	return 0;
 }
 

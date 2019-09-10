@@ -31,7 +31,7 @@
  */
 
 #include <linux/slab.h>
-
+#include <linux/stddef.h>
 #include "ntrdma_cmd.h"
 #include "ntrdma_sg.h"
 #include "ntrdma_wr.h"
@@ -270,8 +270,13 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->rqp_key = -1;
 
 	qp->send_wqe_sg_cap = attr->send_wqe_sg_cap;
+
+	ntrdma_dbg(dev, "qp init: inline data cap %u\n",
+			attr->send_wqe_inline_cap);
+	qp->send_wqe_inline_cap = attr->send_wqe_inline_cap;
 	qp->recv_wqe_sg_cap = attr->recv_wqe_sg_cap;
-	qp->send_wqe_size = ntrdma_send_wqe_size(qp->send_wqe_sg_cap);
+	qp->send_wqe_size = ntrdma_send_wqe_size(qp->send_wqe_sg_cap,
+			attr->send_wqe_inline_cap);
 	qp->recv_wqe_size = ntrdma_recv_wqe_size(qp->recv_wqe_sg_cap);
 
 	/* set up the send work ring */
@@ -545,6 +550,7 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 	cmd->qp_create.recv_ring_idx = qp->recv_cons;
 	cmd->qp_create.send_wqe_cap = qp->send_cap;
 	cmd->qp_create.send_wqe_sg_cap = qp->send_wqe_sg_cap;
+	cmd->qp_create.send_wqe_inline_cap = qp->send_wqe_inline_cap;
 	cmd->qp_create.send_ring_idx = ntrdma_qp_send_cons(qp);
 	ntc_export_buf_make_desc(&cmd->qp_create.send_cqe_buf_desc,
 				&qp->send_cqe_buf);
@@ -793,8 +799,11 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	rqp->qp_key = -1;
 
 	rqp->send_wqe_sg_cap = attr->send_wqe_sg_cap;
+	rqp->send_wqe_inline_cap = attr->send_wqe_inline_cap;
 	rqp->recv_wqe_sg_cap = attr->recv_wqe_sg_cap;
-	rqp->send_wqe_size = ntrdma_send_wqe_size(rqp->send_wqe_sg_cap);
+
+	rqp->send_wqe_size = ntrdma_send_wqe_size(rqp->send_wqe_sg_cap,
+			rqp->send_wqe_inline_cap);
 	rqp->recv_wqe_size = ntrdma_recv_wqe_size(rqp->recv_wqe_sg_cap);
 
 	/* set up the send work ring */
@@ -1623,14 +1632,16 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	const struct ntrdma_recv_wqe *recv_wqe = NULL;
 	u32 recv_wqe_recv_pos = 0;
 	struct ntrdma_wr_rcv_sge rdma_sge;
+	struct ntrdma_wr_snd_sge rdma_src_sge;
+	dma_addr_t wqe_data_dma;
 	u32 start, pos, end, base;
 	u32 recv_pos, recv_end, recv_base;
 	u32 rcv_start_offset;
 	u32 rdma_len;
-	size_t off, len;
+	size_t off, len, data_shift;
 	int rc;
 	bool abort = false;
-
+	
 	/* verify the qp state and lock for producing sends */
 	rc = ntrdma_qp_send_prod_start(qp);
 	if (rc) {
@@ -1752,12 +1763,32 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					rdma_sge.addr = wqe->rdma_addr;
 					rdma_sge.len = ~(u32)0;
 					rdma_sge.key = wqe->rdma_key;
-					/* From send to RDMA address. */
-					rc = ntrdma_zip_rdma(dev, req,
-							&rdma_len,
-							&rdma_sge,
-							wqe->snd_sg_list,
-							1, wqe->sg_count, 0);
+
+					if (wqe->flags & IB_SEND_INLINE) {
+						off = (pos - 1) * qp->send_wqe_size;
+						data_shift = sizeof(struct ntrdma_send_wqe);
+						wqe_data_dma = qp->send_wqe_buf.dma_addr +
+								off + data_shift;
+
+						ntc_local_buf_map_dma(&rdma_src_sge.snd_dma_buf,
+							dev->ntc,
+							wqe->inline_len,
+							wqe_data_dma);
+
+						rdma_src_sge.key = NTRDMA_RESERVED_DMA_LEKY;
+
+						rc = ntrdma_zip_rdma(dev, req,
+								&rdma_len,
+								&rdma_sge,
+								&rdma_src_sge,
+								1, 1, 0);
+					} else/* From send to RDMA address. */
+						rc = ntrdma_zip_rdma(dev, req,
+								&rdma_len,
+								&rdma_sge,
+								snd_sg_list(0, wqe),
+								1, wqe->sg_count,
+								0);
 				} else
 					rc = -EINVAL;
 			} else {
@@ -1766,10 +1797,11 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						sizeof(struct ib_grh);
 				else
 					rcv_start_offset = 0;
+
 				/* This goes from send to post recv */
 				rc = ntrdma_zip_rdma(dev, req, &rdma_len,
 						recv_wqe->rcv_sg_list,
-						wqe->snd_sg_list,
+						snd_sg_list(0, wqe),
 						recv_wqe->sg_count,
 						wqe->sg_count,
 						rcv_start_offset);
@@ -2053,7 +2085,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					rdma_sge.addr = wqe->rdma_addr;
 					rdma_sge.len = wqe->rdma_len;
 					rdma_sge.key = wqe->rdma_key;
-
 					rc = ntrdma_zip_sync(dev, &rdma_sge, 1);
 				} else
 					rc = -EINVAL;

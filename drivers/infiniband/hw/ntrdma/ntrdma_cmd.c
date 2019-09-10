@@ -955,6 +955,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	attr.send_wqe_idx = cmd->send_ring_idx;
 	attr.send_wqe_cap = cmd->send_wqe_cap;
 	attr.send_wqe_sg_cap = cmd->send_wqe_sg_cap;
+	attr.send_wqe_inline_cap = cmd->send_wqe_inline_cap;
 
 	rc = ntc_remote_buf_map(&attr.peer_send_cqe_buf, dev->ntc,
 				&cmd->send_cqe_buf_desc);
