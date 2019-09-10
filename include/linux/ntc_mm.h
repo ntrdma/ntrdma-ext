@@ -53,6 +53,7 @@ struct ntc_mm {
 	void *end;
 	void *brk;
 	struct idr fixed;
+	spinlock_t lock;
 };
 
 static inline int _ntc_mm_round_size(int size)
@@ -76,14 +77,15 @@ static inline void ntc_mm_fixed_init(struct ntc_fixed_mm *fixed)
 static inline void *ntc_mm_fixed_alloc(struct ntc_fixed_mm *fixed)
 {
 	struct ntc_mm_free_entry *free;
+	unsigned long irqflags;
 
-	spin_lock(&fixed->lock);
+	spin_lock_irqsave(&fixed->lock, irqflags);
 	free = fixed->free;
 	if (free)
 		fixed->free = free->next;
 	else
 		free = ERR_PTR(-ENOMEM);
-	spin_unlock(&fixed->lock);
+	spin_unlock_irqrestore(&fixed->lock, irqflags);
 
 	return free;
 }
@@ -91,17 +93,20 @@ static inline void *ntc_mm_fixed_alloc(struct ntc_fixed_mm *fixed)
 static inline void ntc_mm_fixed_free(struct ntc_fixed_mm *fixed, void *ptr)
 {
 	struct ntc_mm_free_entry *free = ptr;
+	unsigned long irqflags;
 
-	spin_lock(&fixed->lock);
+	spin_lock_irqsave(&fixed->lock, irqflags);
 	free->next = fixed->free;
 	fixed->free = free;
-	spin_unlock(&fixed->lock);
+	spin_unlock_irqrestore(&fixed->lock, irqflags);
 }
 
 static inline int ntc_mm_init(struct ntc_mm *mm, void *memory, size_t size)
 {
 	void *m;
 	void *end;
+
+	spin_lock_init(&mm->lock);
 
 	m = _ntc_mm_round_up_ptr(memory);
 	size -= (m - memory);
@@ -133,19 +138,32 @@ static inline void ntc_mm_deinit(struct ntc_mm *mm)
 
 static inline void *ntc_mm_sbrk(struct ntc_mm *mm, int inc)
 {
-	void *result = mm->brk;
-	void *brk = result + inc;
+	void *result;
+	void *brk;
+	unsigned long irqflags;
 
 	if (unlikely(inc < 0))
 		return ERR_PTR(-EINVAL);
 
-	if (unlikely(brk < result))
-		return ERR_PTR(-ENOMEM);
+	spin_lock_irqsave(&mm->lock, irqflags);
 
-	if (unlikely(brk > mm->end))
-		return ERR_PTR(-ENOMEM);
+	result = mm->brk;
+	brk = result + inc;
+
+	if (unlikely(brk < result)) {
+		result = ERR_PTR(-ENOMEM);
+		goto out;
+	}
+
+	if (unlikely(brk > mm->end)) {
+		result = ERR_PTR(-ENOMEM);
+		goto out;
+	}
 
 	mm->brk = brk;
+
+ out:
+	spin_unlock_irqrestore(&mm->lock, irqflags);
 
 	return result;
 }
