@@ -1190,12 +1190,15 @@ static void ntrdma_qp_recv_cmpl_put(struct ntrdma_qp *qp,
 int ntrdma_qp_send_post_start(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	unsigned long irqflags = 0;
 
 	/* TODO need to put this lock in rdma_core and not here */
 	if (qp->ibqp.qp_type != IB_QPT_GSI)
 		mutex_lock(&qp->send_post_lock);
-	else
-		spin_lock(&qp->send_post_slock);
+	else {
+		spin_lock_irqsave(&qp->send_post_slock, irqflags);
+		qp->send_post_slock_irqflags = irqflags;
+	}
 
 	if (!is_state_send_ready(atomic_read(&qp->state))) {
 		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
@@ -1203,7 +1206,7 @@ int ntrdma_qp_send_post_start(struct ntrdma_qp *qp)
 		if (qp->ibqp.qp_type != IB_QPT_GSI)
 			mutex_unlock(&qp->send_post_lock);
 		else
-			spin_unlock(&qp->send_post_slock);
+			spin_unlock_irqrestore(&qp->send_post_slock, irqflags);
 		ntrdma_dbg(dev, "invalid qp %d state %u\n", qp->res.key,
 				atomic_read(&qp->state));
 		return -EINVAL;
@@ -1214,11 +1217,15 @@ int ntrdma_qp_send_post_start(struct ntrdma_qp *qp)
 
 void ntrdma_qp_send_post_done(struct ntrdma_qp *qp)
 {
+	unsigned long irqflags;
+
 	tasklet_schedule(&qp->send_work);
 	if (qp->ibqp.qp_type != IB_QPT_GSI)
 		mutex_unlock(&qp->send_post_lock);
-	else
-		spin_unlock(&qp->send_post_slock);
+	else {
+		irqflags = qp->send_post_slock_irqflags;
+		spin_unlock_irqrestore(&qp->send_post_slock, irqflags);
+	}
 }
 
 void ntrdma_qp_send_post_get(struct ntrdma_qp *qp,

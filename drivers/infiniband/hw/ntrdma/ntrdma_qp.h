@@ -134,6 +134,7 @@ struct ntrdma_qp {
 	/* at most one poster, producer, or completer at a time */
 	struct mutex	send_post_lock;
 	spinlock_t		send_post_slock;
+	unsigned long		send_post_slock_irqflags;
 	spinlock_t		send_prod_lock;
 	struct mutex	send_cmpl_lock;
 
