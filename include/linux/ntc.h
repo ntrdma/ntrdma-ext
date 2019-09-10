@@ -431,8 +431,8 @@ static inline struct ntc_peer_mw *ntc_peer_mw(struct ntc_dev *ntc,
  * Transform a channel-mapped address of a remote buffer, mapped by the peer,
  * into a peer address to be used as the destination of a channel request.
  *
- * The peer allocates and maps the buffer with ntc_export_buf_alloc(),
- * ntc_bidir_buf_alloc() or ntc_bidir_buf_make_prealloced().
+ * The peer allocates and maps the buffer with ntc_export_buf_alloc()
+ * or ntc_bidir_buf_make_prealloced().
  * Then, the remote peer communicates the channel-mapped address of the buffer
  * across the channel.  The driver on side of the connection must then
  * translate the peer's channel-mapped address into a peer address.  The
@@ -1376,17 +1376,11 @@ static inline int ntc_export_buf_seq_write(struct seq_file *s,
 	return seq_write(s, p, buf->size);
 }
 
-static inline int ntc_phys_bidir_buf_alloc(struct ntc_bidir_buf *buf)
+static inline int ntc_phys_bidir_buf_map(struct ntc_bidir_buf *buf)
 {
 	dma_addr_t ntb_dma_addr;
 	dma_addr_t dma_engine_addr;
 	int rc;
-
-	if (buf->gfp)
-		buf->ptr = kmalloc_node(buf->size, buf->gfp,
-					dev_to_node(&buf->ntc->dev));
-	if (unlikely(!buf->ptr))
-		return -ENOMEM;
 
 	ntb_dma_addr = dma_map_single(buf->ntc->ntb_dev, buf->ptr, buf->size,
 				DMA_FROM_DEVICE);
@@ -1414,29 +1408,21 @@ static inline int ntc_phys_bidir_buf_alloc(struct ntc_bidir_buf *buf)
 			DMA_FROM_DEVICE);
 
  err_ntb_map:
-	if (buf->gfp)
-		kfree(buf->ptr);
-
 	return rc;
 }
 
-static inline void ntc_phys_bidir_buf_free(struct ntc_bidir_buf *buf)
+static inline void ntc_phys_bidir_buf_unmap(struct ntc_bidir_buf *buf)
 {
-	dma_addr_t dma_engine_addr = buf->dma_addr;
-
 	dma_unmap_single(buf->ntc->ntb_dev, buf->ntb_dma_addr, buf->size,
 			DMA_FROM_DEVICE);
 
-	dma_unmap_single(buf->ntc->dma_engine_dev, dma_engine_addr, buf->size,
+	dma_unmap_single(buf->ntc->dma_engine_dev, buf->dma_addr, buf->size,
 			DMA_TO_DEVICE);
-
-	if (buf->gfp && buf->ptr)
-		kfree(buf->ptr);
 }
 
 /**
  * ntc_bidir_buf_valid() - Check whether the buffer is valid.
- * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
  *
  * Return:	true iff valid.
  */
@@ -1447,163 +1433,8 @@ static inline bool ntc_bidir_buf_valid(struct ntc_bidir_buf *buf)
 
 static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
 {
-	if (buf->gfp)
-		buf->ptr = NULL;
 	buf->dma_addr = 0;
 	buf->ntb_dma_addr = 0;
-}
-
-/**
- * ntc_bidir_buf_alloc() - allocate a memory buffer in an NTB window,
- *                         to which the peer can write,
- *                         and make it capable of DMA to the DMA engine.
- * @buf:	OUTPUT buffer.
- * @ntc:	Device context.
- * @size:	Size of the buffer to allocate.
- * @gfp:	Allocation flags from gfp.h, or zero.
- * @buf->ptr:	If gfp is zero, buf->ptr must be preset
- *		to the pointer to preallocated buffer.
- *		No memory allocation occurs in this case.
- *
- * Return: zero on success, negative error value on failure.
- */
-static inline int ntc_bidir_buf_alloc(struct ntc_bidir_buf *buf,
-				struct ntc_dev *ntc,
-				u64 size, gfp_t gfp)
-{
-	int rc;
-
-	buf->ntc = ntc;
-	buf->size = size;
-	buf->gfp = gfp;
-
-	ntc_bidir_buf_clear(buf);
-
-	rc = ntc_phys_bidir_buf_alloc(buf);
-
-	if (unlikely(rc < 0))
-		ntc_bidir_buf_clear(buf);
-
-	return rc;
-}
-
-/**
- * ntc_bidir_buf_zalloc() - allocate a memory buffer in an NTB window,
- *                          to which the peer can write,
- *                          clear the buffer's contents,
- *                          and make it capable of DMA to the DMA engine.
- * @buf:	OUTPUT buffer.
- * @ntc:	Device context.
- * @size:	Size of the buffer to allocate.
- * @gfp:	Allocation flags from gfp.h, or zero.
- * @buf->ptr:	If gfp is zero, buf->ptr must be preset
- *		to the pointer to preallocated buffer.
- *		No memory allocation occurs in this case.
- *
- * Calls ntc_bidir_buf_alloc().
- *
- * Return: zero on success, negative error value on failure.
- */
-static inline int ntc_bidir_buf_zalloc(struct ntc_bidir_buf *buf,
-					struct ntc_dev *ntc,
-					u64 size, gfp_t gfp)
-{
-	gfp_t new_gfp;
-	int rc;
-
-	if (gfp)
-		new_gfp = gfp | __GFP_ZERO;
-	else {
-		new_gfp = 0;
-		if (size && buf->ptr)
-			memset(buf->ptr, 0, size);
-	}
-
-	rc = ntc_bidir_buf_alloc(buf, ntc, size, new_gfp);
-	buf->gfp = gfp;
-
-	return rc;
-}
-
-/**
- * ntc_bidir_buf_alloc_init() - allocate a memory buffer in an NTB window,
- *                              to which the peer can write,
- *                              initialize the buffer's contents,
- *                              and make it capable of DMA to the DMA engine.
- * @buf:	OUTPUT buffer.
- * @ntc:	Device context.
- * @size:	Size of the buffer to allocate.
- * @gfp:	Allocation flags from gfp.h, or zero.
- * @buf->ptr:	If gfp is zero, buf->ptr must be preset
- *		to the pointer to preallocated buffer.
- *		No memory allocation occurs in this case.
- * @init_buf:	Pointer to initialization data.
- * @init_buf_size: Size of initialization data.
- * @init_buf_offset: Offset of the initialized data in the buffer.
- *
- * Calls ntc_bidir_buf_alloc().
- *
- * Return: zero on success, negative error value on failure.
- */
-static inline int ntc_bidir_buf_alloc_init(struct ntc_bidir_buf *buf,
-					struct ntc_dev *ntc,
-					u64 size, gfp_t gfp,
-					void *init_buf, u64 init_buf_size,
-					u64 init_buf_offset)
-{
-	int rc;
-
-	if (unlikely(!ntc_segment_valid(size, init_buf_offset, init_buf_size)))
-		return -EINVAL;
-
-	rc = ntc_bidir_buf_alloc(buf, ntc, size, gfp);
-	if (unlikely(rc < 0))
-		return rc;
-
-	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
-
-	return rc;
-}
-
-/**
- * ntc_bidir_buf_zalloc_init() - allocate a memory buffer in an NTB window,
- *                               to which the peer can write,
- *                               initialize the buffer's contents,
- *                               clear the rest of the buffer,
- *                               and make it capable of DMA to the DMA engine.
- * @buf:	OUTPUT buffer.
- * @ntc:	Device context.
- * @size:	Size of the buffer to allocate.
- * @gfp:	Allocation flags from gfp.h, or zero.
- * @buf->ptr:	If gfp is zero, buf->ptr must be preset
- *		to the pointer to preallocated buffer.
- *		No memory allocation occurs in this case.
- * @init_buf:	Pointer to initialization data.
- * @init_buf_size: Size of initialization data.
- * @init_buf_offset: Offset of the initialized data in the buffer.
- *
- * Calls ntc_bidir_buf_alloc().
- *
- * Return: zero on success, negative error value on failure.
- */
-static inline int ntc_bidir_buf_zalloc_init(struct ntc_bidir_buf *buf,
-					struct ntc_dev *ntc,
-					u64 size, gfp_t gfp,
-					void *init_buf, u64 init_buf_size,
-					u64 init_buf_offset)
-{
-	int rc;
-
-	if (unlikely(!ntc_segment_valid(size, init_buf_offset, init_buf_size)))
-		return -EINVAL;
-
-	rc = ntc_bidir_buf_zalloc(buf, ntc, size, gfp);
-	if (unlikely(rc < 0))
-		return rc;
-
-	memcpy(buf->ptr + init_buf_offset, init_buf, init_buf_size);
-
-	return rc;
 }
 
 /**
@@ -1614,44 +1445,53 @@ static inline int ntc_bidir_buf_zalloc_init(struct ntc_bidir_buf *buf,
  * @ntc:	Device context.
  * @buf->size:	Preset to size of the buffer.
  * @buf->ptr:	Preset to the pointer to preallocated buffer.
- *		No memory allocation occurs.
- *
- * Calls ntc_bidir_buf_alloc().
  *
  * Return: zero on success, negative error value on failure.
  */
 static inline int ntc_bidir_buf_make_prealloced(struct ntc_bidir_buf *buf,
 						struct ntc_dev *ntc)
 {
-	return ntc_bidir_buf_alloc(buf, ntc, buf->size, 0);
+	int rc;
+
+	buf->ntc = ntc;
+
+	ntc_bidir_buf_clear(buf);
+
+	if (unlikely(!buf->ptr))
+		return -ENOMEM;
+
+	rc = ntc_phys_bidir_buf_map(buf);
+
+	if (unlikely(rc < 0))
+		ntc_bidir_buf_clear(buf);
+
+	return rc;
 }
 
 /**
- * ntc_bidir_buf_free() - unmap and, if necessary, free the buffer
- *                        created by ntc_bidir_buf_alloc().
- * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * ntc_bidir_buf_unmap() - unmap buf created by ntc_bidir_buf_make_prealloced().
+ * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
  */
-static inline void ntc_bidir_buf_free(struct ntc_bidir_buf *buf)
+static inline void ntc_bidir_buf_unmap(struct ntc_bidir_buf *buf)
 {
-	if (buf->ptr)
-		ntc_phys_bidir_buf_free(buf);
+	if (buf->ntb_dma_addr)
+		ntc_phys_bidir_buf_unmap(buf);
 
 	ntc_bidir_buf_clear(buf);
 }
 
 /**
- * ntc_bidir_buf_free_sgl() - unmap and, if necessary, free each buffer
- *                            in the array of buffers
- *                            created by ntc_bidir_buf_alloc().
- * @sgl:	Array of buffers created by ntc_bidir_buf_alloc().
+ * ntc_bidir_buf_unmap_sgl() - unmap each buffer in the array of buffers
+ *                            created by ntc_bidir_buf_make_prealloced().
+ * @sgl:	Array of buffers created by ntc_bidir_buf_make_prealloced().
  * @count:	Size of the array.
  */
-static inline void ntc_bidir_buf_free_sgl(struct ntc_bidir_buf *sgl, int count)
+static inline void ntc_bidir_buf_unmap_sgl(struct ntc_bidir_buf *sgl, int count)
 {
 	int i;
 
 	for (i = 0; i < count; i++)
-		ntc_bidir_buf_free(&sgl[i]);
+		ntc_bidir_buf_unmap(&sgl[i]);
 }
 
 /**
@@ -1683,7 +1523,7 @@ static inline int ntc_bidir_buf_make_prealloced_sgl(struct ntc_bidir_buf *sgl,
 
 	return 0;
  err:
-	ntc_bidir_buf_free_sgl(sgl, i);
+	ntc_bidir_buf_unmap_sgl(sgl, i);
 	return rc;
 }
 
@@ -1691,7 +1531,7 @@ static inline int ntc_bidir_buf_make_prealloced_sgl(struct ntc_bidir_buf *sgl,
  * ntc_bidir_buf_make_desc() - Make serializable description of buffer.
  *
  * @desc:	OUTPUT buffer description, which can be sent to peer.
- * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
  */
 static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
 					struct ntc_bidir_buf *buf)
@@ -1706,7 +1546,7 @@ static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
 
 /**
  * ntc_bidir_buf_deref() - Retrieve pointer into buffer's memory.
- * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
  * @offset:	Offset to the segment to be accessed.
  * @len:	Length of the segment to be accessed.
  *
@@ -1733,7 +1573,7 @@ static inline void *ntc_bidir_buf_deref(struct ntc_bidir_buf *buf,
 
 /**
  * ntc_bidir_buf_unref() - Finish working with ntc_bidir_buf_deref() pointer.
- * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
  * @offset:	Offset to the segment to be accessed.
  * @len:	Length of the segment to be accessed.
  *
@@ -1754,7 +1594,7 @@ static inline void ntc_bidir_buf_unref(struct ntc_bidir_buf *buf,
 
 /**
  * ntc_bidir_buf_deref() - Retrieve pointer to buffer's memory.
- * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
  *
  * Any necessary synchronization will be made before returning the pointer.
  * After finishing the work with the buffer,
@@ -1769,7 +1609,7 @@ static inline void *ntc_bidir_buf_full_deref(struct ntc_bidir_buf *buf)
 
 /**
  * ntc_bidir_buf_const_deref() - Retrieve const pointer into buffer's memory.
- * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
  * @offset:	Offset to the segment to be accessed.
  * @len:	Length of the segment to be accessed.
  *
@@ -1795,7 +1635,7 @@ static inline const void *ntc_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
 /**
  * ntc_bidir_buf_seq_write() - Write out the buffer's contents.
  * @s:		The first argument of seq_write().
- * @buf:	Buffer created by ntc_bidir_buf_alloc().
+ * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
  *
  * Return:	The result of seq_write().
  */

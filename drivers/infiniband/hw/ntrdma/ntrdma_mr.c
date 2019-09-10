@@ -90,7 +90,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 	return 0;
 
  err_res_init:
-	ntc_bidir_buf_free_sgl(mr->sg_list, mr->sg_count);
+	ntc_bidir_buf_unmap_sgl(mr->sg_list, mr->sg_count);
  err_umem_sgl:
 	return rc;
 }
@@ -98,7 +98,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 void ntrdma_mr_deinit(struct ntrdma_mr *mr)
 {
 	ntrdma_res_deinit(&mr->res);
-	ntc_bidir_buf_free_sgl(mr->sg_list, mr->sg_count);
+	ntc_bidir_buf_unmap_sgl(mr->sg_list, mr->sg_count);
 }
 
 static int ntrdma_mr_enable(struct ntrdma_res *res)
