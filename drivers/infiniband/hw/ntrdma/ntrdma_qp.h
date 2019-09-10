@@ -100,6 +100,7 @@ struct ntrdma_qp {
 
 	/* sizes and capacities of single work queue entries */
 	int			send_wqe_sg_cap;
+	int			send_wqe_inline_cap;
 	int			recv_wqe_sg_cap;
 	size_t		send_wqe_size;
 	size_t		recv_wqe_size;
@@ -164,6 +165,7 @@ struct ntrdma_qp_init_attr {
 	u32 recv_wqe_cap;
 	u32 recv_wqe_sg_cap;
 	u32 send_wqe_cap;
+	u32 send_wqe_inline_cap;
 	u32 send_wqe_sg_cap;
 	u32 qp_type;
 };
@@ -251,6 +253,7 @@ struct ntrdma_rqp {
 
 	/* sizes and capacities of single work queue entries */
 	int				send_wqe_sg_cap;
+	int				send_wqe_inline_cap;
 	int				recv_wqe_sg_cap;
 	size_t				send_wqe_size;
 	size_t				recv_wqe_size;
@@ -299,6 +302,7 @@ struct ntrdma_rqp_init_attr {
 	u32 send_wqe_idx;
 	u32 send_wqe_cap;
 	u32 send_wqe_sg_cap;
+	u32 send_wqe_inline_cap;
 	u32 peer_cmpl_vbell_idx;
 	struct ntc_remote_buf peer_send_cqe_buf;
 	u64 peer_send_cons_shift;

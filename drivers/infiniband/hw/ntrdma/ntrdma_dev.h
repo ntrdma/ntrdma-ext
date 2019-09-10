@@ -60,6 +60,7 @@
 #define NTRDMA_DEV_MAX_CQ 0x100
 #define NTRDMA_DEV_MAX_MR 0x100
 #define NTRDMA_DEV_MAX_PD 0x100
+#define NTRDMA_DEV_MAX_INLINE_DATA 8
 
 struct vbell_work_data_s {
 	struct ntrdma_dev *dev;
