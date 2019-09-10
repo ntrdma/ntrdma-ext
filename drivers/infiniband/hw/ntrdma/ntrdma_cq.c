@@ -150,11 +150,11 @@ void _ntrdma_cq_cue(struct ntrdma_cq *cq, const char *f)
 	for (; cq->arm; --cq->arm) {
 		/*TODO: do we realy need to run this in spinlock???*/
 		cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
+		TRACE("cq %p arm %d %s\n", cq, arm, f);
 	}
 	spin_unlock_bh(&cq->arm_lock);
 
 	this_cpu_add(dev_cnt.cqes_notified, arm);
-	TRACE("cq %p arm %d %s\n", cq, arm, f);
 }
 
 void ntrdma_cq_add_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll)
