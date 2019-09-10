@@ -1443,17 +1443,20 @@ static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
  *                                 and make it capable of DMA to the DMA engine.
  * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
- * @buf->size:	Preset to size of the buffer.
- * @buf->ptr:	Preset to the pointer to preallocated buffer.
+ * @size:	Size of the buffer.
+ * @ptr:	Pointer to the preallocated buffer.
  *
  * Return: zero on success, negative error value on failure.
  */
 static inline int ntc_bidir_buf_make_prealloced(struct ntc_bidir_buf *buf,
-						struct ntc_dev *ntc)
+						struct ntc_dev *ntc,
+						u64 size, void *ptr)
 {
 	int rc;
 
 	buf->ntc = ntc;
+	buf->size = size;
+	buf->ptr = ptr;
 
 	ntc_bidir_buf_clear(buf);
 
@@ -1492,39 +1495,6 @@ static inline void ntc_bidir_buf_unmap_sgl(struct ntc_bidir_buf *sgl, int count)
 
 	for (i = 0; i < count; i++)
 		ntc_bidir_buf_unmap(&sgl[i]);
-}
-
-/**
- * ntc_bidir_buf_make_prealloced_sgl() - prepare memory buffer in an NTB window,
- *                                       to which the peer can write,
- *                                       make it capable of DMA to DMA engine --
- *                                       for each buffer in the array.
- * @sgl:	Array of buffers to be created.
- * @count:	Size of the array.
- * @ntc:	Device context.
- * @sgl[i]->size: Preset to size of the buffer.
- * @sgl[i]->ptr: Preset to the pointer to preallocated buffer.
- *		 No memory allocation occurs.
- *
- * Calls ntc_bidir_buf_make_prealloced().
- *
- * Return: zero on success, negative error value on failure.
- */
-static inline int ntc_bidir_buf_make_prealloced_sgl(struct ntc_bidir_buf *sgl,
-						int count, struct ntc_dev *ntc)
-{
-	int i, rc;
-
-	for (i = 0; i < count; i++) {
-		rc = ntc_bidir_buf_make_prealloced(&sgl[i], ntc);
-		if (unlikely(rc < 0))
-			goto err;
-	}
-
-	return 0;
- err:
-	ntc_bidir_buf_unmap_sgl(sgl, i);
-	return rc;
 }
 
 /**
@@ -1795,6 +1765,7 @@ static inline void ntc_remote_buf_unmap(struct ntc_remote_buf *buf)
  * @ib_umem:	Object representing the memory mapping.
  * @sgl:	Scatter gather ntc_bidir_buf list to receive the entries.
  * @count:	Capacity of the scatter gather list.
+ * @rc_out:	Pointer to rc, or NULL.
  *
  * Count the number of discontiguous ranges in the channel mapping, so that a
  * scatter gather list of the exact length can be allocated.
@@ -1802,7 +1773,7 @@ static inline void ntc_remote_buf_unmap(struct ntc_remote_buf *buf)
  * Return: The number of entries stored in the list, or an error number.
  */
 int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
-		struct ntc_bidir_buf *sgl, int count);
+		struct ntc_bidir_buf *sgl, int count, int *rc_out);
 
 /**
  * ntc_umem_count() - count discontiguous ranges in the channel mapping
@@ -1816,7 +1787,7 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
  */
 static inline int ntc_umem_count(struct ntc_dev *ntc, struct ib_umem *ib_umem)
 {
-	return ntc_umem_sgl(ntc, ib_umem, NULL, 0);
+	return ntc_umem_sgl(ntc, ib_umem, NULL, 0, NULL);
 }
 
 /**
