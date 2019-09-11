@@ -718,7 +718,8 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 				struct ntrdma_rsp_mr_status *rsp)
 {
 	struct ntrdma_rmr *rmr;
-	u32 i, count;
+	int i;
+	u32 count;
 	int rc;
 
 	ntrdma_vdbg(dev,
@@ -771,7 +772,7 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 err_add:
 	ntrdma_rmr_deinit(rmr); /* Not sure we need this */
 err_map:
-	for (i--; i >= 0; i--)
+	for (--i; i >= 0; i--)
 		ntc_remote_buf_unmap(&rmr->sg_list[i]);
 err_init:
 	kfree(rmr);
@@ -825,7 +826,8 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 				struct ntrdma_rsp_mr_status *rsp)
 {
 	struct ntrdma_rmr *rmr;
-	u32 i, pos, count;
+	int i;
+	u32 pos, count;
 	int rc;
 
 	ntrdma_vdbg(dev, "called sg count %d sg pos %d\n",
