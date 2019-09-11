@@ -36,9 +36,18 @@
 #define TRACE_EN
 
 #ifdef TRACE_EN
-#define TRACE trace_printk
+#define TRACE(fmt, ...) do {						\
+		char _______FMT[] = __stringify(fmt);			\
+		int _______SIZE = sizeof(_______FMT);			\
+		if ((_______SIZE >= 4) &&				\
+			(_______FMT[_______SIZE - 4] == '\\') &&	\
+			(_______FMT[_______SIZE - 3] == 'n'))		\
+			trace_printk(fmt, ##__VA_ARGS__);		\
+		else							\
+			trace_printk(fmt "\n", ##__VA_ARGS__);		\
+	} while (0)
 #else
-#define TRACE
+#define TRACE(...) do {} while (0)
 #endif
 
 #endif
