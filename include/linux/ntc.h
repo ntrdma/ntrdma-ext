@@ -158,7 +158,7 @@ struct ntc_export_buf {
 struct ntc_bidir_buf {
 	struct ntc_dev *ntc;
 	u64 size;
-	gfp_t gfp;
+	bool mapped;
 
 	void *ptr;
 	dma_addr_t dma_addr;
@@ -432,7 +432,7 @@ static inline struct ntc_peer_mw *ntc_peer_mw(struct ntc_dev *ntc,
  * into a peer address to be used as the destination of a channel request.
  *
  * The peer allocates and maps the buffer with ntc_export_buf_alloc()
- * or ntc_bidir_buf_make_prealloced().
+ * or ntc_bidir_buf_map*().
  * Then, the remote peer communicates the channel-mapped address of the buffer
  * across the channel.  The driver on side of the connection must then
  * translate the peer's channel-mapped address into a peer address.  The
@@ -451,7 +451,7 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 		return 0;
 
 	if (unlikely(offset >= peer_mw->size)) {
-		dev_err(&ntc->dev, "offset 0x%llx is beyond memory size %llu\n",
+		dev_err(&ntc->dev, "offset %#llx is beyond memory size %#llx\n",
 			offset, peer_mw->size);
 		return 0;
 	}
@@ -1094,8 +1094,10 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 	ntc_export_buf_clear(buf);
 
 	rc = ntc_phys_export_buf_alloc(buf, gfp);
-	if (unlikely(rc < 0))
+	if (unlikely(rc < 0)) {
 		ntc_export_buf_clear(buf);
+		return rc;
+	}
 
 	rc = ntc_phys_export_buf_map(buf);
 	if (unlikely(rc < 0))
@@ -1422,7 +1424,7 @@ static inline void ntc_phys_bidir_buf_unmap(struct ntc_bidir_buf *buf)
 
 /**
  * ntc_bidir_buf_valid() - Check whether the buffer is valid.
- * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
+ * @buf:	Buffer created by ntc_bidir_buf_map*().
  *
  * Return:	true iff valid.
  */
@@ -1433,14 +1435,16 @@ static inline bool ntc_bidir_buf_valid(struct ntc_bidir_buf *buf)
 
 static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
 {
+	buf->mapped = false;
+	buf->ptr = NULL;
 	buf->dma_addr = 0;
 	buf->ntb_dma_addr = 0;
 }
 
 /**
- * ntc_bidir_buf_make_prealloced() - prepare a memory buffer in an NTB window,
- *                                   to which the peer can write,
- *                                 and make it capable of DMA to the DMA engine.
+ * ntc_bidir_buf_map() - prepare a memory buffer in an NTB window,
+ *                       to which the peer can write,
+ *                       and make it capable of DMA to the DMA engine.
  * @buf:	OUTPUT buffer.
  * @ntc:	Device context.
  * @size:	Size of the buffer.
@@ -1448,7 +1452,7 @@ static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
  *
  * Return: zero on success, negative error value on failure.
  */
-static inline int ntc_bidir_buf_make_prealloced(struct ntc_bidir_buf *buf,
+static inline int ntc_bidir_buf_map(struct ntc_bidir_buf *buf,
 						struct ntc_dev *ntc,
 						u64 size, void *ptr)
 {
@@ -1456,13 +1460,13 @@ static inline int ntc_bidir_buf_make_prealloced(struct ntc_bidir_buf *buf,
 
 	buf->ntc = ntc;
 	buf->size = size;
-	buf->ptr = ptr;
-
 	ntc_bidir_buf_clear(buf);
 
-	if (unlikely(!buf->ptr))
+	if (unlikely(!ptr))
 		return -ENOMEM;
 
+	buf->mapped = true;
+	buf->ptr = ptr;
 	rc = ntc_phys_bidir_buf_map(buf);
 
 	if (unlikely(rc < 0))
@@ -1472,12 +1476,44 @@ static inline int ntc_bidir_buf_make_prealloced(struct ntc_bidir_buf *buf,
 }
 
 /**
- * ntc_bidir_buf_unmap() - unmap buf created by ntc_bidir_buf_make_prealloced().
- * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
+ * ntc_bidir_buf_map_dma() - prepare a memory buffer in an NTB window,
+ *                           to which the peer can write,
+ *                           and make it capable of DMA to the DMA engine.
+ * @buf:	OUTPUT buffer.
+ * @ntc:	Device context.
+ * @size:	Size of the buffer.
+ * @dma_addr:	buffer's DMA address.
+ *
+ * Return: zero on success, negative error value on failure.
+ */
+static inline int ntc_bidir_buf_map_dma(struct ntc_bidir_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, dma_addr_t dma_addr)
+{
+	buf->ntc = ntc;
+	buf->size = size;
+	ntc_bidir_buf_clear(buf);
+
+	if (unlikely(!dma_addr))
+		return -ENOMEM;
+
+	pr_info("Mapping bidir buffer via DMA addr: %#llx", dma_addr);
+
+	buf->mapped = false;
+	buf->dma_addr = dma_addr;
+	buf->ntb_dma_addr = dma_addr;
+	buf->own_mw = &buf->ntc->own_dram_mw;
+
+	return 0;
+}
+
+/**
+ * ntc_bidir_buf_unmap() - unmap buf created by ntc_bidir_buf_map*().
+ * @buf:	Buffer created by ntc_bidir_buf_map*().
  */
 static inline void ntc_bidir_buf_unmap(struct ntc_bidir_buf *buf)
 {
-	if (buf->ntb_dma_addr)
+	if (buf->ntb_dma_addr && buf->mapped)
 		ntc_phys_bidir_buf_unmap(buf);
 
 	ntc_bidir_buf_clear(buf);
@@ -1485,8 +1521,8 @@ static inline void ntc_bidir_buf_unmap(struct ntc_bidir_buf *buf)
 
 /**
  * ntc_bidir_buf_unmap_sgl() - unmap each buffer in the array of buffers
- *                            created by ntc_bidir_buf_make_prealloced().
- * @sgl:	Array of buffers created by ntc_bidir_buf_make_prealloced().
+  *                            created by ntc_bidir_buf_map*().
+ * @sgl:	Array of buffers created by ntc_bidir_buf_map*().
  * @count:	Size of the array.
  */
 static inline void ntc_bidir_buf_unmap_sgl(struct ntc_bidir_buf *sgl, int count)
@@ -1501,7 +1537,7 @@ static inline void ntc_bidir_buf_unmap_sgl(struct ntc_bidir_buf *sgl, int count)
  * ntc_bidir_buf_make_desc() - Make serializable description of buffer.
  *
  * @desc:	OUTPUT buffer description, which can be sent to peer.
- * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
+ * @buf:	Buffer created by ntc_bidir_buf_map*().
  */
 static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
 					struct ntc_bidir_buf *buf)
@@ -1516,7 +1552,7 @@ static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
 
 /**
  * ntc_bidir_buf_deref() - Retrieve pointer into buffer's memory.
- * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
+ * @buf:	Buffer created by ntc_bidir_buf_map*().
  * @offset:	Offset to the segment to be accessed.
  * @len:	Length of the segment to be accessed.
  *
@@ -1543,7 +1579,7 @@ static inline void *ntc_bidir_buf_deref(struct ntc_bidir_buf *buf,
 
 /**
  * ntc_bidir_buf_unref() - Finish working with ntc_bidir_buf_deref() pointer.
- * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
+ * @buf:	Buffer created by ntc_bidir_buf_map*().
  * @offset:	Offset to the segment to be accessed.
  * @len:	Length of the segment to be accessed.
  *
@@ -1564,7 +1600,7 @@ static inline void ntc_bidir_buf_unref(struct ntc_bidir_buf *buf,
 
 /**
  * ntc_bidir_buf_deref() - Retrieve pointer to buffer's memory.
- * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
+ * @buf:	Buffer created by ntc_bidir_buf_map*().
  *
  * Any necessary synchronization will be made before returning the pointer.
  * After finishing the work with the buffer,
@@ -1579,7 +1615,7 @@ static inline void *ntc_bidir_buf_full_deref(struct ntc_bidir_buf *buf)
 
 /**
  * ntc_bidir_buf_const_deref() - Retrieve const pointer into buffer's memory.
- * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
+ * @buf:	Buffer created by ntc_bidir_buf_map*().
  * @offset:	Offset to the segment to be accessed.
  * @len:	Length of the segment to be accessed.
  *
@@ -1605,7 +1641,7 @@ static inline const void *ntc_bidir_buf_const_deref(struct ntc_bidir_buf *buf,
 /**
  * ntc_bidir_buf_seq_write() - Write out the buffer's contents.
  * @s:		The first argument of seq_write().
- * @buf:	Buffer created by ntc_bidir_buf_make_prealloced().
+ * @buf:	Buffer created by ntc_bidir_buf_map*().
  *
  * Return:	The result of seq_write().
  */

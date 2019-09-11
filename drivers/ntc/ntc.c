@@ -58,14 +58,15 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 {
 	struct scatterlist *sg, *next;
 	void *ptr;
+	void *next_ptr;
 	dma_addr_t dma_addr;
 	size_t dma_len, offset, total_len;
-	int i, dma_count;
+	int i, n;
 	int rc;
 
 	offset = ib_umem_offset(ib_umem);
 	total_len = 0;
-	dma_count = 0;
+	n = 0;
 	rc = 0;
 	for_each_sg(ib_umem->sg_head.sgl, sg, ib_umem->sg_head.nents, i) {
 		/* ptr is start addr of the contiguous range */
@@ -81,8 +82,14 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 				break;
 			if (sg_dma_address(next) != dma_addr + dma_len)
 				break;
-			if (page_address(sg_page(next)) != ptr + dma_len)
-				break;
+			next_ptr = page_address(sg_page(next));
+			if (ptr) {
+				if (next_ptr != ptr + dma_len)
+					break;
+			} else {
+				if (next_ptr)
+					break;
+			}
 			dma_len += sg_dma_len(next);
 			sg = next;
 		}
@@ -104,15 +111,18 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 			total_len = ib_umem->length;
 		}
 
-		if (sgl && dma_count < count) {
-			rc = ntc_bidir_buf_make_prealloced(&sgl[dma_count], ntc,
-							dma_len, ptr);
+		if (sgl && (n < count)) {
+			if (ptr)
+				rc = ntc_bidir_buf_map(&sgl[n], ntc, dma_len,
+						ptr);
+			else
+				rc = ntc_bidir_buf_map_dma(&sgl[n], ntc,
+							dma_len, dma_addr);
 			if (rc < 0)
 				break;
 		}
 
-		ptr += dma_len;
-		++dma_count;
+		++n;
 
 		if (total_len == ib_umem->length)
 			break;
@@ -121,7 +131,7 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 	if (rc_out)
 		*rc_out = rc;
 
-	return dma_count;
+	return n;
 }
 EXPORT_SYMBOL(ntc_umem_sgl);
 
