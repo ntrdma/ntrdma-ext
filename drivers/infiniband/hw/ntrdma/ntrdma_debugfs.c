@@ -61,9 +61,7 @@ static const struct file_operations ntrdma_debugfs_rqp_info_ops;
 static const struct file_operations ntrdma_debugfs_rqp_send_wqe_ops;
 static const struct file_operations ntrdma_debugfs_rqp_send_cqe_ops;
 static const struct file_operations ntrdma_debugfs_rqp_recv_wqe_ops;
-#ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 static const struct file_operations ntrdma_debugfs_dev_vbell_peer_ops;
-#endif
 
 static struct dentry *debug;
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
@@ -175,10 +173,8 @@ void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)
 			    dev, &ntrdma_debugfs_dev_cmd_recv_rsp_ops);
 	debugfs_create_file("vbell_buf", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_vbell_ops);
-#ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 	debugfs_create_file("vbell_peer_seq", S_IRUSR, dev->debug,
 			    dev, &ntrdma_debugfs_dev_vbell_peer_ops);
-#endif
 }
 
 void ntrdma_debugfs_dev_del(struct ntrdma_dev *dev)
@@ -605,7 +601,6 @@ static const struct file_operations ntrdma_debugfs_dev_vbell_ops = {
 	.release = single_release,
 };
 
-#ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 static int ntrdma_debugfs_dev_vbell_peer_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_dev *dev = s->private;
@@ -628,7 +623,6 @@ static const struct file_operations ntrdma_debugfs_dev_vbell_peer_ops = {
 	.llseek = seq_lseek,
 	.release = single_release,
 };
-#endif
 
 static int ntrdma_debugfs_cq_info_show(struct seq_file *s, void *v)
 {

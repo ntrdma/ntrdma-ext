@@ -101,7 +101,8 @@ static inline void ntrdma_cq_repo(struct ntrdma_cq *cq)
 }
 
 void ntrdma_cq_arm(struct ntrdma_cq *cq);
-void ntrdma_cq_cue(struct ntrdma_cq *cq);
+#define ntrdma_cq_cue(__cq) _ntrdma_cq_cue(__cq, __func__)
+void _ntrdma_cq_cue(struct ntrdma_cq *cq, const char *f);
 
 void ntrdma_cq_add_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll);
 void ntrdma_cq_del_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll);
