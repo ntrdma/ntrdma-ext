@@ -57,8 +57,6 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 		struct ntc_bidir_buf *sgl, int count, int *rc_out)
 {
 	struct scatterlist *sg, *next;
-	void *ptr;
-	void *next_ptr;
 	dma_addr_t dma_addr;
 	size_t dma_len, offset, total_len;
 	int i, n;
@@ -69,8 +67,6 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 	n = 0;
 	rc = 0;
 	for_each_sg(ib_umem->sg_head.sgl, sg, ib_umem->sg_head.nents, i) {
-		/* ptr is start addr of the contiguous range */
-		ptr = page_address(sg_page(sg));
 		/* dma_addr is start DMA addr of the contiguous range */
 		dma_addr = sg_dma_address(sg);
 		/* dma_len accumulates the length of the contiguous range */
@@ -82,14 +78,6 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 				break;
 			if (sg_dma_address(next) != dma_addr + dma_len)
 				break;
-			next_ptr = page_address(sg_page(next));
-			if (ptr) {
-				if (next_ptr != ptr + dma_len)
-					break;
-			} else {
-				if (next_ptr)
-					break;
-			}
 			dma_len += sg_dma_len(next);
 			sg = next;
 		}
@@ -112,12 +100,8 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 		}
 
 		if (sgl && (n < count)) {
-			if (ptr)
-				rc = ntc_bidir_buf_map(&sgl[n], ntc, dma_len,
-						ptr);
-			else
-				rc = ntc_bidir_buf_map_dma(&sgl[n], ntc,
-							dma_len, dma_addr);
+			rc = ntc_bidir_buf_map_dma(&sgl[n], ntc,
+						dma_len, dma_addr);
 			if (rc < 0)
 				break;
 		}
