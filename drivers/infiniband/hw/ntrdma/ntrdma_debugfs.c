@@ -389,7 +389,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 
 	seq_printf(s, "eth_rx_wqe_buf.dma_addr %#llx\n",
 		eth->rx_wqe_buf.dma_addr);
-	seq_printf(s, "eth_rx_wqe_buf.size %#llx\n", eth->rx_wqe_buf.size);
+	seq_printf(s, "eth_rx_wqe_buf.size %#llx\n", (u64)eth->rx_wqe_buf.size);
 
 	seq_printf(s, "eth_rx_cqe_buf.ntb_dma_addr %#llx\n",
 		eth->rx_cqe_buf.ntb_dma_addr);
@@ -414,7 +414,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 
 	seq_printf(s, "eth_tx_cqe_buf.dma_addr %#llx\n",
 		eth->tx_cqe_buf.dma_addr);
-	seq_printf(s, "eth_tx_cqe_buf.size %#llx\n", eth->tx_cqe_buf.size);
+	seq_printf(s, "eth_tx_cqe_buf.size %#llx\n", (u64)eth->tx_cqe_buf.size);
 
 	seq_printf(s, "eth_tx_prod_buf %#x\n",
 		ntrdma_eth_tx_prod(eth));
@@ -732,7 +732,7 @@ static int ntrdma_debugfs_qp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "send_cmpl %u\n", qp->send_cmpl);
 	seq_printf(s, "send_wqe_buf.dma_addr %#llx\n",
 		qp->send_wqe_buf.dma_addr);
-	seq_printf(s, "send_wqe_buf.size %#llx\n", qp->send_wqe_buf.size);
+	seq_printf(s, "send_wqe_buf.size %#llx\n", (u64)qp->send_wqe_buf.size);
 	seq_printf(s, "send_cqe_buf.ntb_dma_addr %#llx\n",
 		qp->send_cqe_buf.ntb_dma_addr);
 	seq_printf(s, "send_cqe_buf.size %#llx\n", qp->send_cqe_buf.size);
@@ -748,7 +748,7 @@ static int ntrdma_debugfs_qp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "recv_cmpl %u\n", qp->recv_cmpl);
 	seq_printf(s, "recv_wqe_buf.dma_addr %#llx\n",
 		qp->recv_wqe_buf.dma_addr);
-	seq_printf(s, "recv_wqe_buf.size %#llx\n", qp->recv_wqe_buf.size);
+	seq_printf(s, "recv_wqe_buf.size %#llx\n", (u64)qp->recv_wqe_buf.size);
 	seq_printf(s, "recv_cqe_buf_size %#zx\n", qp->recv_cqe_buf_size);
 	seq_printf(s, "peer_recv_wqe_buf.dma_addr %#llx\n",
 		qp->peer_recv_wqe_buf.dma_addr);
@@ -908,7 +908,7 @@ static int ntrdma_debugfs_rqp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "send_wqe_buf.size %#llx\n", rqp->send_wqe_buf.size);
 	seq_printf(s, "send_cqe_buf.dma_addr %#llx\n",
 		rqp->send_cqe_buf.dma_addr);
-	seq_printf(s, "send_cqe_buf.size %#llx\n", rqp->send_cqe_buf.size);
+	seq_printf(s, "send_cqe_buf.size %#llx\n", (u64)rqp->send_cqe_buf.size);
 	seq_printf(s, "peer_send_cqe_buf.dma_addr %#llx\n",
 		rqp->peer_send_cqe_buf.dma_addr);
 	seq_printf(s, "peer_send_cons_shift %#llx\n",

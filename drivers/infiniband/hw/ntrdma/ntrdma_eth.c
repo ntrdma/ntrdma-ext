@@ -202,7 +202,7 @@ err_register:
 err_rx_cons_buf:
 	ntc_export_buf_free(&eth->rx_cqe_buf);
 err_rx_cqe_buf:
-	ntc_local_buf_free(&eth->rx_wqe_buf);
+	ntc_local_buf_free(&eth->rx_wqe_buf, dev->ntc);
 err_rx_wqe_buf:
 	ntrdma_dev_eth_rx_drain(dev);
 	kfree(eth->rx_buf);
@@ -323,7 +323,7 @@ unprep:
 	eth->is_hello_prep = false;
 	ntc_export_buf_free(&eth->tx_prod_buf);
 err_tx_prod_buf:
-	ntc_local_buf_free(&eth->tx_cqe_buf);
+	ntc_local_buf_free(&eth->tx_cqe_buf, dev->ntc);
 err_tx_cqe_buf:
 	ntc_local_buf_clear(&eth->tx_cqe_buf);
 	ntc_export_buf_free(&eth->tx_wqe_buf);
@@ -333,9 +333,9 @@ err_tx_wqe_buf:
 	eth->tx_cons = 0;
 	eth->tx_cmpl = 0;
 	ntc_export_buf_clear(&eth->tx_wqe_buf);
-	ntc_remote_buf_unmap(&eth->peer_rx_cons_buf);
+	ntc_remote_buf_unmap(&eth->peer_rx_cons_buf, dev->ntc);
 err_peer_rx_cons_buf:
-	ntc_remote_buf_unmap(&eth->peer_rx_cqe_buf);
+	ntc_remote_buf_unmap(&eth->peer_rx_cqe_buf, dev->ntc);
 err_peer_rx_cqe_buf:
 	return rc;
 }
@@ -389,9 +389,9 @@ undone:
 	WARN(eth->link == true,
 			"OMG!!! eth hello undone while eth link is up");
 
-	ntc_remote_buf_unmap(&eth->peer_tx_prod_buf);
+	ntc_remote_buf_unmap(&eth->peer_tx_prod_buf, dev->ntc);
 err_peer_tx_prod_buf:
-	ntc_remote_buf_unmap(&eth->peer_tx_wqe_buf);
+	ntc_remote_buf_unmap(&eth->peer_tx_wqe_buf, dev->ntc);
 err_peer_tx_wqe_buf:
 	return rc;
 }
@@ -642,6 +642,7 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 }
 
 struct ntrdma_skb_cb {
+	struct ntc_dev *ntc;
 	struct ntc_remote_buf dst;
 	struct ntc_local_buf src;
 };
@@ -717,6 +718,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 				GFP_KERNEL, dev->node);
 		if (!skb_ctx)
 			goto err_alloc_skb_ctx;
+		skb_ctx->ntc = dev->ntc;
 
 		tmp_desc = tx_wqe_buf[pos];
 		rc = ntc_remote_buf_desc_clip(&tmp_desc, 0, len + tx_off);
@@ -798,7 +800,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 	goto done;
 
 err_buf_map:
-	ntc_remote_buf_unmap(&skb_ctx->dst);
+	ntc_remote_buf_unmap(&skb_ctx->dst, dev->ntc);
 err_res_map:
 	kfree(skb_ctx);
 err_alloc_skb_ctx:
@@ -829,8 +831,8 @@ static void ntrdma_eth_dma_cb(void *ctx)
 
 	/* retrieve the mapped addr from the skb control buffer */
 
-	ntc_local_buf_disown(&skb_ctx->src);
-	ntc_remote_buf_unmap(&skb_ctx->dst);
+	ntc_local_buf_disown(&skb_ctx->src, skb_ctx->ntc);
+	ntc_remote_buf_unmap(&skb_ctx->dst, skb_ctx->ntc);
 	kfree(skb_ctx);
 
 	consume_skb(skb);

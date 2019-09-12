@@ -156,7 +156,7 @@ err_seq:
 	dev->vbell_enable = 0;
 	spin_unlock_bh(&dev->vbell_peer_lock);
 	spin_unlock_bh(&dev->vbell_self_lock);
-	ntc_remote_buf_unmap(&peer_vbell_buf);
+	ntc_remote_buf_unmap(&peer_vbell_buf, dev->ntc);
 err_map:
 	return rc;
 }
@@ -165,7 +165,7 @@ void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev)
 {
 	int i;
 
-	ntc_remote_buf_unmap(&dev->peer_vbell_buf);
+	ntc_remote_buf_unmap(&dev->peer_vbell_buf, dev->ntc);
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	spin_lock_bh(&dev->vbell_peer_lock);

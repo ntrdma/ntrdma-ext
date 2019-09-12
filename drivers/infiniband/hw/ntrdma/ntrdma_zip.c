@@ -456,10 +456,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 	if (len < 0)
 		return -EINVAL;
 
-	if (snd->mr)
-		ntc = snd->mr_sge->ntc;
-	else
-		ntc = snd->snd_sge->snd_dma_buf.ntc;
+	ntc = dev->ntc;
 
 	if (!rcv->rmr) {
 		rc = ntc_remote_buf_map(&remote, ntc, &rcv->rcv_sge->desc);
@@ -488,7 +485,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 	}
 
 	if (!rcv->rmr)
-		ntc_remote_buf_unmap(&remote);
+		ntc_remote_buf_unmap(&remote, ntc);
 
 	if (rc < 0) {
 		ntrdma_err(snd->dev,
