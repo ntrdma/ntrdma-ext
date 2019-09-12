@@ -117,9 +117,7 @@ struct ntrdma_dev {
 
 	/* peer virtual doorbells */
 
-#ifdef CONFIG_NTRDMA_VBELL_USE_SEQ
 	u32				*vbell_peer_seq;
-#endif
 	struct ntc_remote_buf		peer_vbell_buf;
 	int				peer_vbell_count;
 

@@ -34,7 +34,6 @@
 #include "ntrdma_cq.h"
 #include "ntrdma_qp.h"
 
-void ntrdma_cq_cue(struct ntrdma_cq *cq);
 static void ntrdma_cq_cue_work(unsigned long ptrhld);
 static void ntrdma_cq_vbell_cb(void *ctx);
 
@@ -117,34 +116,45 @@ void ntrdma_cq_arm(struct ntrdma_cq *cq)
 {
 	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
 	bool need_cue;
+	unsigned int arm;
+
+	this_cpu_inc(dev_cnt.cqes_armed);
 
 	spin_lock_bh(&cq->arm_lock);
-	{
-		ntrdma_dev_vbell_add_clear(dev, &cq->vbell, cq->vbell_idx);
-		++cq->arm;
-		need_cue = cq->need_cue;
-		cq->need_cue = false;
-		TRACE("cq %p arm %d\n", cq, cq->arm);
-	}
+
+	ntrdma_dev_vbell_add_clear(dev, &cq->vbell, cq->vbell_idx);
+	++cq->arm;
+	arm = cq->arm;
+	need_cue = cq->need_cue;
+	cq->need_cue = false;
+
 	spin_unlock_bh(&cq->arm_lock);
+
+	TRACE("cq %p arm %d need cue %d vbell idx %d\n",
+			cq, arm, need_cue, cq->vbell_idx);
+
 	if (need_cue)
 		ntrdma_cq_cue(cq);
 }
 
-void ntrdma_cq_cue(struct ntrdma_cq *cq)
+void _ntrdma_cq_cue(struct ntrdma_cq *cq, const char *f)
 {
+	unsigned int arm;
+
 	spin_lock_bh(&cq->arm_lock);
-	TRACE("cq %p arm %d\n", cq, cq->arm);
-	if (cq->arm) {
-		for (; cq->arm; --cq->arm)
-			cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
-		spin_unlock_bh(&cq->arm_lock);
-		this_cpu_add(dev_cnt.cqes_armed, cq->arm);
-		this_cpu_inc(dev_cnt.cqes_notified);
-	} else {
+	arm = cq->arm;
+
+	if (!cq->arm)
 		cq->need_cue = true;
-		spin_unlock_bh(&cq->arm_lock);
+
+	for (; cq->arm; --cq->arm) {
+		/*TODO: do we realy need to run this in spinlock???*/
+		cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
 	}
+	spin_unlock_bh(&cq->arm_lock);
+
+	this_cpu_add(dev_cnt.cqes_notified, arm);
+	TRACE("cq %p arm %d %s\n", cq, arm, f);
 }
 
 void ntrdma_cq_add_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll)

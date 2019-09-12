@@ -339,7 +339,10 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	if (rc)
 		goto err_add;
 
-	ntrdma_dbg(dev, "added cq %p ib cq %p\n", cq, &cq->ibcq);
+	ntrdma_dbg(dev,
+			"added cq %p (%d/%d) ib cq %p vbell idx %d c\n",
+			cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
+			&cq->ibcq, vbell_idx);
 
 	return &cq->ibcq;
 
