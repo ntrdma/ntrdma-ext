@@ -354,11 +354,11 @@ deinit:
 	kfree(qp->recv_cqe_buf);
 	qp->recv_cqe_buf = 0;
 err_recv_cqe_buf:
-	ntc_local_buf_free(&qp->recv_wqe_buf);
+	ntc_local_buf_free(&qp->recv_wqe_buf, dev->ntc);
 err_recv_wqe_buf:
 	ntc_export_buf_free(&qp->send_cqe_buf);
 err_send_cqe_buf:
-	ntc_local_buf_free(&qp->send_wqe_buf);
+	ntc_local_buf_free(&qp->send_wqe_buf, dev->ntc);
 err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
 	ntrdma_cq_put(qp->recv_cq);
@@ -584,9 +584,9 @@ static int ntrdma_qp_enable_disable_cmpl_common(struct ntrdma_qp *qp,
 
 	return 0;
 disable:
-	ntc_remote_buf_unmap(&qp->peer_send_wqe_buf);
+	ntc_remote_buf_unmap(&qp->peer_send_wqe_buf, dev->ntc);
 err_peer_send_wqe_buf:
-	ntc_remote_buf_unmap(&qp->peer_recv_wqe_buf);
+	ntc_remote_buf_unmap(&qp->peer_recv_wqe_buf, dev->ntc);
 err_peer_recv_wqe_buf:
 	ntrdma_res_done_cmds(&qp->res);
 	return rc;
@@ -862,7 +862,7 @@ deinit:
 	tasklet_kill(&rqp->send_work);
 	ntc_export_buf_free(&rqp->recv_wqe_buf);
 err_recv_wqe_buf:
-	ntc_local_buf_free(&rqp->send_cqe_buf);
+	ntc_local_buf_free(&rqp->send_cqe_buf, dev->ntc);
 err_send_cqe_buf:
 	ntc_export_buf_free(&rqp->send_wqe_buf);
 err_send_wqe_buf:

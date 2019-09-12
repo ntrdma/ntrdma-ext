@@ -187,7 +187,7 @@ deinit:
 	cancel_work_sync(&dev->cmd_recv_work);
 	ntc_export_buf_free(&dev->cmd_send_rsp_buf);
 err_send_rsp_buf:
-	ntc_local_buf_free(&dev->cmd_send_buf);
+	ntc_local_buf_free(&dev->cmd_send_buf, dev->ntc);
 err_send_buf:
 	return rc;
 }
@@ -226,7 +226,7 @@ undone:
 		return 0;
 
 	dev->is_cmd_hello_done = false;
-	ntc_remote_buf_unmap(&dev->peer_cmd_recv_buf);
+	ntc_remote_buf_unmap(&dev->peer_cmd_recv_buf, dev->ntc);
 err_peer_cmd_recv_buf:
 	return rc;
 }
@@ -314,7 +314,7 @@ deinit:
 	if (!dev->is_cmd_prep)
 		return 0;
 	dev->is_cmd_prep = false;
-	ntc_local_buf_free(&dev->cmd_recv_rsp_buf);
+	ntc_local_buf_free(&dev->cmd_recv_rsp_buf, dev->ntc);
 err_recv_rsp_buf:
 	ntc_export_buf_free(&dev->cmd_recv_buf);
 err_recv_buf:
@@ -325,7 +325,7 @@ err_recv_buf:
 	dev->cmd_recv_cap = 0;
 	dev->peer_cmd_send_vbell_idx = 0;
 	dev->peer_cmd_recv_vbell_idx = 0;
-	ntc_remote_buf_unmap(&dev->peer_cmd_send_rsp_buf);
+	ntc_remote_buf_unmap(&dev->peer_cmd_send_rsp_buf, dev->ntc);
 err_peer_cmd_send_rsp_buf:
 err_sanity:
 	return rc;
@@ -773,7 +773,7 @@ err_add:
 	ntrdma_rmr_deinit(rmr); /* Not sure we need this */
 err_map:
 	for (--i; i >= 0; i--)
-		ntc_remote_buf_unmap(&rmr->sg_list[i]);
+		ntc_remote_buf_unmap(&rmr->sg_list[i], dev->ntc);
 err_init:
 	kfree(rmr);
 err_rmr:
@@ -804,7 +804,7 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 	}
 
 	for (i = 0; i < rmr->sg_count; i++)
-		ntc_remote_buf_unmap(&rmr->sg_list[i]);
+		ntc_remote_buf_unmap(&rmr->sg_list[i], dev->ntc);
 
 	ntrdma_rmr_del(rmr);
 	ntrdma_rres_del(&rmr->rres);
@@ -868,7 +868,7 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 	return 0;
 err_map:
 	for (--i; i >= 0 ; i--) {
-		ntc_remote_buf_unmap(&rmr->sg_list[pos + i]);
+		ntc_remote_buf_unmap(&rmr->sg_list[pos + i], dev->ntc);
 	}
 
 	ntrdma_rmr_put(rmr);
@@ -989,7 +989,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 
 err_add:
 	ntrdma_rqp_deinit(rqp);
-	ntc_remote_buf_unmap(&attr.peer_send_cqe_buf);
+	ntc_remote_buf_unmap(&attr.peer_send_cqe_buf, dev->ntc);
 err_peer_send_cqe_buf:
 err_init:
 	kfree(rqp);
@@ -1029,7 +1029,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	if (qp)
 		ntrdma_qp_put(qp);
 
-	ntc_remote_buf_unmap(&rqp->peer_send_cqe_buf);
+	ntc_remote_buf_unmap(&rqp->peer_send_cqe_buf, dev->ntc);
 
 	ntrdma_rqp_del(rqp);
 	ntrdma_rres_del(&rqp->rres);

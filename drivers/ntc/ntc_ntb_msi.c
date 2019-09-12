@@ -559,7 +559,7 @@ static inline void reset_peer_irq(struct ntc_ntb_dev *dev)
 		return;
 
 	if (dev->use_peer_irq_base)
-		ntc_remote_buf_unmap(&dev->peer_irq_base);
+		ntc_remote_buf_unmap(&dev->peer_irq_base, &dev->ntc);
 }
 
 static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
@@ -1029,7 +1029,7 @@ int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *chan)
 }
 EXPORT_SYMBOL(ntc_req_submit);
 
-static int ntc_ntb_req_prep_flags(struct ntc_dev *ntc, bool fence)
+static int ntc_ntb_req_prep_flags(bool fence)
 {
 	int flags = NTC_NTB_DMA_PREP_FLAGS;
 
@@ -1039,7 +1039,7 @@ static int ntc_ntb_req_prep_flags(struct ntc_dev *ntc, bool fence)
 	return flags;
 }
 
-int ntc_req_memcpy(struct ntc_dev *ntc, struct dma_chan *chan,
+int ntc_req_memcpy(struct dma_chan *chan,
 		dma_addr_t dst, dma_addr_t src, u64 len,
 		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx)
 {
@@ -1048,13 +1048,14 @@ int ntc_req_memcpy(struct ntc_dev *ntc, struct dma_chan *chan,
 	dma_cookie_t my_cookie;
 	int flags;
 
-	dev_vdbg(&ntc->dev, "request memcpy dst %llx src %llx len %llx\n",
+	dev_vdbg(chan->device->dev,
+		"request memcpy dst %llx src %llx len %llx\n",
 		 dst, src, len);
 
 	if (!len)
 		return -EINVAL;
 
-	flags = ntc_ntb_req_prep_flags(ntc, fence);
+	flags = ntc_ntb_req_prep_flags(fence);
 
 	tx = chan->device->device_prep_dma_memcpy(chan, dst, src,
 			len, flags);  /*spin_lock_bh per chan*/
@@ -1105,7 +1106,7 @@ static void ntc_req_imm_cb(void *ctx)
 	kfree(imm);
 }
 
-int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *chan,
+int ntc_req_imm(struct dma_chan *chan,
 		u64 dst, void *ptr, size_t len, bool fence,
 		void (*cb)(void *cb_ctx), void *cb_ctx)
 {
@@ -1117,7 +1118,7 @@ int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *chan,
 	int flags;
 
 	if (chan->device->device_prep_dma_imm_data && len == 8) {
-		flags = ntc_ntb_req_prep_flags(ntc, fence);
+		flags = ntc_ntb_req_prep_flags(fence);
 
 		tx = chan->device->device_prep_dma_imm_data(chan, dst,
 							    *(u64 *)ptr,
@@ -1136,7 +1137,7 @@ int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *chan,
 	}
 
 	imm = kmalloc_node(sizeof(*imm), GFP_ATOMIC,
-			   dev_to_node(&ntc->dev));
+			dev_to_node(chan->device->dev));
 	if (!imm) {
 		rc = -ENOMEM;
 		goto err_imm;
@@ -1145,7 +1146,7 @@ int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *chan,
 	memcpy(imm->data_buf, ptr, len);
 	imm->data_len = len;
 
-	imm->dma_dev = ntc->dma_engine_dev;
+	imm->dma_dev = chan->device->dev;
 	imm->dma_addr = dma_map_single(imm->dma_dev,
 				       imm->data_buf,
 				       imm->data_len,
@@ -1164,7 +1165,7 @@ int ntc_req_imm(struct ntc_dev *ntc, struct dma_chan *chan,
 	imm->cb = cb;
 	imm->cb_ctx = cb_ctx;
 
-	rc = ntc_req_memcpy(ntc, chan, dst, imm->dma_addr, imm->data_len,
+	rc = ntc_req_memcpy(chan, dst, imm->dma_addr, imm->data_len,
 			fence, ntc_req_imm_cb, imm);
 	if (rc)
 		goto err_memcpy;
@@ -1202,7 +1203,7 @@ int ntc_req_signal(struct ntc_dev *ntc, struct dma_chan *chan,
 					dev->peer_irq_data[vec],
 					false, cb, cb_ctx);
 	else
-		return ntc_req_imm32(ntc, chan,
+		return ntc_req_imm32(chan,
 				ntc->peer_dram_mw.base +
 				dev->peer_irq_shift[vec],
 				dev->peer_irq_data[vec], false, cb, cb_ctx);
@@ -1318,6 +1319,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 		mw_idx, ntc->peer_dram_mw.base,
 		ntc->peer_dram_mw.size);
 	ntc->peer_dram_mw.desc = NTC_CHAN_MW1;
+	ntc->peer_dram_mw.ntc = ntc;
 
 	/*
 	 * FIXME: ensure window is large enough.
@@ -1338,6 +1340,8 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	ntc->own_dram_mw.base = 0;
 	ntc->own_dram_mw.size = own_dram_size_max;
 	ntc->own_dram_mw.desc = NTC_CHAN_MW1;
+	ntc->own_dram_mw.ntc = ntc;
+	ntc->own_dram_mw.ntb_dev = ntc->ntb_dev;
 	ntc_mm_init(&ntc->own_dram_mw.mm, NULL, 0);
 
 	rc = ntb_mw_set_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
@@ -1363,6 +1367,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	}
 
 	ntc->peer_info_mw.desc = NTC_CHAN_MW0;
+	ntc->peer_info_mw.ntc = ntc;
 
 	ntb_mw_get_align(dev->ntb, NTB_DEF_PEER_IDX, mw_idx - 1,
 			&own_info_addr_align, &own_info_size_align,
@@ -1370,6 +1375,8 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	ntc->own_info_mw.size = own_info_size_max;
 	ntc->own_info_mw.desc = NTC_CHAN_MW0;
+	ntc->own_info_mw.ntc = ntc;
+	ntc->own_info_mw.ntb_dev = ntc->ntb_dev;
 
 	dev->info_mem_buffer = dma_alloc_coherent(ntc_ntb_dma_dev(dev),
 						ntc->own_info_mw.size * 2,
