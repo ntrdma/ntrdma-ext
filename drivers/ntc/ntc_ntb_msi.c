@@ -55,6 +55,10 @@
 
 #define DRIVER_VERSION			"0.3"
 
+static unsigned long mw0_base_addr;
+module_param(mw0_base_addr, ulong, 0444);
+static unsigned long mw0_len;
+module_param(mw0_len, ulong, 0444);
 static unsigned long mw1_base_addr;
 module_param(mw1_base_addr, ulong, 0444);
 static unsigned long mw1_len;
@@ -108,6 +112,8 @@ MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 #define PCIE_ADDR_ALIGN 4
 #define INTEL_DOORBELL_REG_SIZE (4)
 #define INTEL_DOORBELL_REG_OFFSET(__bit) (bit * INTEL_DOORBELL_REG_SIZE)
+
+#define info(...) do { pr_info(DRIVER_NAME ": " __VA_ARGS__); } while (0)
 
 #ifndef iowrite64
 #ifdef writeq
@@ -220,6 +226,51 @@ static u32 supported_versions[] = {
 		NTC_NTB_VERSION_FIRST
 };
 
+static bool ntc_check_reserved(unsigned long start, unsigned long end)
+{
+	bool success;
+	int i;
+
+	if (!start) {
+		info("Reserved memory not specified.");
+		return false;
+	}
+
+	if (end <= start) {
+		info("Illegal reserved memory spec: start=%#lx end=%#lx",
+			start, end);
+		return false;
+	}
+
+	if (start & (PAGE_SIZE - 1)) {
+		info("Unaligned reserved memory start %#lx", start);
+		return false;
+	}
+
+	if (end & (PAGE_SIZE - 1)) {
+		info("Unaligned reserved memory end %#lx", end);
+		return false;
+	}
+
+	success = true;
+	for (i = E820_TYPE_RAM; i <= E820_TYPE_RESERVED_KERN; i++) {
+		if (e820__mapped_any(start, end, i)) {
+			if (i != E820_TYPE_RESERVED) {
+				info("Non-reserved type %d in %#lx:%#lx",
+					i, start, end);
+				success = false;
+			} else
+				info("Found reserved type %d in %#lx:%#lx",
+					i, start, end);
+		} else if (i == E820_TYPE_RESERVED) {
+			info("No reserved memory in %#lx:%#lx",
+				start, end);
+			success = false;
+		}
+	}
+
+	return success;
+}
 static inline
 const struct ntc_ntb_info *ntc_ntb_peer_info(struct ntc_ntb_dev *dev)
 {
@@ -1696,35 +1747,10 @@ struct ntb_client ntc_ntb_client = {
 
 int __init ntc_init(void)
 {
-	u64 start = mw1_base_addr;
-	u64 end = start + mw1_len;
-	bool has_reserved;
-	bool has_other;
-	int i;
+	info("%s %s init", DRIVER_DESCRIPTION, DRIVER_VERSION);
 
-	pr_info("%s: %s %s init\n", DRIVER_NAME,
-		DRIVER_DESCRIPTION, DRIVER_VERSION);
-
-
-	pr_info("mw1_base_addr %#lx mw1_len %#lx",
-		mw1_base_addr, mw1_len);
-
-	if (start && end > start) {
-		has_reserved = e820__mapped_any(start, end, E820_TYPE_RESERVED);
-		has_other = false;
-		for (i = E820_TYPE_RAM; i <= E820_TYPE_RESERVED_KERN; i++) {
-			if (i == E820_TYPE_RESERVED)
-				continue;
-			if (e820__mapped_any(start, end, i)) {
-				pr_info("mw1 has non-reserved type %d", i);
-				has_other = true;
-			}
-		}
-		if (has_reserved && !has_other)
-			pr_info("mw1 all is reserved memory");
-		else
-			pr_info("mw1 is NOT all reserved memory");
-	}
+	ntc_check_reserved(mw0_base_addr, mw0_base_addr + mw0_len);
+	ntc_check_reserved(mw1_base_addr, mw1_base_addr + mw1_len);
 
 	if (debugfs_initialized())
 		ntc_dbgfs = debugfs_create_dir(KBUILD_MODNAME, NULL);
@@ -1737,6 +1763,5 @@ void __exit ntc_exit(void)
 	ntb_unregister_client(&ntc_ntb_client);
 	debugfs_remove_recursive(ntc_dbgfs);
 
-	pr_info("%s: %s %s exit\n", DRIVER_NAME,
-			DRIVER_DESCRIPTION, DRIVER_VERSION);
+	info("%s %s exit", DRIVER_DESCRIPTION, DRIVER_VERSION);
 }
