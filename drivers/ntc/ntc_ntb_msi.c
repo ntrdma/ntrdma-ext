@@ -55,10 +55,12 @@
 
 #define DRIVER_VERSION			"0.3"
 
+static bool mw0_reserved;
 static unsigned long mw0_base_addr;
 module_param(mw0_base_addr, ulong, 0444);
 static unsigned long mw0_len;
 module_param(mw0_len, ulong, 0444);
+static bool mw1_reserved;
 static unsigned long mw1_base_addr;
 module_param(mw1_base_addr, ulong, 0444);
 static unsigned long mw1_len;
@@ -168,10 +170,13 @@ struct ntc_ntb_dev {
 	/* local ntb window offset to peer dram */
 	dma_addr_t		peer_dram_base_dma;
 
-	/* local buffer for remote driver to write info */
-	void				*info_mem;
-	void				*info_mem_buffer;
-	dma_addr_t			info_mem_buffer_dma;
+	bool				info_mem_reserved;
+	/* The following field used only when !info_mem_reserved */
+	struct {
+		void		*ptr;
+		resource_size_t	size;
+		dma_addr_t	dma_addr;
+	} info_mem_buffer;
 
 	/* remote buffer for local driver to write info */
 	struct ntc_ntb_info __iomem	*info_self_on_peer;
@@ -271,10 +276,13 @@ static bool ntc_check_reserved(unsigned long start, unsigned long end)
 
 	return success;
 }
+
 static inline
 const struct ntc_ntb_info *ntc_ntb_peer_info(struct ntc_ntb_dev *dev)
 {
-	return dev->info_mem;
+	struct ntc_dev *ntc = &dev->ntc;
+
+	return ntc->own_info_mw.base_ptr;
 }
 
 static int ntc_ntb_read_msi_config(struct ntc_ntb_dev *dev,
@@ -1323,6 +1331,122 @@ static struct ntb_ctx_ops ntc_ntb_ctx_ops = {
 	.db_event			= ntc_ntb_db_event,
 };
 
+static int ntc_ntb_init_mw0_coherent(struct ntc_ntb_dev *dev)
+{
+	struct ntc_dev *ntc = &dev->ntc;
+	resource_size_t alignment = ntc->own_info_mw.size;
+	resource_size_t size = ntc->own_info_mw.size;
+	resource_size_t alloc_size = size * 2;
+
+	if (!alloc_size)
+		return -EINVAL;
+
+	if (alloc_size > KMALLOC_MAX_SIZE)
+		return -EINVAL;
+
+	dev->info_mem_buffer.size = alloc_size;
+	dev->info_mem_buffer.ptr = dma_alloc_coherent(ntc_ntb_dma_dev(dev),
+						alloc_size,
+						&dev->info_mem_buffer.dma_addr,
+						GFP_KERNEL);
+	if (!dev->info_mem_buffer.ptr) {
+		pr_info("OWN INFO MW: cannot alloc. Actual size %#llx.",
+			dev->info_mem_buffer.size);
+		return -ENOMEM;
+	}
+
+	ntc->own_info_mw.base = ALIGN(dev->info_mem_buffer.dma_addr, alignment);
+	ntc->own_info_mw.base_ptr = dev->info_mem_buffer.ptr +
+		(ntc->own_info_mw.base - dev->info_mem_buffer.dma_addr);
+	pr_info("OWN INFO MW: base %#llx size %llx ptr %p",
+		ntc->own_info_mw.base, size, ntc->own_info_mw.base_ptr);
+	pr_info("OWN INFO MW: Actual DMA %llx ptr %p",
+		dev->info_mem_buffer.dma_addr, dev->info_mem_buffer.ptr);
+
+	dev->info_mem_reserved = false;
+	return 0;
+}
+
+static void ntc_ntb_deinit_mw0_coherent(struct ntc_ntb_dev *dev)
+{
+	dma_free_coherent(ntc_ntb_dma_dev(dev),
+			dev->info_mem_buffer.size,
+			dev->info_mem_buffer.ptr,
+			dev->info_mem_buffer.dma_addr);
+}
+
+static int ntc_ntb_init_mw0_reserved(struct ntc_ntb_dev *dev)
+{
+	struct ntc_dev *ntc = &dev->ntc;
+	resource_size_t alignment = ntc->own_info_mw.size;
+	resource_size_t size = ntc->own_info_mw.size;
+	unsigned long start = mw0_base_addr;
+	unsigned long end = start + mw0_len;
+	unsigned long aligned_start;
+
+	if (!mw0_reserved)
+		return -EINVAL;
+
+	if (!alignment || (alignment & (alignment - 1)))
+		return -EINVAL;
+
+	aligned_start = ALIGN(start, alignment);
+	if (aligned_start >= end)
+		return -EINVAL;
+
+	if (end - aligned_start < size)
+		return -EINVAL;
+
+	ntc->own_info_mw.base_ptr = memremap(aligned_start, size, MEMREMAP_WB);
+	if (!ntc->own_info_mw.base_ptr) {
+		pr_info("OWN INFO MW: cannot ioremap. Start %#lx. Size %#llx.",
+			aligned_start, size);
+		return -EIO;
+	}
+	ntc->own_info_mw.base = aligned_start;
+
+	pr_info("OWN INFO MW: base %#llx size %llx ptr %p IN RESERVED MW",
+		ntc->own_info_mw.base, size, ntc->own_info_mw.base_ptr);
+
+	dev->info_mem_reserved = true;
+
+	return 0;
+}
+
+static void ntc_ntb_deinit_mw0_reserved(struct ntc_ntb_dev *dev)
+{
+	struct ntc_dev *ntc = &dev->ntc;
+
+	memunmap(ntc->own_info_mw.base_ptr);
+}
+
+static int ntc_ntb_init_mw0(struct ntc_ntb_dev *dev)
+{
+	int rc_reserved;
+	int rc_coherent;
+
+	rc_reserved = ntc_ntb_init_mw0_reserved(dev);
+	if (rc_reserved >= 0)
+		return rc_reserved;
+
+	rc_coherent = ntc_ntb_init_mw0_coherent(dev);
+	if (rc_coherent >= 0)
+		return rc_coherent;
+
+	if (rc_reserved != -EINVAL)
+		return rc_reserved;
+
+	return rc_coherent;
+}
+
+static void ntc_ntb_deinit_mw0(struct ntc_ntb_dev *dev)
+{
+	if (dev->info_mem_reserved)
+		ntc_ntb_deinit_mw0_reserved(dev);
+	else
+		ntc_ntb_deinit_mw0_coherent(dev);
+}
+
 static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 {
 	int rc, i, mw_idx, mw_count;
@@ -1389,6 +1513,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* FIXME: zero is not a portable address for local dram */
 	ntc->own_dram_mw.base = 0;
+	ntc->own_dram_mw.base_ptr = NULL;
 	ntc->own_dram_mw.size = own_dram_size_max;
 	ntc->own_dram_mw.desc = NTC_CHAN_MW1;
 	ntc->own_dram_mw.ntc = ntc;
@@ -1429,24 +1554,9 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	ntc->own_info_mw.ntc = ntc;
 	ntc->own_info_mw.ntb_dev = ntc->ntb_dev;
 
-	dev->info_mem_buffer = dma_alloc_coherent(ntc_ntb_dma_dev(dev),
-						ntc->own_info_mw.size * 2,
-						&dev->info_mem_buffer_dma,
-						GFP_KERNEL);
-	if (!dev->info_mem_buffer) {
-		pr_info("OWN INFO MW: cannot alloc. Actual size %#llx.",
-			ntc->own_info_mw.size * 2);
-		rc = -ENOMEM;
+	rc = ntc_ntb_init_mw0(dev);
+	if (rc < 0)
 		goto err_info;
-	}
-	ntc->own_info_mw.base =
-		ALIGN(dev->info_mem_buffer_dma, ntc->own_info_mw.size);
-	dev->info_mem = dev->info_mem_buffer +
-		(ntc->own_info_mw.base - dev->info_mem_buffer_dma);
-	pr_info("OWN INFO MW: base %#llx size %llx ptr %p",
-		ntc->own_info_mw.base, ntc->own_info_mw.size, dev->info_mem);
-	pr_info("OWN INFO MW: Actual DMA %llx ptr %p",
-		dev->info_mem_buffer_dma, dev->info_mem_buffer);
 
 	dev->info_self_on_peer = ioremap(ntc->peer_info_mw.base,
 					sizeof(*dev->info_self_on_peer));
@@ -1467,7 +1577,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	}
 
 	ntc_mm_init(&ntc->own_info_mw.mm,
-		dev->info_mem + sizeof(struct ntc_ntb_info),
+		ntc->own_info_mw.base_ptr + sizeof(struct ntc_ntb_info),
 		ntc->own_info_mw.size - sizeof(struct ntc_ntb_info));
 
 	/* haven't negotiated the version */
@@ -1524,10 +1634,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
  err_trans:
 	iounmap(dev->info_self_on_peer);
  err_map:
-	dma_free_coherent(ntc_ntb_dma_dev(dev),
-			ntc->own_info_mw.size * 2,
-			dev->info_mem_buffer,
-			dev->info_mem_buffer_dma);
+	ntc_ntb_deinit_mw0(dev);
  err_info:
 	for (i = 0; i < mw_count; ++i)
 		ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, i);
@@ -1559,10 +1666,7 @@ static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 
 	iounmap(dev->info_self_on_peer);
 
-	dma_free_coherent(ntc_ntb_dma_dev(dev),
-			ntc->own_info_mw.size * 2,
-			dev->info_mem_buffer,
-			dev->info_mem_buffer_dma);
+	ntc_ntb_deinit_mw0(dev);
 }
 
 static bool ntc_ntb_filter_bus(struct dma_chan *chan,
@@ -1749,8 +1853,10 @@ int __init ntc_init(void)
 {
 	info("%s %s init", DRIVER_DESCRIPTION, DRIVER_VERSION);
 
-	ntc_check_reserved(mw0_base_addr, mw0_base_addr + mw0_len);
-	ntc_check_reserved(mw1_base_addr, mw1_base_addr + mw1_len);
+	mw0_reserved =
+		ntc_check_reserved(mw0_base_addr, mw0_base_addr + mw0_len);
+	mw1_reserved =
+		ntc_check_reserved(mw1_base_addr, mw1_base_addr + mw1_len);
 
 	if (debugfs_initialized())
 		ntc_dbgfs = debugfs_create_dir(KBUILD_MODNAME, NULL);
