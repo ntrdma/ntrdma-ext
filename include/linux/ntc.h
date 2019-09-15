@@ -127,6 +127,7 @@ struct ntc_own_mw {
 	struct ntc_dev *ntc;
 	struct device *ntb_dev;
 	dma_addr_t base;
+	void *base_ptr;
 	resource_size_t size;
 	enum ntc_chan_mw_desc desc;
 	struct ntc_mm mm;
@@ -1062,27 +1063,32 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 #ifndef USE_KMALLOC_FOR_EXPORT
 	buf->own_mw = &ntc->own_info_mw;
 	buf->ptr = ntc_mm_alloc(&buf->own_mw->mm, size, gfp);
-#else
-	buf->own_mw = &ntc->own_dram_mw;
-	buf->ptr = kmalloc_node(size, gfp, dev_to_node(&ntc->dev));
-	if (!buf->ptr)
-		buf->ptr = ERR_PTR(-ENOMEM);
-#endif
 	if (unlikely(IS_ERR(buf->ptr))) {
 		rc = PTR_ERR(buf->ptr);
 		buf->ptr = NULL;
 		return rc;
 	}
-
-	ntb_dma_addr = dma_map_single(ntc->ntb_dev, buf->ptr, size,
-				DMA_FROM_DEVICE);
-	if (unlikely(dma_mapping_error(ntc->ntb_dev, ntb_dma_addr))) {
-#ifndef USE_KMALLOC_FOR_EXPORT
-		ntc_mm_free(&buf->own_mw->mm, buf->ptr, size);
 #else
-		kfree(buf->ptr);
+	buf->own_mw = &ntc->own_dram_mw;
+	buf->ptr = kmalloc_node(size, gfp, dev_to_node(&ntc->dev));
+	if (unlikely(!buf->ptr))
+		return -ENOMEM;
 #endif
-		return -EIO;
+
+	if (buf->own_mw->base_ptr)
+		ntb_dma_addr = buf->own_mw->base +
+			(buf->ptr - buf->own_mw->base_ptr);
+	else {
+		ntb_dma_addr = dma_map_single(ntc->ntb_dev, buf->ptr, size,
+					DMA_FROM_DEVICE);
+		if (unlikely(dma_mapping_error(ntc->ntb_dev, ntb_dma_addr))) {
+#ifndef USE_KMALLOC_FOR_EXPORT
+			ntc_mm_free(&buf->own_mw->mm, buf->ptr, size);
+#else
+			kfree(buf->ptr);
+#endif
+			return -EIO;
+		}
 	}
 
 	buf->ntb_dma_addr = ntb_dma_addr;
@@ -1191,7 +1197,7 @@ static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
  */
 static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 {
-	if (buf->ntb_dma_addr)
+	if (buf->ntb_dma_addr && !buf->own_mw->base_ptr)
 		dma_unmap_single(buf->own_mw->ntb_dev, buf->ntb_dma_addr,
 				buf->size, DMA_FROM_DEVICE);
 
