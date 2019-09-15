@@ -504,7 +504,7 @@ static inline s64 ntrdma_lrcv_cursor_next_io_deref(struct ntrdma_lrcv_cursor *c)
 		return -EINVAL;
 
 	if (c->mr)
-		ntc_bidir_buf_deref(c->mr_sge, c->next_io_off, len);
+		ntc_bidir_buf_sync(c->mr_sge, c->next_io_off, len);
 
 	return len;
 }

@@ -54,18 +54,16 @@ MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESCRIPTION);
 
 int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
-		struct ntc_bidir_buf *sgl, int count, int *rc_out)
+		struct ntc_bidir_buf *sgl, int count)
 {
 	struct scatterlist *sg, *next;
 	dma_addr_t dma_addr;
 	size_t dma_len, offset, total_len;
 	int i, n;
-	int rc;
 
 	offset = ib_umem_offset(ib_umem);
 	total_len = 0;
 	n = 0;
-	rc = 0;
 	for_each_sg(ib_umem->sg_head.sgl, sg, ib_umem->sg_head.nents, i) {
 		/* dma_addr is start DMA addr of the contiguous range */
 		dma_addr = sg_dma_address(sg);
@@ -99,21 +97,14 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 			total_len = ib_umem->length;
 		}
 
-		if (sgl && (n < count)) {
-			rc = ntc_bidir_buf_map_dma(&sgl[n], ntc,
-						dma_len, dma_addr);
-			if (rc < 0)
-				break;
-		}
+		if (sgl && (n < count))
+			ntc_bidir_buf_map_dma(&sgl[n], ntc, dma_len, dma_addr);
 
 		++n;
 
 		if (total_len == ib_umem->length)
 			break;
 	}
-
-	if (rc_out)
-		*rc_out = rc;
 
 	return n;
 }

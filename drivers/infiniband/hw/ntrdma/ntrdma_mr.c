@@ -72,10 +72,9 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 	int rc;
 
 	count = ntc_umem_sgl(dev->ntc, mr->ib_umem,
-			mr->sg_list, mr->sg_count, &rc);
+			mr->sg_list, mr->sg_count);
 	if (count != mr->sg_count) {
-		if (!rc)
-			rc = -EFAULT;
+		rc = -EFAULT;
 		goto err;
 	}
 
@@ -87,7 +86,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 	return 0;
 
  err:
-	ntc_bidir_buf_unmap_sgl(mr->sg_list, count);
+	ntc_bidir_buf_clear_sgl(mr->sg_list, count);
 
 	return rc;
 }
@@ -95,7 +94,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 void ntrdma_mr_deinit(struct ntrdma_mr *mr)
 {
 	ntrdma_res_deinit(&mr->res);
-	ntc_bidir_buf_unmap_sgl(mr->sg_list, mr->sg_count);
+	ntc_bidir_buf_clear_sgl(mr->sg_list, mr->sg_count);
 }
 
 static int ntrdma_mr_enable(struct ntrdma_res *res)
