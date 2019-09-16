@@ -498,7 +498,7 @@ static int ntrdma_qp_enable(struct ntrdma_res *res)
 	int rc;
 
 	if (qp->ibqp.qp_type == IB_QPT_GSI) {
-		qp->recv_prod = qp->recv_cmpl;
+		qp->recv_prod = qp->recv_cons = qp->recv_cmpl;
 		TRACE("Enabling GSI QP post %u prod %u cons %u cmpl %u\n",
 				qp->recv_post, qp->recv_prod,
 				qp->recv_cons, qp->recv_cmpl);
