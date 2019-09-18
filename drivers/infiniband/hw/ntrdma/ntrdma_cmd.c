@@ -237,15 +237,20 @@ void ntrdma_dev_cmd_deinit(struct ntrdma_dev *dev)
 }
 
 void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
-			       struct ntrdma_cmd_hello_info *info)
+			struct ntrdma_cmd_hello_info __iomem *info)
 {
-	ntc_export_buf_make_desc(&info->send_rsp_buf_desc,
-				&dev->cmd_send_rsp_buf);
-	info->send_cons_shift = dev->cmd_send_cap * sizeof(union ntrdma_rsp);
-	info->send_cap = dev->cmd_send_cap;
-	info->send_idx = ntrdma_dev_cmd_send_cons(dev);
-	info->send_vbell_idx = dev->cmd_send_vbell_idx;
-	info->recv_vbell_idx = dev->cmd_recv_vbell_idx;
+	struct ntc_remote_buf_desc send_rsp_buf_desc;
+
+	ntc_export_buf_make_desc(&send_rsp_buf_desc, &dev->cmd_send_rsp_buf);
+	memcpy_toio(&info->send_rsp_buf_desc, &send_rsp_buf_desc,
+		sizeof(send_rsp_buf_desc));
+
+	iowrite64(dev->cmd_send_cap * sizeof(union ntrdma_rsp),
+		&info->send_cons_shift);
+	iowrite32(dev->cmd_send_cap, &info->send_cap);
+	iowrite32(ntrdma_dev_cmd_send_cons(dev), &info->send_idx);
+	iowrite32(dev->cmd_send_vbell_idx, &info->send_vbell_idx);
+	iowrite32(dev->cmd_recv_vbell_idx, &info->recv_vbell_idx);
 }
 
 static inline
@@ -333,17 +338,21 @@ err_sanity:
 
 int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
 			const struct ntrdma_cmd_hello_info *peer_info,
-			struct ntrdma_cmd_hello_prep *prep)
+			struct ntrdma_cmd_hello_prep __iomem *prep)
 {
+	struct ntc_remote_buf_desc recv_buf_desc;
 	int rc;
 
 	rc = ntrdma_dev_cmd_hello_prep_unprep(dev, peer_info, false);
 	if (rc)
 		return rc;
 
-	ntc_export_buf_make_desc(&prep->recv_buf_desc, &dev->cmd_recv_buf);
+	ntc_export_buf_make_desc(&recv_buf_desc, &dev->cmd_recv_buf);
+	memcpy_toio(&prep->recv_buf_desc, &recv_buf_desc,
+		sizeof(recv_buf_desc));
 
-	prep->recv_prod_shift = dev->cmd_recv_cap * sizeof(union ntrdma_cmd);
+	iowrite64(dev->cmd_recv_cap * sizeof(union ntrdma_cmd),
+		&prep->recv_prod_shift);
 
 	return 0;
 }

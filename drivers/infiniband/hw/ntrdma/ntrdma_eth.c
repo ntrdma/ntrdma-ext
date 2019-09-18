@@ -225,19 +225,27 @@ void ntrdma_dev_eth_deinit(struct ntrdma_dev *dev)
 }
 
 int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
-			       struct ntrdma_eth_hello_info *info)
+			struct ntrdma_eth_hello_info __iomem *info)
 {
 	struct ntrdma_eth *eth = dev->eth;
+	struct ntc_remote_buf_desc rx_cqe_buf_desc;
+	struct ntc_remote_buf_desc rx_cons_buf_desc;
 
-	info->rx_cap = eth->rx_cap;
-	info->rx_idx = eth->rx_cmpl;
+	iowrite32(eth->rx_cap, &info->rx_cap);
+	iowrite32(eth->rx_cmpl, &info->rx_idx);
 	if (!ntc_export_buf_valid(&eth->rx_cqe_buf) ||
 		!ntc_export_buf_valid(&eth->rx_cons_buf))
 		return -EINVAL;
 
-	ntc_export_buf_make_desc(&info->rx_cqe_buf_desc, &eth->rx_cqe_buf);
-	ntc_export_buf_make_desc(&info->rx_cons_buf_desc, &eth->rx_cons_buf);
-	info->vbell_idx = eth->vbell_idx;
+	ntc_export_buf_make_desc(&rx_cqe_buf_desc, &eth->rx_cqe_buf);
+	memcpy_toio(&info->rx_cqe_buf_desc, &rx_cqe_buf_desc,
+		sizeof(rx_cqe_buf_desc));
+
+	ntc_export_buf_make_desc(&rx_cons_buf_desc, &eth->rx_cons_buf);
+	memcpy_toio(&info->rx_cons_buf_desc, &rx_cons_buf_desc,
+		sizeof(rx_cons_buf_desc));
+
+	iowrite32(eth->vbell_idx, &info->vbell_idx);
 
 	return 0;
 }
@@ -245,7 +253,7 @@ int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 static inline
 int ntrdma_dev_eth_hello_prep_unperp(struct ntrdma_dev *dev,
 				const struct ntrdma_eth_hello_info *peer_info,
-				struct ntrdma_eth_hello_prep *prep,
+				struct ntrdma_eth_hello_prep __iomem *prep,
 				int is_unperp)
 {
 	struct ntrdma_eth *eth = dev->eth;
@@ -342,17 +350,24 @@ err_peer_rx_cqe_buf:
 
 int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 			const struct ntrdma_eth_hello_info *peer_info,
-			struct ntrdma_eth_hello_prep *prep)
+			struct ntrdma_eth_hello_prep __iomem *prep)
 {
 	struct ntrdma_eth *eth = dev->eth;
+	struct ntc_remote_buf_desc tx_wqe_buf_desc;
+	struct ntc_remote_buf_desc tx_prod_buf_desc;
 	int rc;
 
 	rc = ntrdma_dev_eth_hello_prep_unperp(dev, peer_info, prep, false);
 	if (rc)
 		return rc;
 
-	ntc_export_buf_make_desc(&prep->tx_wqe_buf_desc, &eth->tx_wqe_buf);
-	ntc_export_buf_make_desc(&prep->tx_prod_buf_desc, &eth->tx_prod_buf);
+	ntc_export_buf_make_desc(&tx_wqe_buf_desc, &eth->tx_wqe_buf);
+	memcpy_toio(&prep->tx_wqe_buf_desc, &tx_wqe_buf_desc,
+		sizeof(tx_wqe_buf_desc));
+
+	ntc_export_buf_make_desc(&tx_prod_buf_desc, &eth->tx_prod_buf);
+	memcpy_toio(&prep->tx_prod_buf_desc, &tx_prod_buf_desc,
+		sizeof(tx_prod_buf_desc));
 
 	return 0;
 }

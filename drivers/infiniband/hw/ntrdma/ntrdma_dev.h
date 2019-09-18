@@ -167,7 +167,7 @@ struct ntrdma_dev {
 	/* hello buffers */
 	const u8 *hello_local_buf;
 	int hello_local_buf_size;
-	u8 *hello_peer_buf;
+	u8 __iomem *hello_peer_buf;
 	int hello_peer_buf_size;
 
 	/* rdma resource synchronization state */

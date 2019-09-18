@@ -80,23 +80,24 @@ struct ntrdma_hello_phase3 {
 	struct ntrdma_eth_hello_prep	eth_prep;
 };
 
-static void ntrdma_buff_supported_versions(struct ntrdma_hello_phase1 *buff)
+static void
+ntrdma_buff_supported_versions(struct ntrdma_hello_phase1 __iomem *buff)
 {
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(supported_versions); i++)
-		buff->versions[i] = supported_versions[i];
-	buff->version_num = ARRAY_SIZE(supported_versions);
-	BUILD_BUG_ON(buff->version_num > MAX_SUPPORTED_VERSIONS);
+		iowrite32(supported_versions[i], &buff->versions[i]);
+	iowrite32(ARRAY_SIZE(supported_versions), &buff->version_num);
+	BUILD_BUG_ON(ARRAY_SIZE(supported_versions) > MAX_SUPPORTED_VERSIONS);
 }
 
-int ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
-			const void *in_buf, size_t in_size,
-			void *out_buf, size_t out_size)
+static int ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
+				const void *in_buf, size_t in_size,
+				void __iomem *out_buf, size_t out_size)
 {
-	struct ntrdma_hello_phase1 *out = out_buf;
+	struct ntrdma_hello_phase1 __iomem *out = out_buf;
 	if (sizeof(struct ntrdma_hello_phase1) > out_size)
-		return -EINVAL; 
+		return -EINVAL;
 
 	ntrdma_buff_supported_versions(out);
 
@@ -126,13 +127,14 @@ static inline u32 ntrdma_version_choose(struct ntrdma_dev *dev,
 }
 
 
-int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
-			const void *in_buf, size_t in_size,
-			void *out_buf, size_t out_size)
+static int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
+				const void *in_buf, size_t in_size,
+				void __iomem *out_buf, size_t out_size)
 {
 	const struct ntrdma_hello_phase1 *in;
 	struct ntrdma_hello_phase1 local;
-	struct ntrdma_hello_phase2 *out;
+	struct ntrdma_hello_phase2 __iomem *out;
+	struct ntc_remote_buf_desc vbell_ntc_buf_desc;
 
 	if (in_size < sizeof(*in) || out_size < sizeof(*out))
 		return -EINVAL;
@@ -154,13 +156,16 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	ntrdma_dbg(dev, "Agree on version %d", dev->version);
 
 	/* protocol validation */
-	out->version_magic = NTRDMA_V1_MAGIC;
-	out->phase_magic = NTRDMA_V1_P2_MAGIC;
+	iowrite32(NTRDMA_V1_MAGIC, &out->version_magic);
+	iowrite32(NTRDMA_V1_P2_MAGIC, &out->phase_magic);
 
 	/* virtual doorbells */
-	ntc_export_buf_make_desc(&out->vbell_ntc_buf_desc, &dev->vbell_buf);
-	out->vbell_count = dev->vbell_count;
-	out->vbell_reserved = 0;
+	ntc_export_buf_make_desc(&vbell_ntc_buf_desc, &dev->vbell_buf);
+	memcpy_toio(&out->vbell_ntc_buf_desc, &vbell_ntc_buf_desc,
+		sizeof(vbell_ntc_buf_desc));
+
+	iowrite32(dev->vbell_count, &out->vbell_count);
+	iowrite32(0, &out->vbell_reserved);
 
 	/* command rings */
 	ntrdma_dev_cmd_hello_info(dev, &out->cmd_info);
@@ -169,12 +174,12 @@ int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	return ntrdma_dev_eth_hello_info(dev, &out->eth_info);
 }
 
-int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
-			const void *in_buf, size_t in_size,
-			void *out_buf, size_t out_size)
+static int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
+				const void *in_buf, size_t in_size,
+				void __iomem *out_buf, size_t out_size)
 {
 	const struct ntrdma_hello_phase2 *in;
-	struct ntrdma_hello_phase3 *out;
+	struct ntrdma_hello_phase3 __iomem *out;
 	int rc;
 
 	if (in_size < sizeof(*in) || out_size < sizeof(*out))
@@ -189,8 +194,8 @@ int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 	if (in->phase_magic != NTRDMA_V1_P2_MAGIC)
 		return -EINVAL;
 
-	out->version_magic = NTRDMA_V1_MAGIC;
-	out->phase_magic = NTRDMA_V1_P3_MAGIC;
+	iowrite32(NTRDMA_V1_MAGIC, &out->version_magic);
+	iowrite32(NTRDMA_V1_P3_MAGIC, &out->phase_magic);
 
 	ntrdma_dbg(dev, "vbell_count %d\n", in->vbell_count);
 	if (in->vbell_count > NTRDMA_DEV_VBELL_COUNT) {
@@ -216,7 +221,6 @@ int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 		return rc;
 	}
 
-
 	/* ethernet rings */
 	rc = ntrdma_dev_eth_hello_prep(dev, &in->eth_info, &out->eth_prep);
 	if (rc) {
@@ -226,9 +230,9 @@ int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 	return NOT_DONE;
 }
 
-int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
-			const void *in_buf, size_t in_size,
-			void *out_buf, size_t out_size)
+static int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
+				const void *in_buf, size_t in_size,
+				void __iomem *out_buf, size_t out_size)
 {
 	const struct ntrdma_hello_phase3 *in;
 	int rc;
@@ -262,7 +266,7 @@ int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase)
 {
 	const void *in_buf;
-	void *out_buf;
+	void __iomem *out_buf;
 	int in_size = dev->hello_local_buf_size/2;
 	int out_size = dev->hello_peer_buf_size/2;
 
