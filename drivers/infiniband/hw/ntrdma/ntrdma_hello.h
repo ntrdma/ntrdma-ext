@@ -57,10 +57,10 @@ struct ntrdma_cmd_hello_prep {
 };
 
 void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
-			       struct ntrdma_cmd_hello_info *info);
+			struct ntrdma_cmd_hello_info __iomem *info);
 int ntrdma_dev_cmd_hello_prep(struct ntrdma_dev *dev,
 			const struct ntrdma_cmd_hello_info *peer_info,
-			struct ntrdma_cmd_hello_prep *prep);
+			struct ntrdma_cmd_hello_prep __iomem *prep);
 int ntrdma_dev_cmd_hello_done(struct ntrdma_dev *dev,
 			const struct ntrdma_cmd_hello_prep *peer_prep);
 
@@ -78,10 +78,10 @@ struct ntrdma_eth_hello_prep {
 };
 
 int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
-			       struct ntrdma_eth_hello_info *info);
+			struct ntrdma_eth_hello_info __iomem *info);
 int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 			const struct ntrdma_eth_hello_info *peer_info,
-			struct ntrdma_eth_hello_prep *prep);
+			struct ntrdma_eth_hello_prep __iomem *prep);
 int ntrdma_dev_eth_hello_done(struct ntrdma_dev *dev,
 			const struct ntrdma_eth_hello_prep *peer_prep);
 

@@ -117,19 +117,6 @@ MODULE_PARM_DESC(use_msi, "Use MSI(X) as interrupts");
 
 #define info(...) do { pr_info(DRIVER_NAME ": " __VA_ARGS__); } while (0)
 
-#ifndef iowrite64
-#ifdef writeq
-#define iowrite64 writeq
-#else
-#define iowrite64 __lame_iowrite64
-static inline void __lame_iowrite64(u64 val, void __iomem *ptr)
-{
-	iowrite32(val, ptr);
-	iowrite32(val >> 32, ptr + sizeof(u32));
-}
-#endif
-#endif
-
 struct ntc_ntb_imm {
 	char				data_buf[sizeof(u64)];
 	size_t				data_len;

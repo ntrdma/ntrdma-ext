@@ -41,6 +41,7 @@
 #include <linux/dma-direction.h>
 #include <linux/rwlock.h>
 #include <linux/dma-mapping.h>
+#include <linux/io.h>
 #include <linux/slab.h>
 
 #include "linux/ntc_trace.h"
@@ -55,6 +56,19 @@ struct ntc_dev;
 
 struct ib_ucontext;
 struct ib_umem;
+
+#ifndef iowrite64
+#ifdef writeq
+#define iowrite64 writeq
+#else
+#define iowrite64 __lame_iowrite64
+static inline void __lame_iowrite64(u64 val, void __iomem *ptr)
+{
+	iowrite32(val, ptr);
+	iowrite32(val >> 32, ptr + sizeof(u32));
+}
+#endif
+#endif
 
 /**
  * struct ntc_driver_ops - ntc driver operations
