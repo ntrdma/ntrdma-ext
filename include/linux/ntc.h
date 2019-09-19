@@ -48,6 +48,8 @@
 #define SYNC_RESET 1
 #define ASYNC_RESET 0
 
+#define USE_KMALLOC_FOR_EXPORT 1
+
 struct ntc_driver;
 struct ntc_dev;
 
