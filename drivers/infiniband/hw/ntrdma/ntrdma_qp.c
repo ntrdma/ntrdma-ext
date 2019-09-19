@@ -715,7 +715,9 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	struct ntrdma_qp *qp;
 	struct ntrdma_dev *dev;
 	struct ntrdma_rqp *rqp = NULL;
-	int start, end, base;
+	int start_cmpl, start_cons, end, base;
+	bool need_cue = false;
+	unsigned long irqflags = 0;
 
 	qp = ntrdma_res_qp(res);
 	dev = ntrdma_qp_dev(qp);
@@ -748,16 +750,28 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	 */
 	if (qp->ibqp.qp_type == IB_QPT_GSI) {
 		ntrdma_qp_send_cmpl_start(qp);
-		ntrdma_ring_consume(qp->send_abort ? qp->send_post :
+		spin_lock_irqsave(&qp->send_post_slock, irqflags);
+		ntrdma_ring_consume(qp->send_post, qp->send_cmpl,
+				qp->send_cap, &start_cmpl, &end, &base);
+		ntrdma_ring_consume(qp->send_post, ntrdma_qp_send_cons(qp),
+				qp->send_cap, &start_cons, &end, &base);
+		ntrdma_info(dev,
+				"QP %d, start %d, end %d, base %d: send_abort %d, send_post %d, cons %d, send_cmpl %d, send_prod %d\n",
+				qp->res.key, start_cmpl, end, base,
+				qp->send_abort, qp->send_post,
 				ntrdma_qp_send_cons(qp), qp->send_cmpl,
-				qp->send_cap, &start, &end, &base);
-		ntrdma_qp_send_cmpl_done(qp);
-		ntrdma_info(dev, "QP %d, start %d, end %d, base %d: send_abort %d, send_post %d, cons %d, send_cmpl %d, send_prod %d\n",
-				qp->res.key, start, end, base, qp->send_abort,
-				qp->send_post, ntrdma_qp_send_cons(qp),
-				qp->send_cmpl, qp->send_prod);
-		if (start != end)
+				qp->send_prod);
+		if (start_cons != end) {
 			qp->send_aborting = true;
+			move_to_err_state(qp);
+			need_cue = true;
+		} else if (start_cmpl != start_cons) {
+			need_cue = true;
+		}
+		spin_unlock_irqrestore(&qp->send_post_slock, irqflags);
+		ntrdma_qp_send_cmpl_done(qp);
+		if (need_cue)
+			ntrdma_cq_cue(qp->send_cq);
 	} else
 		qp->send_aborting = true;
 	/* GSI can have only send abort (in SQE state) */
