@@ -1051,7 +1051,9 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 				struct ntc_dev *ntc,
 				u64 size, gfp_t gfp)
 {
+#ifndef USE_KMALLOC_FOR_EXPORT
 	int rc;
+#endif
 	dma_addr_t dma_addr;
 
 	ntc_export_buf_clear(buf);
