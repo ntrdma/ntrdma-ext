@@ -54,7 +54,7 @@ MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESCRIPTION);
 
 int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
-		struct ntc_bidir_buf *sgl, int count)
+		struct ntc_mr_buf *sgl, int count, int mr_access_flags)
 {
 	struct scatterlist *sg, *next;
 	dma_addr_t dma_addr;
@@ -69,6 +69,9 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 		dma_addr = sg_dma_address(sg);
 		/* dma_len accumulates the length of the contiguous range */
 		dma_len = sg_dma_len(sg);
+
+		pr_info("ntc_umem_sgl: dma_addr %#llx access %d",
+			dma_addr, mr_access_flags);
 
 		for (; i + 1 < ib_umem->sg_head.nents; ++i) {
 			next = sg_next(sg);
@@ -97,8 +100,12 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 			total_len = ib_umem->length;
 		}
 
-		if (sgl && (n < count))
-			ntc_bidir_buf_map_dma(&sgl[n], ntc, dma_len, dma_addr);
+		pr_info("ntc_umem_sgl: dma_len %#llx", (u64)dma_len);
+		if (sgl && (n < count)) {
+			if (ntc_mr_buf_map_dma(&sgl[n], ntc, dma_len,
+						dma_addr, mr_access_flags) < 0)
+				break;
+		}
 
 		++n;
 

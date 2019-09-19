@@ -43,13 +43,16 @@
 #include <linux/dma-mapping.h>
 #include <linux/io.h>
 #include <linux/slab.h>
+#include <rdma/ib_verbs.h>
 
 #include "linux/ntc_trace.h"
 #define NTB_MAX_IRQS (64)
 #define SYNC_RESET 1
 #define ASYNC_RESET 0
 
-#define USE_KMALLOC_FOR_EXPORT 1
+#define NTC_INFO_MW_IDX 0
+#define NTC_DRAM_MW_IDX 1
+#define NTC_MAX_NUM_MWS 2
 
 struct ntc_driver;
 struct ntc_dev;
@@ -122,19 +125,11 @@ static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
 		1;
 }
 
-#define MW_DESC_BIT_WIDTH 4
-#define CHAN_OFFSET_BIT_WIDTH (64 - MW_DESC_BIT_WIDTH)
-
-enum ntc_chan_mw_desc {
-	NTC_CHAN_INVALID = 0,
-	NTC_CHAN_MW0 = 1,
-	NTC_CHAN_MW1 = 2,
-};
-
 union ntc_chan_addr {
 	struct {
-		u64 offset:CHAN_OFFSET_BIT_WIDTH;
-		enum ntc_chan_mw_desc mw_desc:MW_DESC_BIT_WIDTH;
+		u64 offset:62;
+		u8  mw_idx:1;
+		u8  one:1;
 	};
 	u64 value;
 };
@@ -145,15 +140,17 @@ struct ntc_own_mw {
 	dma_addr_t base;
 	void *base_ptr;
 	resource_size_t size;
-	enum ntc_chan_mw_desc desc;
 	struct ntc_mm mm;
+	u8 mw_idx;
+	bool is_flat;
 };
 
 struct ntc_peer_mw {
 	struct ntc_dev *ntc;
 	phys_addr_t base;
 	resource_size_t size;
-	enum ntc_chan_mw_desc desc;
+	void __iomem *base_ptr;
+	u8 mw_idx;
 };
 
 struct ntc_local_buf {
@@ -171,11 +168,11 @@ struct ntc_export_buf {
 	dma_addr_t dma_addr;
 };
 
-struct ntc_bidir_buf {
+struct ntc_mr_buf {
 	u64 size;
-	/*void *ptr;*/
 	struct ntc_own_mw *own_mw;
 	dma_addr_t dma_addr;
+	int mr_access_flags;
 };
 
 struct ntc_remote_buf_desc {
@@ -211,10 +208,9 @@ struct ntc_dev {
 	struct dma_chan			*dma_chan;
 	struct device			*dma_engine_dev;
 	const struct ntc_ctx_ops	*ctx_ops;
-	struct ntc_peer_mw		peer_dram_mw;
-	struct ntc_own_mw		own_dram_mw;
-	struct ntc_peer_mw		peer_info_mw;
-	struct ntc_own_mw		own_info_mw;
+	struct ntc_own_mw		own_mws[NTC_MAX_NUM_MWS];
+	struct ntc_peer_mw		peer_mws[NTC_MAX_NUM_MWS];
+
 	int				peer_irq_num;
 
 	/* negotiated protocol version for ntc */
@@ -421,16 +417,12 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *f);
 static inline struct ntc_peer_mw *ntc_peer_mw(struct ntc_dev *ntc,
 					const union ntc_chan_addr *chan_addr)
 {
-	if (chan_addr->mw_desc == ntc->peer_dram_mw.desc)
-		return &ntc->peer_dram_mw;
+	if (unlikely(chan_addr->mw_idx >= (u8)NTC_MAX_NUM_MWS)) {
+		dev_err(&ntc->dev, "Unsupported MW %d", chan_addr->mw_idx);
+		return NULL;
+	}
 
-	if (chan_addr->mw_desc == ntc->peer_info_mw.desc)
-		return &ntc->peer_info_mw;
-
-	dev_err(&ntc->dev, "Unsupported MW kind %d",
-		chan_addr->mw_desc);
-
-	return NULL;
+	return &ntc->peer_mws[chan_addr->mw_idx];
 }
 
 /**
@@ -442,7 +434,7 @@ static inline struct ntc_peer_mw *ntc_peer_mw(struct ntc_dev *ntc,
  * into a peer address to be used as the destination of a channel request.
  *
  * The peer allocates and maps the buffer with ntc_export_buf_alloc()
- * or ntc_bidir_buf_map_dma().
+ * or ntc_mr_buf_map_dma().
  * Then, the remote peer communicates the channel-mapped address of the buffer
  * across the channel.  The driver on side of the connection must then
  * translate the peer's channel-mapped address into a peer address.  The
@@ -651,10 +643,10 @@ static inline int ntc_request_memcpy_fenced(struct dma_chan *chan,
 }
 
 static inline
-int ntc_bidir_request_memcpy_unfenced(struct dma_chan *chan,
+int ntc_mr_request_memcpy_unfenced(struct dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
-				const struct ntc_bidir_buf *src,
+				const struct ntc_mr_buf *src,
 				u64 src_offset,
 				u64 len)
 {
@@ -856,7 +848,8 @@ static inline int ntc_local_buf_alloc(struct ntc_local_buf *buf,
 {
 	int rc;
 
-	ntc_local_buf_clear(buf);
+	buf->ptr = NULL;
+	buf->dma_addr = 0;
 
 	buf->size = size;
 	if (unlikely(buf->size != size))
@@ -914,7 +907,8 @@ static inline int ntc_local_buf_map_prealloced(struct ntc_local_buf *buf,
 {
 	int rc;
 
-	ntc_local_buf_clear(buf);
+	buf->ptr = NULL;
+	buf->dma_addr = 0;
 
 	buf->size = size;
 	if (unlikely(buf->size != size))
@@ -945,7 +939,8 @@ static inline int ntc_local_buf_map_dma(struct ntc_local_buf *buf,
 					struct ntc_dev *ntc,
 					u64 size, dma_addr_t dma_addr)
 {
-	ntc_local_buf_clear(buf);
+	buf->ptr = NULL;
+	buf->dma_addr = 0;
 
 	buf->size = size;
 	if (unlikely(buf->size != size))
@@ -1065,29 +1060,29 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 				struct ntc_dev *ntc,
 				u64 size, gfp_t gfp)
 {
-#ifndef USE_KMALLOC_FOR_EXPORT
 	int rc;
-#endif
 	dma_addr_t dma_addr;
+	bool is_flat = ntc->own_mws[NTC_DRAM_MW_IDX].is_flat;
 
-	ntc_export_buf_clear(buf);
+	buf->ptr = NULL;
+	buf->dma_addr = 0;
 
 	buf->size = size;
 
-#ifndef USE_KMALLOC_FOR_EXPORT
-	buf->own_mw = &ntc->own_info_mw;
-	buf->ptr = ntc_mm_alloc(&buf->own_mw->mm, size, gfp);
-	if (unlikely(IS_ERR(buf->ptr))) {
-		rc = PTR_ERR(buf->ptr);
-		buf->ptr = NULL;
-		return rc;
+	if (!is_flat) {
+		buf->own_mw = &ntc->own_mws[NTC_INFO_MW_IDX];
+		buf->ptr = ntc_mm_alloc(&buf->own_mw->mm, size, gfp);
+		if (unlikely(IS_ERR(buf->ptr))) {
+			rc = PTR_ERR(buf->ptr);
+			buf->ptr = NULL;
+			return rc;
+		}
+	} else {
+		buf->own_mw = &ntc->own_mws[NTC_DRAM_MW_IDX];
+		buf->ptr = kmalloc_node(size, gfp, dev_to_node(&ntc->dev));
+		if (unlikely(!buf->ptr))
+			return -ENOMEM;
 	}
-#else
-	buf->own_mw = &ntc->own_dram_mw;
-	buf->ptr = kmalloc_node(size, gfp, dev_to_node(&ntc->dev));
-	if (unlikely(!buf->ptr))
-		return -ENOMEM;
-#endif
 
 	if (buf->own_mw->base_ptr)
 		dma_addr = buf->own_mw->base +
@@ -1096,11 +1091,10 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 		dma_addr = dma_map_single(ntc->ntb_dev, buf->ptr, size,
 					DMA_FROM_DEVICE);
 		if (unlikely(dma_mapping_error(ntc->ntb_dev, dma_addr))) {
-#ifndef USE_KMALLOC_FOR_EXPORT
-			ntc_mm_free(&buf->own_mw->mm, buf->ptr, size);
-#else
-			kfree(buf->ptr);
-#endif
+			if (!is_flat)
+				ntc_mm_free(&buf->own_mw->mm, buf->ptr, size);
+			else
+				kfree(buf->ptr);
 			return -EIO;
 		}
 	}
@@ -1211,16 +1205,17 @@ static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
  */
 static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 {
+	bool is_flat = buf->own_mw->ntc->own_mws[NTC_DRAM_MW_IDX].is_flat;
+
 	if (buf->dma_addr && !buf->own_mw->base_ptr)
 		dma_unmap_single(buf->own_mw->ntb_dev, buf->dma_addr,
 				buf->size, DMA_FROM_DEVICE);
 
 	if (buf->ptr) {
-#ifndef USE_KMALLOC_FOR_EXPORT
-		ntc_mm_free(&buf->own_mw->mm, buf->ptr, buf->size);
-#else
-		kfree(buf->ptr);
-#endif
+		if (!is_flat)
+			ntc_mm_free(&buf->own_mw->mm, buf->ptr, buf->size);
+		else
+			kfree(buf->ptr);
 	}
 
 	ntc_export_buf_clear(buf);
@@ -1236,7 +1231,8 @@ static inline void ntc_export_buf_make_desc(struct ntc_remote_buf_desc *desc,
 					struct ntc_export_buf *buf)
 {
 	if (buf->dma_addr) {
-		desc->chan_addr.mw_desc = buf->own_mw->desc;
+		desc->chan_addr.mw_idx = buf->own_mw->mw_idx;
+		desc->chan_addr.one = 1;
 		desc->chan_addr.offset = buf->dma_addr - buf->own_mw->base;
 		desc->size = buf->size;
 	} else
@@ -1262,7 +1258,8 @@ ntc_export_buf_make_partial_desc(struct ntc_remote_buf_desc *desc,
 	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
 		return -EINVAL;
 
-	desc->chan_addr.mw_desc = buf->own_mw->desc;
+	desc->chan_addr.mw_idx = buf->own_mw->mw_idx;
+	desc->chan_addr.one = 1;
 	desc->chan_addr.offset = buf->dma_addr - buf->own_mw->base + offset;
 	desc->size = len;
 
@@ -1286,8 +1283,7 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 {
 	s64 soffset;
 
-	soffset = desc->chan_addr.offset -
-		(buf->dma_addr - buf->own_mw->base);
+	soffset = desc->chan_addr.offset - (buf->dma_addr - buf->own_mw->base);
 
 	*offset = soffset;
 	*len = desc->size;
@@ -1301,7 +1297,7 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 	if (unlikely(!ntc_segment_valid(buf->size, soffset, desc->size)))
 		return -EINVAL;
 
-	if (unlikely(buf->own_mw->desc != desc->chan_addr.mw_desc))
+	if (unlikely(buf->own_mw->mw_idx != desc->chan_addr.mw_idx))
 		return -EINVAL;
 
 	return 0;
@@ -1390,23 +1386,23 @@ static inline int ntc_export_buf_seq_write(struct seq_file *s,
 }
 
 /**
- * ntc_bidir_buf_valid() - Check whether the buffer is valid.
- * @buf:	Buffer created by ntc_bidir_buf_map_dma().
+ * ntc_mr_buf_valid() - Check whether the buffer is valid.
+ * @buf:	Buffer created by ntc_mr_buf_map_dma().
  *
  * Return:	true iff valid.
  */
-static inline bool ntc_bidir_buf_valid(struct ntc_bidir_buf *buf)
+static inline bool ntc_mr_buf_valid(struct ntc_mr_buf *buf)
 {
 	return !!buf->dma_addr;
 }
 
-static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
+static inline void ntc_mr_buf_clear(struct ntc_mr_buf *buf)
 {
 	buf->dma_addr = 0;
 }
 
 /**
- * ntc_bidir_buf_map_dma() - prepare a memory buffer in an NTB window,
+ * ntc_mr_buf_map_dma() - prepare a memory buffer in an NTB window,
  *                           to which the peer can write,
  *                           and make it capable of DMA to the DMA engine.
  * @buf:	OUTPUT buffer.
@@ -1414,56 +1410,87 @@ static inline void ntc_bidir_buf_clear(struct ntc_bidir_buf *buf)
  * @size:	Size of the buffer.
  * @dma_addr:	buffer's DMA address.
  */
-static inline void ntc_bidir_buf_map_dma(struct ntc_bidir_buf *buf,
-					struct ntc_dev *ntc,
-					u64 size, dma_addr_t dma_addr)
+static inline int ntc_mr_buf_map_dma(struct ntc_mr_buf *buf,
+				struct ntc_dev *ntc,
+				u64 size, dma_addr_t dma_addr,
+				int mr_access_flags)
 {
-	buf->size = size;
-	ntc_bidir_buf_clear(buf);
+	int i;
+	struct ntc_own_mw *own_mw;
 
+	buf->size = size;
+	buf->mr_access_flags = mr_access_flags;
 	buf->dma_addr = dma_addr;
-	buf->own_mw = &ntc->own_dram_mw;
+
+	for (i = 0; i < NTC_MAX_NUM_MWS; i++) {
+		own_mw = &ntc->own_mws[i];
+		if (ntc_segment_valid(own_mw->size,
+					dma_addr - own_mw->base, size))
+			break;
+	}
+
+	buf->own_mw = own_mw;
+
+	if (!(mr_access_flags & IB_ACCESS_REMOTE_WRITE))
+		return 0;
+
+	if (unlikely(i == NTC_MAX_NUM_MWS)) {
+		dev_err(&ntc->dev, "addr %#llx:%#llx beyond memory windows",
+			dma_addr, dma_addr + size);
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 /**
- * ntc_bidir_buf_clear_sgl() - clear each buffer in the array of buffers
-  *                            created by ntc_bidir_buf_map_dma().
- * @sgl:	Array of buffers created by ntc_bidir_buf_map_dma().
+ * ntc_mr_buf_clear_sgl() - clear each buffer in the array of buffers
+  *                         created by ntc_mr_buf_map_dma().
+ * @sgl:	Array of buffers created by ntc_mr_buf_map_dma().
  * @count:	Size of the array.
  */
-static inline void ntc_bidir_buf_clear_sgl(struct ntc_bidir_buf *sgl, int count)
+static inline void ntc_mr_buf_clear_sgl(struct ntc_mr_buf *sgl, int count)
 {
 	int i;
 
 	for (i = 0; i < count; i++)
-		ntc_bidir_buf_clear(&sgl[i]);
+		ntc_mr_buf_clear(&sgl[i]);
 }
 
 /**
- * ntc_bidir_buf_make_desc() - Make serializable description of buffer.
+ * ntc_mr_buf_make_desc() - Make serializable description of buffer.
  *
  * @desc:	OUTPUT buffer description, which can be sent to peer.
- * @buf:	Buffer created by ntc_bidir_buf_map_dma().
+ * @buf:	Buffer created by ntc_mr_buf_map_dma().
  */
-static inline void ntc_bidir_buf_make_desc(struct ntc_remote_buf_desc *desc,
-					struct ntc_bidir_buf *buf)
+static inline void ntc_mr_buf_make_desc(struct ntc_remote_buf_desc *desc,
+					struct ntc_mr_buf *buf)
 {
-	if (buf->dma_addr) {
-		desc->chan_addr.mw_desc = buf->own_mw->desc;
-		desc->chan_addr.offset = buf->dma_addr - buf->own_mw->base;
-		desc->size = buf->size;
-	} else
-		memset(desc, 0, sizeof(*desc));
+	desc->size = buf->size;
+
+	if (!buf->dma_addr)
+		goto empty;
+
+	if (!(buf->mr_access_flags & IB_ACCESS_REMOTE_WRITE))
+		goto empty;
+
+	desc->chan_addr.mw_idx = buf->own_mw->mw_idx;
+	desc->chan_addr.one = 1;
+	desc->chan_addr.offset = buf->dma_addr - buf->own_mw->base;
+
+	return;
+
+ empty:
+	desc->chan_addr.value = 0;
 }
 
 /**
- * ntc_bidir_buf_sync() - Sync the buffer's memory after receiving data.
- * @buf:	Buffer created by ntc_bidir_buf_map_dma().
+ * ntc_mr_buf_sync() - Sync the buffer's memory after receiving data.
+ * @buf:	Buffer created by ntc_mr_buf_map_dma().
  * @offset:	Offset to the segment to be accessed.
  * @len:	Length of the segment to be accessed.
  */
-static inline void ntc_bidir_buf_sync(struct ntc_bidir_buf *buf,
-				u64 offset, u64 len)
+static inline void ntc_mr_buf_sync(struct ntc_mr_buf *buf, u64 offset, u64 len)
 {
 	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
 		return;
@@ -1502,7 +1529,7 @@ static inline void ntc_remote_buf_clear(struct ntc_remote_buf *buf)
  * @buf:	OUTPUT remote buffer.
  * @ntc:	Device context.
  * @desc:	The remote buffer description created by
- *		ntc_export_buf_make_desc() or ntc_bidir_buf_make_desc().
+ *		ntc_export_buf_make_desc() or ntc_mr_buf_make_desc().
  *
  * Return: zero on success, negative error value on failure.
  */
@@ -1515,6 +1542,9 @@ static inline int ntc_remote_buf_map(struct ntc_remote_buf *buf,
 	dma_addr_t dma_addr;
 
 	ntc_remote_buf_clear(buf);
+
+	if (!desc->chan_addr.value)
+		return 0;
 
 	ptr = ntc_peer_addr(ntc, &desc->chan_addr);
 	if (unlikely(!ptr))
@@ -1584,7 +1614,7 @@ static inline void ntc_remote_buf_unmap(struct ntc_remote_buf *buf,
  * ntc_umem_sgl() - store discontiguous ranges in a scatter gather list
  * @ntc:	Device context.
  * @ib_umem:	Object representing the memory mapping.
- * @sgl:	Scatter gather ntc_bidir_buf list to receive the entries.
+ * @sgl:	Scatter gather ntc_mr_buf list to receive the entries.
  * @count:	Capacity of the scatter gather list.
  *
  * Count the number of discontiguous ranges in the channel mapping, so that a
@@ -1593,7 +1623,7 @@ static inline void ntc_remote_buf_unmap(struct ntc_remote_buf *buf,
  * Return: The number of entries stored in the list, or an error number.
  */
 int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
-		struct ntc_bidir_buf *sgl, int count);
+		struct ntc_mr_buf *sgl, int count, int mr_access_flags);
 
 /**
  * ntc_umem_count() - count discontiguous ranges in the channel mapping
@@ -1607,7 +1637,7 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
  */
 static inline int ntc_umem_count(struct ntc_dev *ntc, struct ib_umem *ib_umem)
 {
-	return ntc_umem_sgl(ntc, ib_umem, NULL, 0);
+	return ntc_umem_sgl(ntc, ib_umem, NULL, 0, 0);
 }
 
 /**

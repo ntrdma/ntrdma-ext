@@ -103,8 +103,8 @@ struct ntrdma_snd_cursor {
 	u64 snd_rem;
 	struct ntrdma_mr *mr;
 	u32 mr_key;
-	struct ntc_bidir_buf *mr_sge;
-	struct ntc_bidir_buf *mr_sg_end;
+	struct ntc_mr_buf *mr_sge;
+	struct ntc_mr_buf *mr_sg_end;
 	u64 next_io_off;
 };
 
@@ -128,8 +128,8 @@ struct ntrdma_lrcv_cursor {
 	u64 lrcv_rem;
 	u32 mr_key;
 	struct ntrdma_mr *mr;
-	struct ntc_bidir_buf *mr_sge;
-	struct ntc_bidir_buf *mr_sg_end;
+	struct ntc_mr_buf *mr_sge;
+	struct ntc_mr_buf *mr_sg_end;
 	u64 next_io_off;
 };
 
@@ -470,7 +470,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 		rcv_buf = rcv->rmr_sge;
 
 	if (snd->mr)
-		rc = ntc_bidir_request_memcpy_unfenced(req,
+		rc = ntc_mr_request_memcpy_unfenced(req,
 						rcv_buf, rcv->next_io_off,
 						snd->mr_sge, snd->next_io_off,
 						len);
@@ -504,7 +504,7 @@ static inline s64 ntrdma_lrcv_cursor_next_io_deref(struct ntrdma_lrcv_cursor *c)
 		return -EINVAL;
 
 	if (c->mr)
-		ntc_bidir_buf_sync(c->mr_sge, c->next_io_off, len);
+		ntc_mr_buf_sync(c->mr_sge, c->next_io_off, len);
 
 	return len;
 }

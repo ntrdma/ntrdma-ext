@@ -72,7 +72,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 	int rc;
 
 	count = ntc_umem_sgl(dev->ntc, mr->ib_umem,
-			mr->sg_list, mr->sg_count);
+			mr->sg_list, mr->sg_count, mr->access);
 	if (count != mr->sg_count) {
 		rc = -EFAULT;
 		goto err;
@@ -86,7 +86,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 	return 0;
 
  err:
-	ntc_bidir_buf_clear_sgl(mr->sg_list, count);
+	ntc_mr_buf_clear_sgl(mr->sg_list, count);
 
 	return rc;
 }
@@ -94,7 +94,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 void ntrdma_mr_deinit(struct ntrdma_mr *mr)
 {
 	ntrdma_res_deinit(&mr->res);
-	ntc_bidir_buf_clear_sgl(mr->sg_list, mr->sg_count);
+	ntc_mr_buf_clear_sgl(mr->sg_list, mr->sg_count);
 }
 
 static int ntrdma_mr_enable(struct ntrdma_res *res)
@@ -171,8 +171,8 @@ static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
 	cmd->mr_append.sg_count = mrcb->sg_count;
 
 	for (i = 0; i < mrcb->sg_count; ++i)
-		ntc_bidir_buf_make_desc(&cmd->mr_append.sg_desc_list[i],
-					&mr->sg_list[mrcb->sg_pos + i]);
+		ntc_mr_buf_make_desc(&cmd->mr_append.sg_desc_list[i],
+				&mr->sg_list[mrcb->sg_pos + i]);
 
 	return 0;
 }
@@ -197,8 +197,8 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 	cmd->mr_create.sg_count = mrcb->sg_count;
 
 	for (i = 0; i < mrcb->sg_count; ++i)
-		ntc_bidir_buf_make_desc(&cmd->mr_create.sg_desc_list[i],
-					&mr->sg_list[i]);
+		ntc_mr_buf_make_desc(&cmd->mr_create.sg_desc_list[i],
+				&mr->sg_list[i]);
 
 	return 0;
 }
