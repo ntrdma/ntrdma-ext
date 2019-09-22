@@ -52,6 +52,7 @@ struct ntrdma_wr_snd_sge {
 
 struct ntrdma_wr_rcv_sge {
 	u32				key;
+	bool				direct;
 	union {
 		/* key != NTRDMA_RESERVED_DMA_LEKY */
 		struct {
@@ -59,11 +60,12 @@ struct ntrdma_wr_rcv_sge {
 			u32		len;
 		};
 		/* key == NTRDMA_RESERVED_DMA_LEKY */
-		struct {
-			struct ntc_local_buf	rcv_dma_buf;
-			struct ntc_export_buf	exp_buf;
-			struct ntc_remote_buf_desc desc;
-		};
+		struct ntc_local_buf	rcv_dma_buf;
+	};
+	/* direct false */
+	struct {
+		struct ntc_export_buf	exp_buf;
+		struct ntc_remote_buf_desc desc;
 	};
 };
 

@@ -1073,6 +1073,9 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 {
 	int i;
 	int sg_cap = qp->send_wqe_sg_cap;
+	struct ib_sge *sg_list;
+	struct ntrdma_wr_snd_sge *wqe_snd_sg_list;
+
 	wqe->ulp_handle = ibwr->wr_id;
 	wqe->flags = ibwr->send_flags;
 
@@ -1140,21 +1143,23 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 
 
 	for (i = 0; i < ibwr->num_sge; ++i) {
-		snd_sg_list(i, wqe)->key = ibwr->sg_list[i].lkey;
-		if (ibwr->sg_list[i].lkey != NTRDMA_RESERVED_DMA_LEKY) {
-			snd_sg_list(i, wqe)->addr = ibwr->sg_list[i].addr;
-			snd_sg_list(i, wqe)->len = ibwr->sg_list[i].length;
+		sg_list = &ibwr->sg_list[i];
+		wqe_snd_sg_list = snd_sg_list(i, wqe);
+
+		wqe_snd_sg_list->key = sg_list->lkey;
+		if (sg_list->lkey != NTRDMA_RESERVED_DMA_LEKY) {
+			wqe_snd_sg_list->addr = sg_list->addr;
+			wqe_snd_sg_list->len = sg_list->length;
 		} else {
 			TRACE("Mapping local buffer of size %#x at %#lx\n",
-				(int)ibwr->sg_list[i].length,
-				(long)(dma_addr_t)ibwr->sg_list[i].addr);
+				(int)sg_list->length,
+				(long)(dma_addr_t)sg_list->addr);
 
-			ntc_local_buf_map_dma(&(snd_sg_list(i, wqe)->snd_dma_buf),
-					dev->ntc, ibwr->sg_list[i].length,
-					(dma_addr_t)ibwr->sg_list[i].addr);
+			ntc_local_buf_map_dma(&(wqe_snd_sg_list->snd_dma_buf),
+					dev->ntc, sg_list->length,
+					(dma_addr_t)sg_list->addr);
 		}
-		this_cpu_add(dev_cnt.post_send_bytes,
-				ibwr->sg_list[i].length);
+		this_cpu_add(dev_cnt.post_send_bytes, sg_list->length);
 	}
 
 	if (wqe->flags & IB_SEND_SIGNALED)
@@ -1239,6 +1244,9 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 				int sg_cap)
 {
 	int i;
+	struct ntrdma_wr_rcv_sge *rcv_sg_list;
+	struct ib_sge *sg_list;
+	struct ntrdma_mr *mr;
 	int rc;
 
 	wqe->ulp_handle = ibwr->wr_id;
@@ -1250,30 +1258,49 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 
 	wqe->sg_count = ibwr->num_sge;
 	for (i = 0; i < ibwr->num_sge; ++i) {
-		wqe->rcv_sg_list[i].key = ibwr->sg_list[i].lkey;
-		if (ibwr->sg_list[i].lkey != NTRDMA_RESERVED_DMA_LEKY) {
-			wqe->rcv_sg_list[i].addr = ibwr->sg_list[i].addr;
-			wqe->rcv_sg_list[i].len = ibwr->sg_list[i].length;
+		rcv_sg_list = &wqe->rcv_sg_list[i];
+		sg_list = &ibwr->sg_list[i];
+
+		rcv_sg_list->key = sg_list->lkey;
+
+		if (rcv_sg_list->key != NTRDMA_RESERVED_DMA_LEKY) {
+			mr = ntrdma_dev_mr_look(dev, rcv_sg_list->key);
+			if (mr && (mr->access & IB_ACCESS_REMOTE_WRITE))
+				rcv_sg_list->direct = true;
+			else
+				rcv_sg_list->direct = false;
+
+			rcv_sg_list->addr = sg_list->addr;
+			rcv_sg_list->len = sg_list->length;
 		} else {
-			rc = ntc_export_buf_alloc(&wqe->rcv_sg_list[i].exp_buf,
+			rcv_sg_list->direct = false;
+
+			ntc_local_buf_map_dma(&rcv_sg_list->rcv_dma_buf,
+					dev->ntc,
+					sg_list->length,
+					sg_list->addr);
+		}
+
+		if (!rcv_sg_list->direct) {
+			rc = ntc_export_buf_alloc(&rcv_sg_list->exp_buf,
 						dev->ntc,
-						ibwr->sg_list[i].length,
+						sg_list->length,
 						GFP_KERNEL);
 			if (rc < 0) {
 				ntrdma_err(dev, "FAILED %d", -rc);
 				goto err;
 			}
-			ntc_export_buf_make_desc(&wqe->rcv_sg_list[i].desc,
-						&wqe->rcv_sg_list[i].exp_buf);
-			ntc_local_buf_map_dma(&wqe->rcv_sg_list[i].rcv_dma_buf,
-					dev->ntc, ibwr->sg_list[i].length,
-					(dma_addr_t)ibwr->sg_list[i].addr);
-			TRACE("Allocating rcv buffer of size %d @DMA addr %#lx",
-				(int)ibwr->sg_list[i].length,
-				(long)(dma_addr_t)ibwr->sg_list[i].addr);
-			TRACE("with export buffer at %p dma_addr %#llx",
-				wqe->rcv_sg_list[i].exp_buf.ptr,
-				wqe->rcv_sg_list[i].exp_buf.dma_addr);
+			ntc_export_buf_make_desc(&rcv_sg_list->desc,
+						&rcv_sg_list->exp_buf);
+			ntrdma_info(dev,
+				"Allocating rcv %s buffer size %#x @DMA %#llx",
+				(rcv_sg_list->key != NTRDMA_RESERVED_DMA_LEKY) ?
+				"MR" : "DMA", sg_list->length,
+				rcv_sg_list->exp_buf.dma_addr);
+			TRACE("Allocating rcv %s buffer size %#x @DMA %#llx",
+				(rcv_sg_list->key != NTRDMA_RESERVED_DMA_LEKY) ?
+				"MR" : "DMA", sg_list->length,
+				rcv_sg_list->exp_buf.dma_addr);
 		}
 	}
 

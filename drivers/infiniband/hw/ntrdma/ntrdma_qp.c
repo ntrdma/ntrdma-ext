@@ -952,32 +952,46 @@ static void ntrdma_send_done(struct ntrdma_cqe *cqe,
 	cqe->flags = wqe->flags;
 }
 
-void ntrdma_recv_wqe_sync(struct ntrdma_recv_wqe *wqe)
+int ntrdma_recv_wqe_sync(struct ntrdma_dev *dev, struct ntrdma_recv_wqe *wqe)
 {
+	int rc;
 	int i;
+	struct ntrdma_wr_rcv_sge *rcv_sg_list;
+
+	rc = 0;
 
 	for (i = 0; i < wqe->sg_count; ++i) {
-		if (wqe->rcv_sg_list[i].key != NTRDMA_RESERVED_DMA_LEKY)
+		rcv_sg_list = &wqe->rcv_sg_list[i];
+
+		if (rcv_sg_list->direct)
 			continue;
 
-		TRACE("DMA memcpy %#x bytes to %#lx virt %p\n",
-			(int)wqe->rcv_sg_list[i].exp_buf.size,
-			(long)wqe->rcv_sg_list[i].rcv_dma_buf.dma_addr,
-			wqe->rcv_sg_list[i].rcv_dma_buf.ptr);
-
-		memcpy(wqe->rcv_sg_list[i].rcv_dma_buf.ptr,
-			wqe->rcv_sg_list[i].exp_buf.ptr,
-			wqe->rcv_sg_list[i].exp_buf.size);
+		if (rcv_sg_list->key == NTRDMA_RESERVED_DMA_LEKY)
+			memcpy(rcv_sg_list->rcv_dma_buf.ptr,
+				rcv_sg_list->exp_buf.ptr,
+				rcv_sg_list->exp_buf.size);
+		else
+			rc = min_t(int, rc,
+				ntrdma_zip_memcpy(dev,
+						rcv_sg_list->key,
+						rcv_sg_list->addr,
+						rcv_sg_list->exp_buf.ptr,
+						rcv_sg_list->exp_buf.size));
 	}
+
+	return rc;
 }
 
 void ntrdma_recv_wqe_cleanup(struct ntrdma_recv_wqe *wqe)
 {
 	int i;
+	struct ntrdma_wr_rcv_sge *rcv_sg_list;
 
-	for (i = 0; i < wqe->sg_count; ++i)
-		if (wqe->rcv_sg_list[i].key == NTRDMA_RESERVED_DMA_LEKY)
-			ntc_export_buf_free(&wqe->rcv_sg_list[i].exp_buf);
+	for (i = 0; i < wqe->sg_count; ++i) {
+		rcv_sg_list = &wqe->rcv_sg_list[i];
+		if (!rcv_sg_list->direct)
+			ntc_export_buf_free(&rcv_sg_list->exp_buf);
+	}
 
 	wqe->sg_count = 0;
 }
@@ -1028,17 +1042,22 @@ static u32 ntrdma_send_recv_imm(const struct ntrdma_send_wqe *send_wqe)
 	return 0;
 }
 
-static void ntrdma_recv_done(struct ntrdma_cqe *recv_cqe,
+static int ntrdma_recv_done(struct ntrdma_dev *dev,
+			struct ntrdma_cqe *recv_cqe,
 			struct ntrdma_recv_wqe *recv_wqe,
 			const struct ntrdma_send_wqe *send_wqe)
 {
+	int rc;
+
 	recv_cqe->ulp_handle = recv_wqe->ulp_handle;
 	recv_cqe->op_code = ntrdma_send_recv_opcode(send_wqe);
 	recv_cqe->op_status = NTRDMA_WC_SUCCESS;
 	recv_cqe->rdma_len = ntrdma_send_recv_len(send_wqe);
 	recv_cqe->imm_data = ntrdma_send_recv_imm(send_wqe);
-	ntrdma_recv_wqe_sync(recv_wqe);
+	rc = ntrdma_recv_wqe_sync(dev, recv_wqe);
 	ntrdma_recv_wqe_cleanup(recv_wqe);
+
+	return rc;
 }
 
 int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp)
@@ -1763,6 +1782,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					rdma_sge.addr = wqe->rdma_addr;
 					rdma_sge.len = ~(u32)0;
 					rdma_sge.key = wqe->rdma_key;
+					rdma_sge.direct = true;
 
 					if (wqe->flags & IB_SEND_INLINE) {
 						off = (pos - 1) * qp->send_wqe_size;
@@ -2085,6 +2105,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					rdma_sge.addr = wqe->rdma_addr;
 					rdma_sge.len = wqe->rdma_len;
 					rdma_sge.key = wqe->rdma_key;
+					rdma_sge.direct = true;
 					rc = ntrdma_zip_sync(dev, &rdma_sge, 1);
 				} else
 					rc = -EINVAL;
@@ -2098,8 +2119,12 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					rc, rqp->qp_key);
 			/* FIXME: handle send sync error */
 
-			if (ntrdma_wr_code_is_send(wqe->op_code))
-				ntrdma_recv_done(recv_cqe, recv_wqe, wqe);
+			if (ntrdma_wr_code_is_send(wqe->op_code)) {
+				rc = ntrdma_recv_done(dev,
+						recv_cqe, recv_wqe, wqe);
+				WARN(rc, "ntrdma_recv_done failed rc = %d", rc);
+				/* FIXME: handle recv sync error */
+			}
 
 			ntrdma_send_done(cqe, wqe, wqe->rdma_len);
 		}

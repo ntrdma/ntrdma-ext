@@ -50,5 +50,8 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct dma_chan *req, u32 *rdma_len,
 int ntrdma_zip_sync(struct ntrdma_dev *dev,
 		struct ntrdma_wr_rcv_sge *lrcv_sg_list, u32 lrcv_sg_count);
 
+int ntrdma_zip_memcpy(struct ntrdma_dev *dev, u32 target_key, u64 target_addr,
+		void *src, u64 size);
+
 #endif
 
