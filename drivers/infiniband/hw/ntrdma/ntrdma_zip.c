@@ -81,7 +81,7 @@ rcv_sg_list_skip(const struct ntrdma_wr_rcv_sge *rcv_sge,
 	u32 offset = *offset_in_out;
 
 	for (; rcv_sge != rcv_sg_end; rcv_sge++) {
-		if (rcv_sge->key == NTRDMA_RESERVED_DMA_LEKY)
+		if (!rcv_sge->direct)
 			len = rcv_sge->desc.size;
 		else
 			len = rcv_sge->len;
@@ -280,7 +280,10 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 		c->rmr = NULL;
 	}
 
-	c->rmr_key = c->rcv_sge->key;
+	if (c->rcv_sge->direct)
+		c->rmr_key = c->rcv_sge->key;
+	else
+		c->rmr_key = NTRDMA_RESERVED_DMA_LEKY;
 
 	if (!c->rmr && (c->rmr_key != NTRDMA_RESERVED_DMA_LEKY)) {
 		/* Get a reference to rcv mr */
@@ -338,7 +341,10 @@ ntrdma_lrcv_cursor_update(struct ntrdma_lrcv_cursor *c, int *rc)
 		c->mr = NULL;
 	}
 
-	c->mr_key = c->lrcv_sge->key;
+	if (c->lrcv_sge->direct)
+		c->mr_key = c->lrcv_sge->key;
+	else
+		c->mr_key = NTRDMA_RESERVED_DMA_LEKY;
 
 	if (!c->mr && (c->mr_key != NTRDMA_RESERVED_DMA_LEKY)) {
 		/* Get a reference to rcv mr */
@@ -583,3 +589,43 @@ out:
 	return rc;
 }
 
+int ntrdma_zip_memcpy(struct ntrdma_dev *dev, u32 target_key, u64 target_addr,
+		void *src, u64 size)
+{
+	struct ntrdma_mr *mr;
+	struct ntc_mr_buf *mr_sge;
+	struct ntc_mr_buf *mr_sg_end;
+	u64 next_io_off;
+	u64 next_io_size;
+
+	if (!size)
+		return 0;
+
+	mr = ntrdma_dev_mr_look(dev, target_key);
+	if (!mr)
+		return -EINVAL;
+
+	mr_sge = mr->sg_list;
+	mr_sg_end = mr_sge + mr->sg_count;
+	next_io_off = target_addr - mr->addr;
+	for (; (mr_sge != mr_sg_end) && (next_io_off >= mr_sge->size); ++mr_sge)
+		next_io_off -= mr_sge->size;
+
+	for (; (mr_sge != mr_sg_end) && size; ++mr_sge) {
+		next_io_size = min_t(u64, size, mr_sge->size - next_io_off);
+		memcpy(phys_to_virt(mr_sge->dma_addr), src, next_io_size);
+		src += next_io_size;
+		size -= next_io_size;
+		next_io_off = 0;
+	}
+
+	/* FIXME: dma callback for put mr */
+	ntrdma_mr_put(mr);
+
+	if (size) {
+		ntrdma_err(dev, "out of bounds of local rcv mr");
+		return  -EINVAL;
+	}
+
+	return 0;
+}

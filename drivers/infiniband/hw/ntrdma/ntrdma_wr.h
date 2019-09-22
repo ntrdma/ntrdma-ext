@@ -201,7 +201,7 @@ static inline bool ntrdma_wr_code_pull_data(u16 op_code)
 	return op_code == NTRDMA_WR_RDMA_READ;
 }
 
-void ntrdma_recv_wqe_sync(struct ntrdma_recv_wqe *wqe);
+int ntrdma_recv_wqe_sync(struct ntrdma_dev *dev, struct ntrdma_recv_wqe *wqe);
 void ntrdma_recv_wqe_cleanup(struct ntrdma_recv_wqe *wqe);
 
 #endif
