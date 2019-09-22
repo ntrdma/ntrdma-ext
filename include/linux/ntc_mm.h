@@ -56,11 +56,26 @@ struct ntc_mm {
 	spinlock_t lock;
 };
 
-static inline int _ntc_mm_round_size(int size)
+static inline int _ntc_mm_chunk_size(int size)
 {
+	int clz;
+
 	BUILD_BUG_ON((sizeof(struct ntc_mm_free_entry) - 1) &
 		sizeof(struct ntc_mm_free_entry));
-	return ALIGN(size, sizeof(struct ntc_mm_free_entry));
+
+	if (unlikely(!size))
+		return 0;
+
+	size = ALIGN(size, sizeof(struct ntc_mm_free_entry));
+	clz = __builtin_clz(size); /* The number of leading zeros in size. */
+
+	if (unlikely(clz < 2))
+		return 0;
+
+	if (size << (clz + 1))
+		return 1 << (8 * sizeof(int) - clz);
+	else
+		return 1 << (8 * sizeof(int) - clz - 1);
 }
 
 static inline void *_ntc_mm_round_up_ptr(void *ptr)
@@ -216,7 +231,7 @@ static inline int ntc_mm_preinit(struct ntc_mm *mm, int size, int num_els)
 	void *ptr;
 	int i;
 
-	size = _ntc_mm_round_size(size);
+	size = _ntc_mm_chunk_size(size);
 
 	fixed = _ntc_mm_get_fixed(mm, size, GFP_KERNEL);
 	if (IS_ERR(fixed))
@@ -246,7 +261,7 @@ static inline void *ntc_mm_alloc(struct ntc_mm *mm, int size, gfp_t gfp)
 	struct ntc_fixed_mm *fixed;
 	void *ptr;
 
-	size = _ntc_mm_round_size(size);
+	size = _ntc_mm_chunk_size(size);
 
 	fixed = _ntc_mm_get_fixed(mm, size, gfp);
 	if (unlikely(IS_ERR(fixed)))
@@ -278,7 +293,7 @@ static inline void ntc_mm_free(struct ntc_mm *mm, void *ptr, int size)
 {
 	struct ntc_fixed_mm *fixed;
 
-	size = _ntc_mm_round_size(size);
+	size = _ntc_mm_chunk_size(size);
 
 	fixed = _ntc_mm_find_fixed(mm, size);
 	if (likely(fixed))
