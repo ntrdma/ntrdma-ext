@@ -968,32 +968,27 @@ EXPORT_SYMBOL(_ntc_link_reset);
 
 int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *chan)
 {
-	struct dma_async_tx_descriptor *tx;
-	dma_cookie_t cookie;
+	static DEFINE_PER_CPU(dma_cookie_t, cookie);
+	static DEFINE_PER_CPU(int, i);
+	dma_cookie_t *my_cookie;
+	int *my_i;
+
 	struct dma_tx_state txstate;
-	static int i;
 
 	dev_vdbg(&ntc->dev, "submit request\n");
 
-	tx = chan->device->device_prep_dma_interrupt(chan, 0);
-	if (!tx)
-		return -ENOMEM;
+	my_cookie = get_cpu_ptr(&cookie);
+	my_i = get_cpu_ptr(&i);
 
-	cookie = dmaengine_submit(tx);
-	if (dma_submit_error(cookie))
-		return -EIO;
-
-	/* locked area per DMA engine*/
-	i++;
 	dma_async_issue_pending(chan);
 
-	/*
-	 *  We do not really care about the status but still calling
-	 * tx status func to clear the ioat ring.
-	 */
+	if (!((*my_i)++ & 0xff)) {
+		chan->device->device_tx_status(chan, *my_cookie, &txstate);
+		*my_cookie = txstate.used;
+	}
 
-	if (!(i & 0xff))
-		chan->device->device_tx_status(chan, cookie, &txstate);
+	put_cpu_ptr(&i);
+	put_cpu_ptr(&cookie);
 
 	return 0;
 }
