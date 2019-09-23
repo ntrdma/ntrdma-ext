@@ -46,6 +46,13 @@
 		else							\
 			trace_printk(fmt "\n", ##__VA_ARGS__);		\
 	} while (0)
+
+#ifdef TRACE_DATA_ENABLE
+#define TRACE_DATA(...) TRACE(__VA_ARGS__)
+#else
+#define TRACE_DATA(...) do {} while (0)
+#endif
+
 #else
 #define TRACE(...) do {} while (0)
 #endif

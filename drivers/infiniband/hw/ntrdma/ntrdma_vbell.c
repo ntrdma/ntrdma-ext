@@ -313,7 +313,7 @@ void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
 {
 	int rc;
 
-	TRACE("vbell peer idx %d\n", idx);
+	TRACE_DATA("vbell peer idx %d\n", idx);
 
 	spin_lock_bh(&dev->vbell_self_lock);
 	if (!dev->vbell_enable)

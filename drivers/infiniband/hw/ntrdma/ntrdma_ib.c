@@ -510,7 +510,8 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 				rc = ntrdma_ib_wc_from_cqe(&ibwc[count], qp, &cqe);
 				if (rc)
 					break;
-				TRACE("OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u\n",
+				TRACE_DATA(
+						"OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u\n",
 						ibwc[count].opcode,
 						cqe.op_code,
 						ibwc[count].wr_id,
@@ -1227,7 +1228,8 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			/* transform work request into the entry */
 			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr, qp);
 
-			TRACE("OPCODE %d: flags %x, addr %llx, rc = %d QP %d num sges %d pos %d wr_id %llu\n",
+			TRACE_DATA(
+					"OPCODE %d: flags %x, addr %llx, rc = %d QP %d num sges %d pos %d wr_id %llu\n",
 				ibwr->opcode, ibwr->send_flags,
 				wqe->rdma_sge.addr, rc, qp->res.key,
 				ibwr->num_sge, pos, ibwr->wr_id);
