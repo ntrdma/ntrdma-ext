@@ -1952,7 +1952,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* TODO: return value is ignored! */
 	ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
 
-	TRACE(
+	TRACE_DATA(
 		"start %u pos %u QP %d RQP %d prod %u peer vbell idx %d (recv_pos %d, recv_base %d)\n",
 		start, pos, qp->res.key, rqp->qp_key, qp->send_prod,
 		qp->peer_send_vbell_idx, recv_pos, recv_base);
@@ -2245,7 +2245,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		ntc_req_signal(dev->ntc, req, NULL, NULL,
 				NTB_DEFAULT_VEC(dev->ntc));
 
-		TRACE("Signal QP %d RQP %d cons %u start %u pos %u peer vbell idx %d\n",
+		TRACE_DATA(
+				"Signal QP %d RQP %d cons %u start %u pos %u peer vbell idx %d\n",
 				qp->res.key, rqp->qp_key,
 				rqp->send_cons,
 				start,
