@@ -235,12 +235,7 @@ void *ntc_peer_hello_buf(struct ntc_dev *ntc, int *size);
 
 static inline int ntc_door_bell_arbitrator(struct ntc_dev *ntc)
 {
-	static int counter;
-	counter++;
-	/*FIXME actualy we want to use the number of peer CPUs but for now we assume its the same */
-	counter = counter % min(ntc_max_peer_irqs(ntc), (int)num_online_cpus());
-	return counter;
-
+	return smp_processor_id();
 }
 
 #define NTB_DEFAULT_VEC(__NTC) ntc_door_bell_arbitrator(__NTC)
