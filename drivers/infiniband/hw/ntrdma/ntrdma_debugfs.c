@@ -40,7 +40,7 @@
 #include "ntrdma_qp.h"
 #include "ntrdma_wr.h"
 
-#define NTRDMA_DEBUGFS_NAME_MAX 0x10
+#define NTRDMA_DEBUGFS_NAME_MAX 0x20
 
 static const struct file_operations ntrdma_debugfs_dev_info_ops;
 static const struct file_operations ntrdma_debugfs_dev_perf_ops;
