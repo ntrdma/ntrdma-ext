@@ -58,10 +58,14 @@ static unsigned long mw0_base_addr;
 module_param(mw0_base_addr, ulong, 0444);
 static unsigned long mw0_len;
 module_param(mw0_len, ulong, 0444);
+static unsigned long mw0_mm_len;
+module_param(mw0_mm_len, ulong, 0444);
 static unsigned long mw1_base_addr;
 module_param(mw1_base_addr, ulong, 0444);
 static unsigned long mw1_len;
 module_param(mw1_len, ulong, 0444);
+static unsigned long mw1_mm_len;
+module_param(mw1_mm_len, ulong, 0444);
 
 struct ntc_ntb_coherent_buffer {
 	void *ptr;
@@ -75,11 +79,14 @@ struct ntc_own_mw_data {
 	resource_size_t addr_align;
 	resource_size_t size_align;
 	resource_size_t size_max;
+	unsigned long mm_len;
+	unsigned long mm_prealloc;
 	struct ntc_ntb_coherent_buffer coherent;
 	bool reserved;
 	bool reserved_used;
 	bool coherent_used;
 	bool flat_used;
+	bool mm_inited;
 } own_mw_data[2];
 
 static struct dentry *ntc_dbgfs;
@@ -1381,9 +1388,16 @@ static void ntc_ntb_deinit_own_mw_reserved(struct ntc_ntb_dev *dev,
 
 static void ntc_ntb_deinit_own(struct ntc_ntb_dev *dev, int mw_idx)
 {
+	struct ntc_dev *ntc = &dev->ntc;
 	struct ntc_own_mw_data *data = &own_mw_data[mw_idx];
+	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
 	ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx);
+
+	if (data->mm_inited) {
+		ntc_mm_deinit(&own_mw->mm);
+		data->mm_inited = false;
+	}
 
 	if (data->reserved_used) {
 		ntc_ntb_deinit_own_mw_reserved(dev, mw_idx);
@@ -1422,6 +1436,18 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 	ntb_mw_get_align(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
 			&data->addr_align, &data->size_align, &data->size_max);
 
+	if (data->mm_len > data->len) {
+		info("Requested MM of length %#lx in MW of length %#lx",
+			data->mm_len, data->len);
+		return -EINVAL;
+	}
+
+	if (data->mm_prealloc > data->mm_len) {
+		info("Requested preallocation %#lx in MM of length %#lx",
+			data->mm_prealloc, data->mm_len);
+		return -EINVAL;
+	}
+
 	if (data->len > data->size_max) {
 		info("Requested MW of length %#lx, but max_size is %#llx",
 			data->len, data->size_max);
@@ -1447,7 +1473,7 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 		if (rc < 0)
 			goto err;
 		data->reserved_used = true;
-		goto set_trans;
+		goto init_mm;
 	}
 
 	if (mw_idx == NTC_DRAM_MW_IDX) {
@@ -1455,7 +1481,7 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 		if (rc < 0)
 			goto err;
 		data->flat_used = true;
-		goto set_trans;
+		goto init_mm;
 	}
 
 	rc = ntc_ntb_init_own_mw_coherent(dev, mw_idx);
@@ -1463,7 +1489,18 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 		goto err;
 	data->coherent_used = true;
 
- set_trans:
+ init_mm:
+	info("ntc_mm_init mw_idx %d mm_len=%#lx mm_prealloc=%#lx",
+		mw_idx, data->mm_len, data->mm_prealloc);
+	rc = ntc_mm_init(&own_mw->mm, own_mw->base_ptr + data->mm_prealloc,
+			data->mm_len - data->mm_prealloc);
+	if (rc < 0) {
+		info("ntc_mm_init failed mm_len=%#lx mm_prealloc=%#lx",
+			data->mm_len, data->mm_prealloc);
+		goto err;
+	}
+	data->mm_inited = true;
+
 	rc = ntb_mw_set_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
 			own_mw->base, own_mw->size);
 	if (rc < 0) {
@@ -1512,17 +1549,9 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	if (rc < 0)
 		goto err_init_own_dram;
 
-	ntc_mm_init(&ntc->own_mws[NTC_DRAM_MW_IDX].mm, NULL, 0);
-
 	rc = ntc_ntb_init_own(dev, NTC_INFO_MW_IDX);
 	if (rc < 0)
 		goto err_init_own_info;
-
-	ntc_mm_init(&ntc->own_mws[NTC_INFO_MW_IDX].mm,
-		ntc->own_mws[NTC_INFO_MW_IDX].base_ptr +
-		sizeof(struct ntc_ntb_info),
-		ntc->own_mws[NTC_INFO_MW_IDX].size -
-		sizeof(struct ntc_ntb_info));
 
 	rc = ntc_ntb_init_peer(dev, NTC_DRAM_MW_IDX, 0);
 	if (rc < 0)
@@ -1587,10 +1616,8 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
  err_init_peer_info:
 	ntc_ntb_deinit_peer(dev, NTC_DRAM_MW_IDX);
  err_init_peer_dram:
-	ntc_mm_deinit(&ntc->own_mws[NTC_INFO_MW_IDX].mm);
 	ntc_ntb_deinit_own(dev, NTC_INFO_MW_IDX);
  err_init_own_info:
-	ntc_mm_deinit(&ntc->own_mws[NTC_DRAM_MW_IDX].mm);
 	ntc_ntb_deinit_own(dev, NTC_DRAM_MW_IDX);
  err_init_own_dram:
 	return rc;
@@ -1598,8 +1625,6 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 {
-	struct ntc_dev *ntc = &dev->ntc;
-
 	ntb_clear_ctx(dev->ntb);
 
 	ntb_link_disable(dev->ntb);
@@ -1610,9 +1635,7 @@ static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 
 	ntc_ntb_deinit_peer(dev, NTC_INFO_MW_IDX);
 	ntc_ntb_deinit_peer(dev, NTC_DRAM_MW_IDX);
-	ntc_mm_deinit(&ntc->own_mws[NTC_INFO_MW_IDX].mm);
 	ntc_ntb_deinit_own(dev, NTC_INFO_MW_IDX);
-	ntc_mm_deinit(&ntc->own_mws[NTC_DRAM_MW_IDX].mm);
 	ntc_ntb_deinit_own(dev, NTC_DRAM_MW_IDX);
 }
 
@@ -1791,16 +1814,27 @@ struct ntb_client ntc_ntb_client = {
 int __init ntc_init(void)
 {
 	int i;
+	unsigned long mw0_mm_prealloc = sizeof(struct ntc_ntb_info);
 
 	info("%s %s init", DRIVER_DESCRIPTION, DRIVER_VERSION);
 
-	own_mw_data[0].base_addr = mw0_base_addr;
-	own_mw_data[0].len = mw0_len;
-	own_mw_data[0].reserved = false;
+	if (!mw0_mm_len)
+		mw0_mm_len = mw0_len;
+	if (!mw0_len)
+		mw0_len = mw0_mm_len;
 
-	own_mw_data[1].base_addr = mw1_base_addr;
-	own_mw_data[1].len = mw1_len;
-	own_mw_data[1].reserved = false;
+	own_mw_data[NTC_INFO_MW_IDX].base_addr = mw0_base_addr;
+	own_mw_data[NTC_INFO_MW_IDX].len = mw0_len;
+	own_mw_data[NTC_INFO_MW_IDX].mm_len = mw0_mm_len;
+	own_mw_data[NTC_INFO_MW_IDX].mm_prealloc =
+		mw0_mm_len ? mw0_mm_prealloc : 0;
+	own_mw_data[NTC_INFO_MW_IDX].reserved = false;
+
+	own_mw_data[NTC_DRAM_MW_IDX].base_addr = mw1_base_addr;
+	own_mw_data[NTC_DRAM_MW_IDX].len = mw1_len;
+	own_mw_data[NTC_DRAM_MW_IDX].mm_len = mw1_mm_len;
+	own_mw_data[NTC_DRAM_MW_IDX].mm_prealloc = 0;
+	own_mw_data[NTC_DRAM_MW_IDX].reserved = false;
 
 	for (i = 0; i < 2; i++)
 		ntc_own_mw_data_check_reserved(&own_mw_data[i]);

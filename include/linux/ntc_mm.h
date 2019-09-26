@@ -124,7 +124,8 @@ static inline int ntc_mm_init(struct ntc_mm *mm, void *memory, size_t size)
 	spin_lock_init(&mm->lock);
 
 	m = _ntc_mm_round_up_ptr(memory);
-	size -= (m - memory);
+	if (size)
+		size -= (m - memory);
 	memory = m;
 
 	end = memory + size;
