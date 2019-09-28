@@ -1522,6 +1522,11 @@ static inline void ntc_remote_buf_clear(struct ntc_remote_buf *buf)
 	buf->dma_addr = 0;
 }
 
+static inline bool ntc_remote_buf_valid(struct ntc_remote_buf *buf)
+{
+	return !!buf->dma_addr;
+}
+
 /**
  * ntc_remote_buf_map() - map a remote buffer via an NTB window,
  *                        to write to the peer,
