@@ -71,7 +71,7 @@ inline u32 ntrdma_eth_rx_cons(struct ntrdma_eth *eth)
 	if (!rx_cons_buf)
 		return 0;
 
-	return *rx_cons_buf;
+	return READ_ONCE(*rx_cons_buf);
 }
 
 static inline void ntrdma_dev_eth_rx_drain(struct ntrdma_dev *dev)
