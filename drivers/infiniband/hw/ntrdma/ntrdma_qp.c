@@ -177,7 +177,7 @@ inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp)
 	if (!send_cons_buf)
 		return 0;
 
-	return *send_cons_buf;
+	return READ_ONCE(*send_cons_buf);
 }
 
 static inline void ntrdma_qp_set_send_cons(struct ntrdma_qp *qp, u32 send_cons)
