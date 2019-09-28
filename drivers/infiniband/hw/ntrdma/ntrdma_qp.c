@@ -1940,7 +1940,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	struct ntrdma_qp *qp;
 	struct dma_chan *req;
 	struct ntrdma_cqe *cqe, *recv_cqe = NULL;
-	const struct ntrdma_send_wqe *wqe;
+	const struct ntrdma_send_wqe *_wqe;
+	struct ntrdma_send_wqe wqe;
 	struct ntrdma_recv_wqe *recv_wqe = NULL;
 	struct ntrdma_wr_rcv_sge rdma_sge;
 	u32 start, pos, end, base;
@@ -2004,50 +2005,50 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	for (pos = start;;) {
 		cqe = ntrdma_rqp_send_cqe(rqp, pos);
-		wqe = ntrdma_rqp_send_wqe(rqp, pos++);
+		_wqe = ntrdma_rqp_send_wqe(rqp, pos++);
+		wqe = READ_ONCE(*_wqe);
 
-		if (wqe->flags & IB_SEND_SIGNALED)
+		if (wqe.flags & IB_SEND_SIGNALED)
 			do_signal = true;
 
-		if (ntrdma_wr_code_is_send(wqe->op_code)) {
-			if (ntrdma_wr_status_no_recv(wqe->op_status)) {
-				ntrdma_send_fail(cqe, wqe, wqe->op_status);
+		if (ntrdma_wr_code_is_send(wqe.op_code)) {
+			if (ntrdma_wr_status_no_recv(wqe.op_status)) {
+				ntrdma_send_fail(cqe, &wqe, wqe.op_status);
 				ntrdma_err(dev, "WQE with error %d received on  qp %d\n",
-						wqe->op_status,
-						rqp->qp_key);
+					wqe.op_status, rqp->qp_key);
 				abort = true;
 				move_to_err_state(qp);
 				break;
 			}
 
-			if (WARN_ON(wqe->recv_key != recv_pos + recv_base)) {
-				if (!wqe->op_status)
-					ntrdma_send_fail(cqe, wqe, NTRDMA_WC_ERR_CORRUPT);
+			if (WARN_ON(wqe.recv_key != recv_pos + recv_base)) {
+				if (!wqe.op_status)
+					ntrdma_send_fail(cqe, &wqe, NTRDMA_WC_ERR_CORRUPT);
 				else
-					ntrdma_send_fail(cqe, wqe, wqe->op_status);
+					ntrdma_send_fail(cqe, &wqe, wqe.op_status);
 
 				abort = true;
 				move_to_err_state(qp);
 				ntrdma_err(dev,
 						"qp %d, recv_key %d, recv_pos %d, recv_base %d, wqe_op_status %d move to error state\n",
-						rqp->qp_key, wqe->recv_key,
+						rqp->qp_key, wqe.recv_key,
 						recv_pos, recv_base,
-						wqe->op_status);
+						wqe.op_status);
 				break;
 			}
 
 			if (recv_pos == recv_end) {
-				if (WARN_ON(!wqe->op_status))
-					ntrdma_send_fail(cqe, wqe, NTRDMA_WC_ERR_RECV_MISSING);
+				if (WARN_ON(!wqe.op_status))
+					ntrdma_send_fail(cqe, &wqe, NTRDMA_WC_ERR_RECV_MISSING);
 				else
-					ntrdma_send_fail(cqe, wqe, wqe->op_status);
+					ntrdma_send_fail(cqe, &wqe, wqe.op_status);
 
 				abort = true;
 				move_to_err_state(qp);
 				ntrdma_err(dev,
 						"qp %d, recv_pos = recv_end = %d, wqe_op_status %d move to error state\n",
 						rqp->qp_key, recv_pos,
-						wqe->op_status);
+						wqe.op_status);
 				break;
 			}
 
@@ -2056,10 +2057,10 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			recv_wqe = ntrdma_qp_recv_wqe(qp, recv_pos++);
 
 			if (recv_wqe->op_status) {
-				if (WARN_ON(!wqe->op_status))
-					ntrdma_send_fail(cqe, wqe, recv_wqe->op_status);
+				if (WARN_ON(!wqe.op_status))
+					ntrdma_send_fail(cqe, &wqe, recv_wqe->op_status);
 				else
-					ntrdma_send_fail(cqe, wqe, wqe->op_status);
+					ntrdma_send_fail(cqe, &wqe, wqe.op_status);
 
 				ntrdma_recv_fail(recv_cqe, recv_wqe, recv_wqe->op_status);
 
@@ -2075,25 +2076,25 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			recv_cqe = NULL;
 		}
 
-		if (wqe->op_status) {
-			ntrdma_send_fail(cqe, wqe, wqe->op_status);
+		if (wqe.op_status) {
+			ntrdma_send_fail(cqe, &wqe, wqe.op_status);
 
-			if (ntrdma_wr_code_is_send(wqe->op_code))
-				ntrdma_recv_fail(recv_cqe, recv_wqe, wqe->op_status);
+			if (ntrdma_wr_code_is_send(wqe.op_code))
+				ntrdma_recv_fail(recv_cqe, recv_wqe, wqe.op_status);
 
 			abort = true;
 			move_to_err_state(qp);
 			ntrdma_err(dev, "Error wqe op status %d  pos %u QP %d\n",
-					wqe->op_status, pos, qp->res.key);
+					wqe.op_status, pos, qp->res.key);
 			break;
 		}
 
-		if (ntrdma_wr_code_push_data(wqe->op_code)) {
-			if (ntrdma_wr_code_is_rdma(wqe->op_code)) {
-				if (wqe->rdma_key != NTRDMA_RESERVED_DMA_LEKY) {
-					rdma_sge.addr = wqe->rdma_addr;
-					rdma_sge.len = wqe->rdma_len;
-					rdma_sge.key = wqe->rdma_key;
+		if (ntrdma_wr_code_push_data(wqe.op_code)) {
+			if (ntrdma_wr_code_is_rdma(wqe.op_code)) {
+				if (wqe.rdma_key != NTRDMA_RESERVED_DMA_LEKY) {
+					rdma_sge.addr = wqe.rdma_addr;
+					rdma_sge.len = wqe.rdma_len;
+					rdma_sge.key = wqe.rdma_key;
 					rdma_sge.direct = true;
 					rc = ntrdma_zip_sync(dev, &rdma_sge, 1);
 				} else
@@ -2108,20 +2109,20 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					rc, rqp->qp_key);
 			/* FIXME: handle send sync error */
 
-			if (ntrdma_wr_code_is_send(wqe->op_code)) {
+			if (ntrdma_wr_code_is_send(wqe.op_code)) {
 				rc = ntrdma_recv_done(dev,
-						recv_cqe, recv_wqe, wqe);
+						recv_cqe, recv_wqe, &wqe);
 				WARN(rc, "ntrdma_recv_done failed rc = %d", rc);
 				/* FIXME: handle recv sync error */
 			}
 
-			ntrdma_send_done(cqe, wqe, wqe->rdma_len);
+			ntrdma_send_done(cqe, &wqe, wqe.rdma_len);
 		}
 
-		if (ntrdma_wr_code_pull_data(wqe->op_code)) {
+		if (ntrdma_wr_code_pull_data(wqe.op_code)) {
 			/* We do not support RDMA read. */
 			rc = -EINVAL;
-			ntrdma_send_fail(cqe, wqe, NTRDMA_WC_ERR_RDMA_ACCESS);
+			ntrdma_send_fail(cqe, &wqe, NTRDMA_WC_ERR_RDMA_ACCESS);
 		}
 
 		if (recv_pos == recv_end) {
