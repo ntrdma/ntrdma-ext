@@ -467,8 +467,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
 	struct ntrdma_qp *qp;
-	const struct ntrdma_cqe *cqe;
-	struct ntrdma_cqe abort_cqe;
+	struct ntrdma_cqe cqe;
 	u32 pos, end, base;
 	int count = 0, rc = 0;
 
@@ -482,19 +481,19 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 			break;
 
 		for (;;) {
-			/* current entry in the ring, or aborted into abort_cqe */
-			cqe = ntrdma_cq_cmpl_cqe(cq, &abort_cqe, pos);
+			/* current entry in the ring, or aborted */
+			ntrdma_cq_cmpl_cqe(cq, &cqe, pos);
 
 			/*complition should be generated for post send with IB_SEND_SIGNALED flag*/
-			if (!ntrdma_wr_code_push_data(cqe->op_code) ||
-					(cqe->flags & IB_SEND_SIGNALED)) {
+			if (!ntrdma_wr_code_push_data(cqe.op_code) ||
+					(cqe.flags & IB_SEND_SIGNALED)) {
 				/* transform the entry into the work completion */
-				rc = ntrdma_ib_wc_from_cqe(&ibwc[count], qp, cqe);
+				rc = ntrdma_ib_wc_from_cqe(&ibwc[count], qp, &cqe);
 				if (rc)
 					break;
 				TRACE("OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u\n",
 						ibwc[count].opcode,
-						cqe->op_code,
+						cqe.op_code,
 						ibwc[count].wr_id,
 						qp->res.key,
 						ibwc[count].status,
