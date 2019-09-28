@@ -73,29 +73,6 @@ rcv_sg_list_skip_empty(const struct ntrdma_wr_rcv_sge *rcv_sge,
 	return rcv_sge;
 }
 
-static const struct ntrdma_wr_rcv_sge *
-rcv_sg_list_skip(const struct ntrdma_wr_rcv_sge *rcv_sge,
-		const struct ntrdma_wr_rcv_sge *rcv_sg_end, u32 *offset_in_out)
-{
-	u64 len;
-	u32 offset = *offset_in_out;
-
-	for (; rcv_sge != rcv_sg_end; rcv_sge++) {
-		if (!rcv_sge->direct)
-			len = rcv_sge->desc.size;
-		else
-			len = rcv_sge->len;
-		if (len > offset)
-			break;
-		offset -= len;
-	}
-
-	if (rcv_sge != rcv_sg_end)
-		*offset_in_out = offset;
-
-	return rcv_sge;
-}
-
 struct ntrdma_snd_cursor {
 	struct ntrdma_dev *dev;
 	const struct ntrdma_wr_snd_sge *snd_sge;
@@ -111,6 +88,7 @@ struct ntrdma_snd_cursor {
 struct ntrdma_rcv_cursor {
 	struct ntrdma_dev *dev;
 	const struct ntrdma_wr_rcv_sge *rcv_sge;
+	struct ntrdma_wr_rcv_sge rcv_sge_copy;
 	const struct ntrdma_wr_rcv_sge *rcv_sg_end;
 	u64 rcv_rem;
 	u32 rmr_key;
@@ -158,6 +136,8 @@ ntrdma_rcv_cursor_init(struct ntrdma_rcv_cursor *c, struct ntrdma_dev *dev,
 	c->dev = dev;
 	c->rcv_sge = rcv_sg_list;
 	c->rcv_sg_end = rcv_sg_list + rcv_sg_count;
+	if (rcv_sg_count)
+		c->rcv_sge_copy = READ_ONCE(*c->rcv_sge);
 	c->rcv_rem = 0;
 	c->rmr = NULL;
 	c->rmr_key = NTRDMA_RESERVED_DMA_LEKY;
@@ -264,24 +244,38 @@ ntrdma_snd_cursor_update(struct ntrdma_snd_cursor *c, int *rc)
 static inline bool
 ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 {
+	u64 len;
+
 	if (c->rcv_rem)
 		goto next_io_off_update;
 
-	c->rcv_sge = rcv_sg_list_skip(c->rcv_sge, c->rcv_sg_end, &c->offset);
+	for (; c->rcv_sge != c->rcv_sg_end;) {
+		if (!c->rcv_sge_copy.direct)
+			len = c->rcv_sge_copy.desc.size;
+		else
+			len = c->rcv_sge_copy.len;
+		if (len > c->offset)
+			break;
+		c->offset -= len;
+		c->rcv_sge++;
+		if (c->rcv_sge != c->rcv_sg_end)
+			c->rcv_sge_copy = READ_ONCE(*c->rcv_sge);
+	}
+
 	if (c->rcv_sge == c->rcv_sg_end) {
 		ntrdma_err(c->dev, "Out of bounds rcv work request");
 		*rc = -EINVAL;
 		return false;
 	}
 
-	if (c->rmr && (c->rmr_key != c->rcv_sge->key)) {
+	if (c->rmr && (c->rmr_key != c->rcv_sge_copy.key)) {
 		/* FIXME: dma callback for put rmr */
 		ntrdma_rmr_put(c->rmr);
 		c->rmr = NULL;
 	}
 
-	if (c->rcv_sge->direct)
-		c->rmr_key = c->rcv_sge->key;
+	if (c->rcv_sge_copy.direct)
+		c->rmr_key = c->rcv_sge_copy.key;
 	else
 		c->rmr_key = NTRDMA_RESERVED_DMA_LEKY;
 
@@ -296,12 +290,13 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 	}
 
 	if (c->rmr) {
-		c->rcv_rem = c->rcv_sge->len - c->offset;
+		c->rcv_rem = c->rcv_sge_copy.len - c->offset;
 		c->rmr_sge = c->rmr->sg_list;
 		c->rmr_sg_end = c->rmr_sge + c->rmr->sg_count;
-		c->next_io_off = c->rcv_sge->addr + c->offset - c->rmr->addr;
+		c->next_io_off = c->rcv_sge_copy.addr +
+			c->offset - c->rmr->addr;
 	} else {
-		c->rcv_rem = c->rcv_sge->desc.size - c->offset;
+		c->rcv_rem = c->rcv_sge_copy.desc.size - c->offset;
 		c->next_io_off = c->offset;
 	}
 	c->offset = 0;
@@ -402,8 +397,11 @@ ntrdma_rcv_cursor_forward(struct ntrdma_rcv_cursor *c, u64 len, int *rc)
 
 	if (c->rcv_rem)
 		c->next_io_off += len;
-	else
+	else {
 		c->rcv_sge++;
+		if (c->rcv_sge != c->rcv_sg_end)
+			c->rcv_sge_copy = READ_ONCE(*c->rcv_sge);
+	}
 
 	return ntrdma_rcv_cursor_update(c, rc);
 }

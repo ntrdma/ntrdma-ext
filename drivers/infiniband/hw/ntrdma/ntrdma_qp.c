@@ -1631,13 +1631,22 @@ out:
 	ntrdma_qp_recv_prod_done(qp);
 }
 
+static inline bool check_recv_wqe_sanity(struct ntrdma_rqp *rqp,
+					const struct ntrdma_recv_wqe *recv_wqe)
+{
+	return sizeof(*recv_wqe) +
+		recv_wqe->sg_count * (u64)sizeof(recv_wqe->rcv_sg_list[0]) <=
+		rqp->recv_wqe_size;
+}
+
 static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_rqp *rqp;
 	struct dma_chan *req;
 	struct ntrdma_send_wqe *wqe;
-	const struct ntrdma_recv_wqe *recv_wqe = NULL;
+	const struct ntrdma_recv_wqe *_recv_wqe = NULL;
+	struct ntrdma_recv_wqe recv_wqe;
 	u32 recv_wqe_recv_pos = 0;
 	struct ntrdma_wr_rcv_sge rdma_sge;
 	struct ntrdma_wr_snd_sge rdma_src_sge;
@@ -1731,17 +1740,18 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 			}
 
 			recv_wqe_recv_pos = recv_pos;
-			recv_wqe = ntrdma_rqp_recv_wqe(rqp, recv_pos++);
+			_recv_wqe = ntrdma_rqp_recv_wqe(rqp, recv_pos++);
+			recv_wqe = READ_ONCE(*_recv_wqe);
 
-			if (recv_wqe->op_status) {
+			if (recv_wqe.op_status) {
 				if (!wqe->op_status) {
 					ntrdma_err(dev,
-							"wqe->op_status %d recv_wqe->op_status %d recv_pos %u qp %d\n",
+							"wqe->op_status %d recv_wqe.op_status %d recv_pos %u qp %d\n",
 							wqe->op_status,
-							recv_wqe->op_status,
+							recv_wqe.op_status,
 							recv_pos,
 							qp->res.key);
-					wqe->op_status = recv_wqe->op_status;
+					wqe->op_status = recv_wqe.op_status;
 				}
 
 				abort = true;
@@ -1800,7 +1810,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 								0);
 				} else
 					rc = -EINVAL;
-			} else {
+			} else if (check_recv_wqe_sanity(rqp, &recv_wqe)) {
+
 				if (qp->ibqp.qp_type == IB_QPT_GSI)
 					rcv_start_offset =
 						sizeof(struct ib_grh);
@@ -1809,12 +1820,13 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 				/* This goes from send to post recv */
 				rc = ntrdma_zip_rdma(dev, req, &rdma_len,
-						recv_wqe->rcv_sg_list,
+						_recv_wqe->rcv_sg_list,
 						snd_sg_list(0, wqe),
-						recv_wqe->sg_count,
+						recv_wqe.sg_count,
 						wqe->sg_count,
 						rcv_start_offset);
-			}
+			} else
+				rc = -EINVAL;
 			if (rc) {
 				ntrdma_err(dev,
 						"ntrdma_zip_rdma failed %d qp %d\n",
