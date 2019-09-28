@@ -673,6 +673,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 	u32 pos, end, base;
 	struct ntrdma_skb_cb *skb_ctx;
 	const struct ntc_remote_buf_desc *tx_wqe_buf;
+	struct ntc_remote_buf_desc tx_wqe;
 	struct ntc_remote_buf_desc *tx_cqe_buf;
 	struct ntc_remote_buf_desc tmp_desc;
 	u32 tx_prod;
@@ -702,7 +703,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 						sizeof(*tx_wqe_buf) * pos,
 						sizeof(*tx_wqe_buf));
 	/* Make it point to the start of eth->tx_wqe_buf. */
-	tx_wqe_buf -= pos;
+	tx_wqe = READ_ONCE(*tx_wqe_buf);
 
 	off = skb_headroom(skb);
 	len = skb_headlen(skb);
@@ -718,12 +719,12 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 		eth->req = req;
 	}
 
-	if (len + tx_off > tx_wqe_buf[pos].size) {
+	if (len + tx_off > tx_wqe.size) {
 		eth->napi.dev->stats.tx_errors++;
 		eth->napi.dev->stats.tx_dropped++;
 
 		tx_cqe_buf = ntc_local_buf_deref(&eth->tx_cqe_buf);
-		tx_cqe_buf[pos] = tx_wqe_buf[pos];
+		tx_cqe_buf[pos] = tx_wqe;
 		tx_cqe_buf[pos].size = 0;
 
 		kfree_skb(skb);
@@ -736,7 +737,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 			goto err_alloc_skb_ctx;
 		skb_ctx->ntc = dev->ntc;
 
-		tmp_desc = tx_wqe_buf[pos];
+		tmp_desc = tx_wqe;
 		rc = ntc_remote_buf_desc_clip(&tmp_desc, 0, len + tx_off);
 		if (rc < 0) {
 			TRACE("XMIT: Bad size for remote map %lu.\n",
@@ -768,7 +769,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 		eth->napi.dev->stats.tx_bytes += len;
 
 		tx_cqe_buf = ntc_local_buf_deref(&eth->tx_cqe_buf);
-		tx_cqe_buf[pos] = tx_wqe_buf[pos];
+		tx_cqe_buf[pos] = tx_wqe;
 		rc = ntc_remote_buf_desc_clip(&tx_cqe_buf[pos], tx_off, len);
 		if (rc < 0)
 			ntrdma_err(dev, "ntc_remote_buf_desc_clip error");
