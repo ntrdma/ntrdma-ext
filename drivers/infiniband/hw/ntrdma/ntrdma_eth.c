@@ -552,6 +552,7 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 	u32 start, pos, end, base;
 	int count;
 	const struct ntc_remote_buf_desc *rx_cqe_buf;
+	struct ntc_remote_buf_desc desc;
 	int rc;
 
 	if (!eth->link) {
@@ -581,9 +582,9 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 	for (pos = start; pos < end; ++pos) {
 		len = eth->rx_buf[pos].size;
 
+		desc = READ_ONCE(rx_cqe_buf[pos]);
 		rc = ntc_export_buf_get_part_params(&eth->rx_buf[pos],
-						&rx_cqe_buf[pos],
-						&rx_offset, &rx_len);
+						&desc, &rx_offset, &rx_len);
 		buf_len = rx_offset + rx_len + SKINFO_SIZE;
 
 		if (!rx_len || WARN_ON(rc < 0) ||
