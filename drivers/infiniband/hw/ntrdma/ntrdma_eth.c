@@ -56,7 +56,7 @@ inline u32 ntrdma_eth_tx_prod(struct ntrdma_eth *eth)
 	if (!tx_prod_buf)
 		return 0;
 
-	return *tx_prod_buf;
+	return READ_ONCE(*tx_prod_buf);
 }
 
 static inline const u32 *ntrdma_eth_rx_cons_buf(struct ntrdma_eth *eth)
