@@ -658,12 +658,18 @@ static void ntrdma_cmd_send_vbell_cb(void *ctx)
 	schedule_work(&dev->cmd_send_work);
 }
 
-static int ntrdma_cmd_recv_none(struct ntrdma_dev *dev, u32 cmd_op,
+static int ntrdma_cmd_recv_none(struct ntrdma_dev *dev,
+				const struct ntrdma_cmd_hdr *_cmd,
 				struct ntrdma_rsp_hdr *rsp)
 {
+	struct ntrdma_cmd_hdr cmd;
+
+	cmd = READ_ONCE(*_cmd);
+	rsp->cmd_id = cmd.cmd_id;
+
 	ntrdma_vdbg(dev, "called\n");
 
-	rsp->op = cmd_op;
+	rsp->op = NTRDMA_CMD_NONE;
 	rsp->status = 0;
 
 	return 0;
@@ -674,7 +680,8 @@ static int ntrdma_sanity_mr_create(struct ntrdma_dev *dev,
 {
 	/* sanity checks for values received from peer */
 	if (cmd->sg_cap > (IB_MR_LIMIT_BYTES >> PAGE_SHIFT) ||
-		cmd->sg_count > NTRDMA_CMD_MR_CREATE_SG_CAP) {
+		cmd->sg_count > NTRDMA_CMD_MR_CREATE_SG_CAP ||
+		cmd->sg_count > cmd->sg_cap) {
 
 		ntrdma_err(dev,
 				"Invalid sg_cap %u(max %llu) sg_count %u (max %lu)\n",
@@ -706,12 +713,15 @@ static int ntrdma_sanity_mr_create(struct ntrdma_dev *dev,
 }
 
 static int ntrdma_sanity_mr_append(struct ntrdma_dev *dev,
-				const struct ntrdma_cmd_mr_append *cmd)
+				const struct ntrdma_cmd_mr_append *cmd,
+				struct ntrdma_rmr *rmr)
 {
 	/* sanity checks for values received from peer */
 	if (cmd->sg_pos > (IB_MR_LIMIT_BYTES >> PAGE_SHIFT) ||
-		cmd->sg_count > NTRDMA_CMD_MR_APPEND_SG_CAP) {
-		ntrdma_err(dev, 
+		cmd->sg_count > NTRDMA_CMD_MR_APPEND_SG_CAP ||
+		cmd->sg_pos + cmd->sg_count < cmd->sg_pos ||
+		cmd->sg_pos + cmd->sg_count > rmr->sg_count) {
+		ntrdma_err(dev,
 				"Invalid sg pos %u(%llu) sg_count %u(%lu)\n",
 				cmd->sg_pos,
 				(IB_MR_LIMIT_BYTES >> PAGE_SHIFT),
@@ -723,48 +733,55 @@ static int ntrdma_sanity_mr_append(struct ntrdma_dev *dev,
 	return 0;
 }
 static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
-				const struct ntrdma_cmd_mr_create *cmd,
+				const struct ntrdma_cmd_mr_create *_cmd,
 				struct ntrdma_rsp_mr_status *rsp)
 {
+	struct ntrdma_cmd_mr_create cmd;
+	struct ntc_remote_buf_desc sg_desc_list;
 	struct ntrdma_rmr *rmr;
 	int i;
 	u32 count;
 	int rc;
 
+	cmd = READ_ONCE(*_cmd);
+	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
+
+	count = cmd.sg_count;
+
 	ntrdma_vdbg(dev,
 			"called mr len %llx  mr addr %llx mr key %x sg_count %d\n",
-			cmd->mr_len, cmd->mr_addr, cmd->mr_key, cmd->sg_count);
+			cmd.mr_len, cmd.mr_addr, cmd.mr_key, count);
 
-	rsp->hdr.op = cmd->hdr.op;
-	rsp->mr_key = cmd->mr_key;
+	rsp->hdr.op = NTRDMA_CMD_MR_CREATE;
+	rsp->mr_key = cmd.mr_key;
 
-	rc = ntrdma_sanity_mr_create(dev, cmd);
+	rc = ntrdma_sanity_mr_create(dev, &cmd);
 	if (rc) {
 		ntrdma_err(dev, "sanity failed, rc %d\n", rc);
 		goto err_sanity;
 	}
 
-	rmr = kmalloc_node(sizeof(*rmr) + cmd->sg_cap * sizeof(*rmr->sg_list),
+	rmr = kmalloc_node(sizeof(*rmr) + cmd.sg_cap * sizeof(*rmr->sg_list),
 			   GFP_KERNEL, dev->node);
 	if (!rmr) {
 		rc = -ENOMEM;
 		goto err_rmr;
 	}
 
-	rc = ntrdma_rmr_init(rmr, dev, cmd->pd_key, cmd->access,
-			cmd->mr_addr, cmd->mr_len, cmd->sg_cap,
-			cmd->mr_key);
+	rc = ntrdma_rmr_init(rmr, dev, cmd.pd_key, cmd.access,
+			cmd.mr_addr, cmd.mr_len, cmd.sg_cap,
+			cmd.mr_key);
 	if (rc) {
 		ntrdma_err(dev, "rmr init failed, rc %d\n",
 						rc);
 		goto err_init;
 	}
 
-	count = cmd->sg_count;
-
 	for (i = 0; i < count; ++i) {
+		sg_desc_list = READ_ONCE(_cmd->sg_desc_list[i]);
+
 		rc = ntc_remote_buf_map(&rmr->sg_list[i], dev->ntc,
-					&cmd->sg_desc_list[i]);
+					&sg_desc_list);
 		if (rc < 0)
 			goto err_map;
 	}
@@ -779,10 +796,10 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	return 0;
 
 err_add:
-	ntrdma_rmr_deinit(rmr); /* Not sure we need this */
 err_map:
 	for (--i; i >= 0; i--)
 		ntc_remote_buf_unmap(&rmr->sg_list[i], dev->ntc);
+	ntrdma_rmr_deinit(rmr); /* Not sure we need this */
 err_init:
 	kfree(rmr);
 err_rmr:
@@ -792,22 +809,26 @@ err_sanity:
 }
 
 static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
-				const struct ntrdma_cmd_mr_delete *cmd,
+				const struct ntrdma_cmd_mr_delete *_cmd,
 				struct ntrdma_rsp_mr_status *rsp)
 {
+	struct ntrdma_cmd_mr_delete cmd;
 	struct ntrdma_rmr *rmr;
 	int rc;
 	int i;
 
+	cmd = READ_ONCE(*_cmd);
+	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
+
 	ntrdma_vdbg(dev, "called\n");
 
-	rsp->hdr.op = cmd->hdr.op;
-	rsp->mr_key = cmd->mr_key;
+	rsp->hdr.op = NTRDMA_CMD_MR_DELETE;
+	rsp->mr_key = cmd.mr_key;
 
-	rmr = ntrdma_dev_rmr_look(dev, cmd->mr_key);
+	rmr = ntrdma_dev_rmr_look(dev, cmd.mr_key);
 	if (!rmr) {
 		ntrdma_err(dev, "rmr lock failed for key %d\n",
-				cmd->mr_key);
+				cmd.mr_key);
 		rc = -EINVAL;
 		goto err_rmr;
 	}
@@ -831,42 +852,51 @@ err_rmr:
 }
 
 static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
-				const struct ntrdma_cmd_mr_append *cmd,
+				const struct ntrdma_cmd_mr_append *_cmd,
 				struct ntrdma_rsp_mr_status *rsp)
 {
+	struct ntrdma_cmd_mr_append cmd;
+	struct ntc_remote_buf_desc sg_desc_list;
 	struct ntrdma_rmr *rmr;
 	int i;
 	u32 pos, count;
 	int rc;
 
-	ntrdma_vdbg(dev, "called sg count %d sg pos %d\n",
-			cmd->sg_count, cmd->sg_pos);
+	cmd = READ_ONCE(*_cmd);
+	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
-	rsp->hdr.op = cmd->hdr.op;
-	rsp->mr_key = cmd->mr_key;
+	pos = cmd.sg_pos;
+	count = cmd.sg_count;
 
-	rc = ntrdma_sanity_mr_append(dev, cmd);
+	ntrdma_vdbg(dev, "called sg count %d sg pos %d\n", count, pos);
+
+	rsp->hdr.op = NTRDMA_CMD_MR_APPEND;
+	rsp->mr_key = cmd.mr_key;
+
+	rmr = ntrdma_dev_rmr_look(dev, cmd.mr_key);
+	if (!rmr) {
+		ntrdma_err(dev, "rmr look failed for lock %d\n",
+				cmd.mr_key);
+		rc = -EINVAL;
+		goto err_rmr;
+	}
+
+	rc = ntrdma_sanity_mr_append(dev, &cmd, rmr);
 	if (rc) {
 		ntrdma_err(dev, "sanity failed, rc %d\n", rc);
 		goto err_sanity;
 	}
 
-	rmr = ntrdma_dev_rmr_look(dev, cmd->mr_key);
-	if (!rmr) {
-		ntrdma_err(dev, "rmr look failed for lock %d\n",
-				cmd->mr_key);
-		rc = -EINVAL;
-		goto err_rmr;
-	}
-
-	pos = cmd->sg_pos;
-	count = cmd->sg_count;
-
-	/* TODO: this should be validated if its not corruption */
-
 	for (i = 0; i < count; ++i) {
+		if (ntc_remote_buf_valid(&rmr->sg_list[pos + i])) {
+			rc = -EINVAL;
+			goto err_map;
+		}
+
+		sg_desc_list = READ_ONCE(_cmd->sg_desc_list[i]);
+
 		rc = ntc_remote_buf_map(&rmr->sg_list[pos + i], dev->ntc,
-					&cmd->sg_desc_list[i]);
+					&sg_desc_list);
 		if (rc < 0)
 			goto err_map;
 	}
@@ -881,8 +911,8 @@ err_map:
 	}
 
 	ntrdma_rmr_put(rmr);
-err_rmr:
 err_sanity:
+err_rmr:
 	rsp->hdr.status = ~0;
 	return rc;
 }
@@ -928,24 +958,28 @@ static int ntrdma_qp_create_sanity(struct ntrdma_dev *dev,
 }
 
 static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
-				const struct ntrdma_cmd_qp_create *cmd,
+				const struct ntrdma_cmd_qp_create *_cmd,
 				struct ntrdma_rsp_qp_create *rsp)
 {
+	struct ntrdma_cmd_qp_create cmd;
 	struct ntrdma_rqp *rqp;
 	struct ntrdma_rqp_init_attr attr;
 	int rc;
 
+	cmd = READ_ONCE(*_cmd);
+	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
+
 	ntrdma_vdbg(dev,
 			"called qp_key %d vbell %d\n",
-			 cmd->qp_key, cmd->cmpl_vbell_idx);
+			 cmd.qp_key, cmd.cmpl_vbell_idx);
 
 	TRACE("peer QP %d create received, recv cap: %d send cap %d\n",
-			cmd->qp_key, cmd->recv_wqe_cap, cmd->send_wqe_cap);
+			cmd.qp_key, cmd.recv_wqe_cap, cmd.send_wqe_cap);
 
-	rsp->hdr.op = cmd->hdr.op;
-	rsp->qp_key = cmd->qp_key;
+	rsp->hdr.op = NTRDMA_CMD_QP_CREATE;
+	rsp->qp_key = cmd.qp_key;
 
-	rc = ntrdma_qp_create_sanity(dev, cmd);
+	rc = ntrdma_qp_create_sanity(dev, &cmd);
 	if (rc) {
 		ntrdma_err(dev, "sanity failed rc=%d\n", rc);
 		goto err_sanity;
@@ -957,25 +991,25 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 		goto err_rqp;
 	}
 
-	attr.pd_key = cmd->pd_key;
-	attr.recv_wqe_idx = cmd->recv_ring_idx;
-	attr.recv_wqe_cap = cmd->recv_wqe_cap;
-	attr.recv_wqe_sg_cap = cmd->recv_wqe_sg_cap;
-	attr.send_wqe_idx = cmd->send_ring_idx;
-	attr.send_wqe_cap = cmd->send_wqe_cap;
-	attr.send_wqe_sg_cap = cmd->send_wqe_sg_cap;
-	attr.send_wqe_inline_cap = cmd->send_wqe_inline_cap;
+	attr.pd_key = cmd.pd_key;
+	attr.recv_wqe_idx = cmd.recv_ring_idx;
+	attr.recv_wqe_cap = cmd.recv_wqe_cap;
+	attr.recv_wqe_sg_cap = cmd.recv_wqe_sg_cap;
+	attr.send_wqe_idx = cmd.send_ring_idx;
+	attr.send_wqe_cap = cmd.send_wqe_cap;
+	attr.send_wqe_sg_cap = cmd.send_wqe_sg_cap;
+	attr.send_wqe_inline_cap = cmd.send_wqe_inline_cap;
 
 	rc = ntc_remote_buf_map(&attr.peer_send_cqe_buf, dev->ntc,
-				&cmd->send_cqe_buf_desc);
+				&cmd.send_cqe_buf_desc);
 	if (rc < 0)
 		goto err_peer_send_cqe_buf;
 
-	attr.peer_send_cons_shift = cmd->send_cons_shift;
+	attr.peer_send_cons_shift = cmd.send_cons_shift;
 
-	attr.peer_cmpl_vbell_idx = cmd->cmpl_vbell_idx;
+	attr.peer_cmpl_vbell_idx = cmd.cmpl_vbell_idx;
 
-	rc = ntrdma_rqp_init(rqp, dev, &attr, cmd->qp_key);
+	rc = ntrdma_rqp_init(rqp, dev, &attr, cmd.qp_key);
 	if (rc)
 		goto err_init;
 
@@ -1015,21 +1049,25 @@ err_sanity:
 }
 
 static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
-				const struct ntrdma_cmd_qp_delete *cmd,
+				const struct ntrdma_cmd_qp_delete *_cmd,
 				struct ntrdma_rsp_qp_status *rsp)
 {
+	struct ntrdma_cmd_qp_delete cmd;
 	struct ntrdma_rqp *rqp;
 	struct ntrdma_qp *qp;
 	int rc;
 
+	cmd = READ_ONCE(*_cmd);
+	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
+
 	ntrdma_vdbg(dev, "called\n");
 
-	rsp->hdr.op = cmd->hdr.op;
-	rsp->qp_key = cmd->qp_key;
+	rsp->hdr.op = NTRDMA_CMD_QP_DELETE;
+	rsp->qp_key = cmd.qp_key;
 
-	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd->qp_key);
+	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd.qp_key);
 	if (!rqp) {
-		ntrdma_err(dev, "rqp look failed key %d\n", cmd->qp_key);
+		ntrdma_err(dev, "rqp look failed key %d\n", cmd.qp_key);
 		rc = -EINVAL;
 		goto err_rqp;
 	}
@@ -1057,57 +1095,58 @@ err_rqp:
 }
 
 static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
-				const struct ntrdma_cmd_qp_modify *cmd,
+				const struct ntrdma_cmd_qp_modify *_cmd,
 				struct ntrdma_rsp_qp_status *rsp)
 {
+	struct ntrdma_cmd_qp_modify cmd;
 	struct ntrdma_rqp *rqp;
 	struct ntrdma_qp *qp;
 	int rc;
 
-	ntrdma_vdbg(dev, "enter state %d qp key %d\n",
-			cmd->state, cmd->qp_key);
+	cmd = READ_ONCE(*_cmd);
+	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
-	rsp->hdr.op = cmd->hdr.op;
-	rsp->qp_key = cmd->qp_key;
+	ntrdma_vdbg(dev, "enter state %d qp key %d\n", cmd.state, cmd.qp_key);
+
+	rsp->hdr.op = NTRDMA_CMD_QP_MODIFY;
+	rsp->qp_key = cmd.qp_key;
 
 	/* sanity check */
-	if (cmd->access > MAX_SUM_ACCESS_FLAGS || !is_state_valid(cmd->state)) {
-		ntrdma_err(dev,
-				"Sanity failure %d %d\n",
-				cmd->access, cmd->state);
+	if (cmd.access > MAX_SUM_ACCESS_FLAGS || !is_state_valid(cmd.state)) {
+		ntrdma_err(dev, "Sanity failure %d %d", cmd.access, cmd.state);
 
 		rc = -EINVAL;
 		goto err_sanity;
 	}
 
-	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd->qp_key);
+	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd.qp_key);
 	if (!rqp) {
-		ntrdma_err(dev, "ntrdma_dev_rqp_look failed key %d\n",
-				cmd->qp_key);
+		ntrdma_err(dev, "ntrdma_dev_rqp_look failed key %d",
+			cmd.qp_key);
 		rc = -EINVAL;
 		goto err_rqp;
 	}
-	rqp->state = cmd->state;
-	rqp->access = cmd->access;
+	rqp->state = cmd.state;
+	rqp->access = cmd.access;
 
-	//rqp->access = cmd->access; /* TODO: qp access flags */
-	rqp->qp_key = cmd->dest_qp_key;
+	//rqp->access = cmd.access; /* TODO: qp access flags */
+	rqp->qp_key = cmd.dest_qp_key;
 
 	tasklet_schedule(&rqp->send_work);
 	ntrdma_rqp_put(rqp);
 
-	if (is_state_error(cmd->state)) {
-		qp = ntrdma_dev_qp_look_and_get(dev, cmd->dest_qp_key);
-		TRACE("qp %p (%d) state changed to %d\n",
-				qp, cmd->dest_qp_key, cmd->state);
+	if (is_state_error(cmd.state)) {
+		qp = ntrdma_dev_qp_look_and_get(dev, cmd.dest_qp_key);
+		TRACE("qp %p (%d) state changed to %d", qp,
+			cmd.dest_qp_key, cmd.state);
 		if (!qp) {
 			ntrdma_info(dev,
-					"ntrdma_dev_qp_look failed key %d (rqp key %d)\n",
-					cmd->dest_qp_key, cmd->qp_key);
+				"ntrdma_dev_qp_look failed key %d (rqp key %d)",
+				cmd.dest_qp_key, cmd.qp_key);
 			rc = 0;
 			goto err_qp;
 		}
-		atomic_set(&qp->state, cmd->state);
+		atomic_set(&qp->state, cmd.state);
 		ntrdma_qp_put(qp);
 	}
 
@@ -1124,14 +1163,15 @@ err_sanity:
 static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
 			union ntrdma_rsp *rsp, struct dma_chan *req)
 {
-	TRACE("CMD: received: op %d\n",
-			cmd->hdr.op);
+	u32 op;
 
-	rsp->hdr.cmd_id = cmd->hdr.cmd_id;
+	op = READ_ONCE(cmd->hdr.op);
 
-	switch (cmd->hdr.op) {
+	TRACE("CMD: received: op %d\n", op);
+
+	switch (op) {
 	case NTRDMA_CMD_NONE:
-		return ntrdma_cmd_recv_none(dev, cmd->hdr.op, &rsp->hdr);
+		return ntrdma_cmd_recv_none(dev, &cmd->hdr, &rsp->hdr);
 	case NTRDMA_CMD_MR_CREATE:
 		return ntrdma_cmd_recv_mr_create(dev, &cmd->mr_create,
 						 &rsp->mr_create);
@@ -1152,7 +1192,7 @@ static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
 						 &rsp->qp_modify);
 	}
 
-	ntrdma_err(dev, "unhandled recv cmd op %u\n", cmd->hdr.op);
+	ntrdma_err(dev, "unhandled recv cmd op %u\n", op);
 
 	return -EINVAL;
 }
