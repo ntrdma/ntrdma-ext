@@ -210,7 +210,7 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 			0, dev->vbell_count * sizeof(u32));
 	for (i = 0; i < dev->vbell_count; ++i) {
 		head = &dev->vbell_vec[i];
-		vbell_val = vbell_buf[i];
+		vbell_val = READ_ONCE(vbell_buf[i]);
 		if (head->seq == vbell_val)
 			continue;
 		head->seq = vbell_val;
