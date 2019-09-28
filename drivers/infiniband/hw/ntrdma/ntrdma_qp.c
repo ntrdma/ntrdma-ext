@@ -466,6 +466,7 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	u32 status;
 	int rc;
 
 	ntrdma_vdbg(dev, "called\n");
@@ -476,9 +477,9 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 		return -EIO;
 	}
 
-	if (rsp->hdr.status) {
-		ntrdma_err(dev, "rsp %p status %d\n",
-				rsp, rsp->hdr.status);
+	status = READ_ONCE(rsp->hdr.status);
+	if (status) {
+		ntrdma_err(dev, "rsp %p status %d", rsp, status);
 		rc = -EIO;
 		goto err;
 	}
@@ -599,22 +600,27 @@ err_peer_recv_wqe_buf:
 }
 
 static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
-				const union ntrdma_rsp *rsp,
+				const union ntrdma_rsp *_rsp,
 				struct dma_chan *req)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	union ntrdma_rsp rsp;
 	int rc;
 
 	ntrdma_vdbg(dev, "called\n");
 
 	TRACE("qp_enable cmpl: %d\n", qp->res.key);
 
-	if (!rsp || rsp->hdr.status)
+	if (!_rsp)
 		return -EIO;
 
-	rc = ntrdma_qp_enable_disable_cmpl_common(qp, dev, rsp, false);
+	rsp = READ_ONCE(*_rsp);
+	if (rsp.hdr.status)
+		return -EIO;
+
+	rc = ntrdma_qp_enable_disable_cmpl_common(qp, dev, &rsp, false);
 	if (rc)
 		return rc;
 
@@ -697,7 +703,7 @@ static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 
 	ntrdma_vdbg(dev, "called\n");
 
-	if (!rsp || rsp->hdr.status) {
+	if (!rsp || READ_ONCE(rsp->hdr.status)) {
 		rc = -EIO;
 		goto err;
 	}

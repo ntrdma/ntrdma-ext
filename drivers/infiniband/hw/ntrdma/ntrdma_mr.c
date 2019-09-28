@@ -213,7 +213,7 @@ static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 
 	TRACE("mr_enable cmpl: %d\n", mr->res.key);
 
-	if (!rsp || rsp->hdr.status) {
+	if (!rsp || READ_ONCE(rsp->hdr.status)) {
 		rc = -EIO;
 		goto err;
 	}
@@ -280,7 +280,7 @@ static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr *mr = mrcb->mr;
 	int rc;
 
-	if (!rsp || rsp->hdr.status) {
+	if (!rsp || READ_ONCE(rsp->hdr.status)) {
 		rc = -EIO;
 		goto err;
 	}
