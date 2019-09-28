@@ -492,6 +492,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 	int rc;
 	union ntrdma_cmd *cmd_send_buf;
 	const union ntrdma_rsp *cmd_send_rsp_buf;
+	u32 cmd_id;
 
 	req = ntc_req_create(dev->ntc);
 	if (!req)
@@ -527,11 +528,12 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				break;
 			}
 
-			if (unlikely(pos !=
-				cmd_send_rsp_buf[pos].hdr.cmd_id)) {
+			cmd_id = READ_ONCE(cmd_send_rsp_buf[pos].hdr.cmd_id);
+
+			if (unlikely(pos != cmd_id)) {
 				ntrdma_err(dev,
 					"rsp cmd id %d != pos %d, link down\n",
-					cmd_send_rsp_buf[pos].hdr.cmd_id, pos);
+					cmd_id, pos);
 				ntc_link_disable(dev->ntc);
 			}
 
@@ -541,9 +543,8 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			list_del(&cb->dev_entry);
 
-			ntrdma_vdbg(dev,
-					"rsp cmpl pos %d cmd_id %d\n", pos,
-					cmd_send_rsp_buf[pos].hdr.cmd_id);
+			ntrdma_vdbg(dev, "rsp cmpl pos %d cmd_id %d", pos,
+				cmd_id);
 
 			TRACE("CMD: respond received for %ps pos %u\n",
 				cb->rsp_cmpl, pos);
