@@ -41,8 +41,8 @@
 struct ntrdma_poll {
 	struct list_head		cq_entry;
 
-	const struct ntrdma_cqe *(*poll_cqe)(struct ntrdma_poll *poll,
-					struct ntrdma_cqe *abort_cqe, u32 pos);
+	void (*poll_cqe)(struct ntrdma_poll *poll,
+			struct ntrdma_cqe *outcqe, u32 pos);
 
 	int (*poll_start_and_get)(struct ntrdma_poll *poll,
 				  struct ntrdma_qp **qp,

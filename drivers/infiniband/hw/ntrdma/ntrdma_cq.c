@@ -216,14 +216,14 @@ void ntrdma_cq_cmpl_put(struct ntrdma_cq *cq,
 	poll->poll_put_and_done(poll, pos, base);
 }
 
-const struct ntrdma_cqe *ntrdma_cq_cmpl_cqe(struct ntrdma_cq *cq,
-					struct ntrdma_cqe *abort_cqe, u32 pos)
+void ntrdma_cq_cmpl_cqe(struct ntrdma_cq *cq,
+			struct ntrdma_cqe *outcqe, u32 pos)
 {
 	struct ntrdma_poll *poll;
 
 	poll = list_last_entry(&cq->poll_list, struct ntrdma_poll, cq_entry);
 
-	return poll->poll_cqe(poll, abort_cqe, pos);
+	return poll->poll_cqe(poll, outcqe, pos);
 }
 
 static void ntrdma_cq_cue_work(unsigned long ptrhld)

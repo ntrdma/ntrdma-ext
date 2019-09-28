@@ -135,20 +135,16 @@ static int ntrdma_qp_poll_recv_start_and_get(struct ntrdma_poll *poll,
 					     u32 *base);
 static void ntrdma_qp_poll_recv_put_and_done(struct ntrdma_poll *poll,
 					     u32 pos, u32 base);
-static
-const struct ntrdma_cqe *ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
-						struct ntrdma_cqe *abort_cqe,
-						u32 pos);
+static void ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
+				struct ntrdma_cqe *outcqe, u32 pos);
 
 static int ntrdma_qp_poll_send_start_and_get(struct ntrdma_poll *poll,
 					     struct ntrdma_qp **pqp, u32 *pos, u32 *end,
 					     u32 *base);
 static void ntrdma_qp_poll_send_put_and_done(struct ntrdma_poll *poll,
 					     u32 pos, u32 base);
-static
-const struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
-						struct ntrdma_cqe *abort_cqe,
-						u32 pos);
+static void ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
+				struct ntrdma_cqe *outcqe, u32 pos);
 
 static void ntrdma_qp_recv_work(struct ntrdma_qp *qp);
 static void ntrdma_qp_send_work(struct ntrdma_qp *qp);
@@ -1459,10 +1455,8 @@ static void ntrdma_qp_poll_recv_put_and_done(struct ntrdma_poll *poll,
 	ntrdma_qp_recv_cmpl_done(qp);
 }
 
-static
-const struct ntrdma_cqe *ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
-						struct ntrdma_cqe *abort_cqe,
-						u32 pos)
+static void ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
+				struct ntrdma_cqe *outcqe, u32 pos)
 {
 	struct ntrdma_qp *qp = ntrdma_recv_poll_qp(poll);
 	const struct ntrdma_cqe *cqe = ntrdma_qp_recv_cqe(qp, pos);
@@ -1473,24 +1467,23 @@ const struct ntrdma_cqe *ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
 	if (qp->recv_abort) {
 		opt = qp->recv_abort_first ? NTRDMA_WC_ERR_LOC_PORT :
 				NTRDMA_WC_ERR_ABORTED;
-		ntrdma_recv_fail(abort_cqe, wqe, NTRDMA_WC_ERR_ABORTED);
+		ntrdma_recv_fail(outcqe, wqe, NTRDMA_WC_ERR_ABORTED);
 		qp->recv_abort_first = false;
 		ntrdma_info(dev, "fail completion opt %d QP %d\n",
 				opt, qp->res.key);
-		return abort_cqe;
+		return;
 	}
 	if (wqe->op_status) {
 		qp->recv_aborting = true;
-		ntrdma_recv_fail(abort_cqe, wqe, wqe->op_status);
+		ntrdma_recv_fail(outcqe, wqe, wqe->op_status);
 		TRACE("qp %d wqe status %d\n", qp->res.key, wqe->op_status);
-		return abort_cqe;
+		return;
 	}
-	if (cqe->op_status) {
+	*outcqe = READ_ONCE(*cqe);
+	if (outcqe->op_status) {
 		qp->recv_aborting = true;
-		TRACE("qp %d cqe status %d\n", qp->res.key, cqe->op_status);
+		TRACE("qp %d cqe status %d\n", qp->res.key, outcqe->op_status);
 	}
-
-	return cqe;
 }
 
 static int ntrdma_qp_poll_send_start_and_get(struct ntrdma_poll *poll,
@@ -1533,10 +1526,8 @@ static void ntrdma_qp_poll_send_put_and_done(struct ntrdma_poll *poll,
 	ntrdma_qp_send_cmpl_done(qp);
 }
 
-static
-const struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
-						struct ntrdma_cqe *abort_cqe,
-						u32 pos)
+static void ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
+				struct ntrdma_cqe *outcqe, u32 pos)
 {
 	struct ntrdma_qp *qp = ntrdma_send_poll_qp(poll);
 	const struct ntrdma_cqe *cqe = ntrdma_qp_send_cqe(qp, pos);
@@ -1547,11 +1538,11 @@ const struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 	if (qp->send_abort) {
 		opt = qp->send_abort_first ? NTRDMA_WC_ERR_LOC_PORT :
 				NTRDMA_WC_ERR_ABORTED;
-		ntrdma_send_fail(abort_cqe, wqe, opt);
+		ntrdma_send_fail(outcqe, wqe, opt);
 		qp->send_abort_first = false;
 		ntrdma_info(dev, "fail completion opt %d QP %d\n",
 				opt, qp->res.key);
-		return abort_cqe;
+		return;
 	}
 
 	if (wqe->op_status) {
@@ -1559,19 +1550,18 @@ const struct ntrdma_cqe *ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 		 * already
 		 */
 		qp->send_aborting = true;
-		ntrdma_send_fail(abort_cqe, wqe, wqe->op_status);
+		ntrdma_send_fail(outcqe, wqe, wqe->op_status);
 		TRACE("qp %d wqe->op_status %d, move to abort\n", qp->res.key,
 				wqe->op_status);
-		return abort_cqe;
+		return;
 	}
 
-	if (cqe->op_status) {
+	*outcqe = READ_ONCE(*cqe);
+	if (outcqe->op_status) {
 		qp->send_aborting = true;
 		TRACE("qp %d, cqe->op_status %d, move to abort\n",
-				qp->res.key, cqe->op_status);
+			qp->res.key, outcqe->op_status);
 	}
-
-	return cqe;
 }
 
 static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
