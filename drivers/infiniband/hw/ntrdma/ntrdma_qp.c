@@ -196,7 +196,7 @@ inline u32 ntrdma_rqp_send_prod(struct ntrdma_rqp *rqp)
 	if (!send_prod_buf)
 		return 0;
 
-	return *send_prod_buf;
+	return READ_ONCE(*send_prod_buf);
 }
 
 static inline const u32 *ntrdma_rqp_recv_prod_buf(struct ntrdma_rqp *rqp)
