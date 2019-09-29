@@ -97,12 +97,23 @@ void ntrdma_debugfs_print_wr_rcv_sg_list(struct seq_file *s, const char *pre,
 					const struct ntrdma_wr_rcv_sge *sg_list,
 					u32 sg_count)
 {
+	const struct ntrdma_wr_rcv_sge *sge;
+	struct ntrdma_wr_rcv_sge_shadow *shadow;
 	u32 i;
 
-	for (i = 0; i < sg_count; ++i)
-		seq_printf(s, "%srcv_sg_list[%u] addr %#llx len %#x key %u\n",
-			pre, i,
-			sg_list[i].addr, sg_list[i].len, sg_list[i].key);
+	for (i = 0; i < sg_count; ++i) {
+		sge = &sg_list[i];
+		shadow = sge->shadow;
+
+		if (!shadow)
+			seq_printf(s,
+				"%srcv_sg_list[%u] addr %#llx len %#x key %u\n",
+				pre, i, sge->addr, sge->len, sge->key);
+		else
+			seq_printf(s,
+				"%srcv_sg_list[%u] exp_buf_desc.size %#llx\n",
+				pre, i, sge->exp_buf_desc.size);
+	}
 }
 
 static inline

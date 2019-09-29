@@ -1243,7 +1243,9 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 				int sg_cap)
 {
 	int i;
-	struct ntrdma_wr_rcv_sge *rcv_sg_list;
+	struct ntrdma_wr_rcv_sge *rcv_sge;
+	struct ntrdma_wr_rcv_sge_shadow *shadow;
+	u32 key;
 	struct ib_sge *sg_list;
 	struct ntrdma_mr *mr;
 	int rc;
@@ -1257,50 +1259,63 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 
 	wqe->sg_count = ibwr->num_sge;
 	for (i = 0; i < ibwr->num_sge; ++i) {
-		rcv_sg_list = &wqe->rcv_sg_list[i];
+		rcv_sge = &wqe->rcv_sg_list[i];
 		sg_list = &ibwr->sg_list[i];
 
-		rcv_sg_list->key = sg_list->lkey;
+		key = sg_list->lkey;
 
-		if (rcv_sg_list->key != NTRDMA_RESERVED_DMA_LEKY) {
-			mr = ntrdma_dev_mr_look(dev, rcv_sg_list->key);
-			if (mr && (mr->access & IB_ACCESS_REMOTE_WRITE))
-				rcv_sg_list->direct = true;
-			else
-				rcv_sg_list->direct = false;
+		if (key != NTRDMA_RESERVED_DMA_LEKY) {
+			mr = ntrdma_dev_mr_look(dev, key);
+			if (mr) {
+				if (mr->access & IB_ACCESS_REMOTE_WRITE) {
+					rcv_sge->shadow = NULL;
+					rcv_sge->addr = sg_list->addr;
+					rcv_sge->len = sg_list->length;
+					rcv_sge->key = key;
+					/* FIXME: dma callback for put mr */
+					ntrdma_mr_put(mr);
+					continue;
+				} else
+					ntrdma_mr_put(mr);
+			}
+		}
 
-			rcv_sg_list->addr = sg_list->addr;
-			rcv_sg_list->len = sg_list->length;
-		} else {
-			rcv_sg_list->direct = false;
+		rcv_sge->shadow = shadow =
+			kzalloc_node(sizeof(*shadow), GFP_KERNEL, dev->node);
+		if (!shadow) {
+			rc = -ENOMEM;
+			ntrdma_err(dev, "FAILED to alloc shadow");
+			goto err;
+		}
+		shadow->local_key = key;
 
-			ntc_local_buf_map_dma(&rcv_sg_list->rcv_dma_buf,
+		if (key != NTRDMA_RESERVED_DMA_LEKY)
+			shadow->local_addr = sg_list->addr;
+		else
+			ntc_local_buf_map_dma(&shadow->rcv_dma_buf,
 					dev->ntc,
 					sg_list->length,
 					sg_list->addr);
-		}
 
-		if (!rcv_sg_list->direct) {
-			rc = ntc_export_buf_alloc(&rcv_sg_list->exp_buf,
-						dev->ntc,
-						sg_list->length,
-						GFP_KERNEL);
-			if (rc < 0) {
-				ntrdma_err(dev, "FAILED %d", -rc);
-				goto err;
-			}
-			ntc_export_buf_make_desc(&rcv_sg_list->desc,
-						&rcv_sg_list->exp_buf);
-			ntrdma_info(dev,
-				"Allocating rcv %s buffer size %#x @DMA %#llx",
-				(rcv_sg_list->key != NTRDMA_RESERVED_DMA_LEKY) ?
-				"MR" : "DMA", sg_list->length,
-				rcv_sg_list->exp_buf.dma_addr);
-			TRACE("Allocating rcv %s buffer size %#x @DMA %#llx",
-				(rcv_sg_list->key != NTRDMA_RESERVED_DMA_LEKY) ?
-				"MR" : "DMA", sg_list->length,
-				rcv_sg_list->exp_buf.dma_addr);
+		rc = ntc_export_buf_alloc(&shadow->exp_buf,
+					dev->ntc,
+					sg_list->length,
+					GFP_KERNEL);
+		if (rc < 0) {
+			ntrdma_err(dev, "FAILED %d", -rc);
+			goto err;
 		}
+		ntc_export_buf_make_desc(&rcv_sge->exp_buf_desc,
+					&shadow->exp_buf);
+		ntrdma_info(dev,
+			"Allocating rcv %s buffer size %#x @DMA %#llx",
+			(key != NTRDMA_RESERVED_DMA_LEKY) ?
+			"MR" : "DMA", sg_list->length,
+			shadow->exp_buf.dma_addr);
+		TRACE("Allocating rcv %s buffer size %#x @DMA %#llx",
+			(key != NTRDMA_RESERVED_DMA_LEKY) ?
+			"MR" : "DMA", sg_list->length,
+			shadow->exp_buf.dma_addr);
 	}
 
 	return 0;

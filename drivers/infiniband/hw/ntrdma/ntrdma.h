@@ -36,6 +36,8 @@
 #include <linux/kernel.h>
 #include <linux/ntc.h>
 
+#define NTRDMA_RESERVED_DMA_LEKY 0xFFFF
+
 #define to_ptrhld(ptr) ((unsigned long)(void *)(ptr))
 #define of_ptrhld(ptr) ((void *)(ptr))
 

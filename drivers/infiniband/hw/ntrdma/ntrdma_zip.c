@@ -62,10 +62,7 @@ rcv_sg_list_skip_empty(const struct ntrdma_wr_rcv_sge *rcv_sge,
 	u64 len;
 
 	for (; rcv_sge != rcv_sg_end; rcv_sge++) {
-		if (rcv_sge->key == NTRDMA_RESERVED_DMA_LEKY)
-			len = rcv_sge->desc.size;
-		else
-			len = rcv_sge->len;
+		len = ntrdma_wr_rcv_sge_len(rcv_sge);
 		if (len)
 			break;
 	}
@@ -245,15 +242,13 @@ static inline bool
 ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 {
 	u64 len;
+	u32 remote_key;
 
 	if (c->rcv_rem)
 		goto next_io_off_update;
 
 	for (; c->rcv_sge != c->rcv_sg_end;) {
-		if (!c->rcv_sge_copy.direct)
-			len = c->rcv_sge_copy.desc.size;
-		else
-			len = c->rcv_sge_copy.len;
+		len = ntrdma_wr_rcv_sge_len(&c->rcv_sge_copy);
 		if (len > c->offset)
 			break;
 		c->offset -= len;
@@ -268,20 +263,17 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 		return false;
 	}
 
-	if (c->rmr && (c->rmr_key != c->rcv_sge_copy.key)) {
+	remote_key = ntrdma_wr_rcv_sge_remote_key(&c->rcv_sge_copy);
+	if (c->rmr && (c->rmr_key != remote_key)) {
 		/* FIXME: dma callback for put rmr */
 		ntrdma_rmr_put(c->rmr);
 		c->rmr = NULL;
 	}
+	c->rmr_key = remote_key;
 
-	if (c->rcv_sge_copy.direct)
-		c->rmr_key = c->rcv_sge_copy.key;
-	else
-		c->rmr_key = NTRDMA_RESERVED_DMA_LEKY;
-
-	if (!c->rmr && (c->rmr_key != NTRDMA_RESERVED_DMA_LEKY)) {
+	if (!c->rmr && (remote_key != NTRDMA_RESERVED_DMA_LEKY)) {
 		/* Get a reference to rcv mr */
-		c->rmr = ntrdma_dev_rmr_look(c->dev, c->rmr_key);
+		c->rmr = ntrdma_dev_rmr_look(c->dev, remote_key);
 		if (!c->rmr) {
 			ntrdma_err(c->dev, "Invalid rcv rmr key");
 			*rc = -EINVAL;
@@ -289,16 +281,14 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 		}
 	}
 
+	c->rcv_rem = ntrdma_wr_rcv_sge_len(&c->rcv_sge_copy) - c->offset;
 	if (c->rmr) {
-		c->rcv_rem = c->rcv_sge_copy.len - c->offset;
 		c->rmr_sge = c->rmr->sg_list;
 		c->rmr_sg_end = c->rmr_sge + c->rmr->sg_count;
 		c->next_io_off = c->rcv_sge_copy.addr +
 			c->offset - c->rmr->addr;
-	} else {
-		c->rcv_rem = c->rcv_sge_copy.desc.size - c->offset;
+	} else
 		c->next_io_off = c->offset;
-	}
 	c->offset = 0;
 
  next_io_off_update:
@@ -320,6 +310,8 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 static inline bool
 ntrdma_lrcv_cursor_update(struct ntrdma_lrcv_cursor *c, int *rc)
 {
+	u32 remote_key;
+
 	if (c->lrcv_rem)
 		goto next_io_off_update;
 
@@ -330,20 +322,17 @@ ntrdma_lrcv_cursor_update(struct ntrdma_lrcv_cursor *c, int *rc)
 		return false;
 	}
 
-	if (c->mr && (c->mr_key != c->lrcv_sge->key)) {
+	remote_key = ntrdma_wr_rcv_sge_remote_key(c->lrcv_sge);
+	if (c->mr && (c->mr_key != remote_key)) {
 		/* FIXME: dma callback for put rmr */
 		ntrdma_mr_put(c->mr);
 		c->mr = NULL;
 	}
+	c->mr_key = remote_key;
 
-	if (c->lrcv_sge->direct)
-		c->mr_key = c->lrcv_sge->key;
-	else
-		c->mr_key = NTRDMA_RESERVED_DMA_LEKY;
-
-	if (!c->mr && (c->mr_key != NTRDMA_RESERVED_DMA_LEKY)) {
+	if (!c->mr && (remote_key != NTRDMA_RESERVED_DMA_LEKY)) {
 		/* Get a reference to rcv mr */
-		c->mr = ntrdma_dev_mr_look(c->dev, c->mr_key);
+		c->mr = ntrdma_dev_mr_look(c->dev, remote_key);
 		if (!c->mr) {
 			ntrdma_err(c->dev, "Invalid rcv rmr key");
 			*rc = -EINVAL;
@@ -351,15 +340,13 @@ ntrdma_lrcv_cursor_update(struct ntrdma_lrcv_cursor *c, int *rc)
 		}
 	}
 
+	c->lrcv_rem = ntrdma_wr_rcv_sge_len(c->lrcv_sge);
 	if (c->mr) {
-		c->lrcv_rem = c->lrcv_sge->len;
 		c->mr_sge = c->mr->sg_list;
 		c->mr_sg_end = c->mr_sge + c->mr->sg_count;
 		c->next_io_off = c->lrcv_sge->addr - c->mr->addr;
-	} else {
-		c->lrcv_rem = c->lrcv_sge->desc.size;
+	} else
 		c->next_io_off = 0;
-	}
 
  next_io_off_update:
 	if (c->mr) {
@@ -463,11 +450,13 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 	ntc = dev->ntc;
 
 	if (!rcv->rmr) {
-		rc = ntc_remote_buf_map(&remote, ntc, &rcv->rcv_sge->desc);
+		rc = ntc_remote_buf_map(&remote, ntc,
+					&rcv->rcv_sge->exp_buf_desc);
 		if (rc < 0)
 			return rc;
 		TRACE("DMA copy %#lx bytes to remote at %#lx offset %#lx",
-			(long)len, (long)rcv->rcv_sge->desc.chan_addr.value,
+			(long)len,
+			(long)rcv->rcv_sge->exp_buf_desc.chan_addr.value,
 			(long)rcv->next_io_off);
 		rcv_buf = &remote;
 	} else
