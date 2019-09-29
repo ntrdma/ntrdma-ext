@@ -37,6 +37,8 @@
 #include <linux/err.h>
 #include <linux/types.h>
 
+#include "ntrdma.h"
+
 struct ntrdma_wr_snd_sge {
 	u32				key;
 	union {
@@ -50,23 +52,47 @@ struct ntrdma_wr_snd_sge {
 	};
 };
 
-struct ntrdma_wr_rcv_sge {
-	u32				key;
-	bool				direct;
+struct ntrdma_wr_rcv_sge_shadow {
+	u32				local_key;
 	union {
-		/* key != NTRDMA_RESERVED_DMA_LEKY */
+		/* local_key != NTRDMA_RESERVED_DMA_LEKY */
+		u64			local_addr;
+		/* local_key == NTRDMA_RESERVED_DMA_LEKY */
+		struct ntc_local_buf	rcv_dma_buf;
+	};
+	struct ntc_export_buf		exp_buf;
+};
+
+struct ntrdma_wr_rcv_sge {
+	struct ntrdma_wr_rcv_sge_shadow *shadow;
+	union {
+		/* shadow == NULL */
 		struct {
 			u64		addr;
 			u32		len;
+			/* key != NTRDMA_RESERVED_DMA_LEKY */
+			u32		key;
 		};
-		/* key == NTRDMA_RESERVED_DMA_LEKY */
-		struct ntc_local_buf	rcv_dma_buf;
-	};
-	/* direct false */
-	struct {
-		struct ntc_export_buf	exp_buf;
-		struct ntc_remote_buf_desc desc;
+		/* shadow != NULL: the desc of shadow->exp_buf */
+		struct ntc_remote_buf_desc exp_buf_desc;
 	};
 };
+
+static inline u64 ntrdma_wr_rcv_sge_len(const struct ntrdma_wr_rcv_sge *sge)
+{
+	if (!sge->shadow)
+		return sge->len;
+	else
+		return sge->exp_buf_desc.size;
+}
+
+static inline
+u32 ntrdma_wr_rcv_sge_remote_key(const struct ntrdma_wr_rcv_sge *sge)
+{
+	if (!sge->shadow)
+		return sge->key;
+	else
+		return NTRDMA_RESERVED_DMA_LEKY;
+}
 
 #endif

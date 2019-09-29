@@ -956,29 +956,31 @@ static void ntrdma_send_done(struct ntrdma_cqe *cqe,
 
 int ntrdma_recv_wqe_sync(struct ntrdma_dev *dev, struct ntrdma_recv_wqe *wqe)
 {
-	int rc;
+	int rc, rc1;
 	int i;
-	struct ntrdma_wr_rcv_sge *rcv_sg_list;
+	struct ntrdma_wr_rcv_sge *rcv_sge;
+	struct ntrdma_wr_rcv_sge_shadow *shadow;
 
 	rc = 0;
 
 	for (i = 0; i < wqe->sg_count; ++i) {
-		rcv_sg_list = &wqe->rcv_sg_list[i];
+		rcv_sge = &wqe->rcv_sg_list[i];
 
-		if (rcv_sg_list->direct)
+		shadow = rcv_sge->shadow;
+		if (!shadow)
 			continue;
 
-		if (rcv_sg_list->key == NTRDMA_RESERVED_DMA_LEKY)
-			memcpy(rcv_sg_list->rcv_dma_buf.ptr,
-				rcv_sg_list->exp_buf.ptr,
-				rcv_sg_list->exp_buf.size);
-		else
-			rc = min_t(int, rc,
-				ntrdma_zip_memcpy(dev,
-						rcv_sg_list->key,
-						rcv_sg_list->addr,
-						rcv_sg_list->exp_buf.ptr,
-						rcv_sg_list->exp_buf.size));
+		if (shadow->local_key == NTRDMA_RESERVED_DMA_LEKY)
+			memcpy(shadow->rcv_dma_buf.ptr,
+				shadow->exp_buf.ptr, shadow->exp_buf.size);
+		else {
+			rc1 = ntrdma_zip_memcpy(dev,
+						shadow->local_key,
+						shadow->local_addr,
+						shadow->exp_buf.ptr,
+						shadow->exp_buf.size);
+			rc = min_t(int, rc, rc1);
+		}
 	}
 
 	return rc;
@@ -987,12 +989,17 @@ int ntrdma_recv_wqe_sync(struct ntrdma_dev *dev, struct ntrdma_recv_wqe *wqe)
 void ntrdma_recv_wqe_cleanup(struct ntrdma_recv_wqe *wqe)
 {
 	int i;
-	struct ntrdma_wr_rcv_sge *rcv_sg_list;
+	struct ntrdma_wr_rcv_sge *rcv_sge;
+	struct ntrdma_wr_rcv_sge_shadow *shadow;
 
 	for (i = 0; i < wqe->sg_count; ++i) {
-		rcv_sg_list = &wqe->rcv_sg_list[i];
-		if (!rcv_sg_list->direct)
-			ntc_export_buf_free(&rcv_sg_list->exp_buf);
+		rcv_sge = &wqe->rcv_sg_list[i];
+		shadow = rcv_sge->shadow;
+		if (!shadow)
+			continue;
+		rcv_sge->shadow = NULL;
+		ntc_export_buf_free(&shadow->exp_buf);
+		kfree(shadow);
 	}
 
 	wqe->sg_count = 0;
@@ -1778,10 +1785,10 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		if (ntrdma_wr_code_push_data(wqe->op_code)) {
 			if (ntrdma_wr_code_is_rdma(wqe->op_code)) {
 				if (wqe->rdma_key != NTRDMA_RESERVED_DMA_LEKY) {
+					rdma_sge.shadow = NULL;
 					rdma_sge.addr = wqe->rdma_addr;
 					rdma_sge.len = ~(u32)0;
 					rdma_sge.key = wqe->rdma_key;
-					rdma_sge.direct = true;
 
 					if (wqe->flags & IB_SEND_INLINE) {
 						off = (pos - 1) * qp->send_wqe_size;
@@ -2104,10 +2111,10 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		if (ntrdma_wr_code_push_data(wqe.op_code)) {
 			if (ntrdma_wr_code_is_rdma(wqe.op_code)) {
 				if (wqe.rdma_key != NTRDMA_RESERVED_DMA_LEKY) {
+					rdma_sge.shadow = NULL;
 					rdma_sge.addr = wqe.rdma_addr;
 					rdma_sge.len = wqe.rdma_len;
 					rdma_sge.key = wqe.rdma_key;
-					rdma_sge.direct = true;
 					rc = ntrdma_zip_sync(dev, &rdma_sge, 1);
 				} else
 					rc = -EINVAL;
