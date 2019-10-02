@@ -1755,7 +1755,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					wqe->op_status = NTRDMA_WC_ERR_RECV_MISSING;
 
 				abort = true;
-				move_to_err_state(qp);
 #endif
 				break;
 			}
@@ -1776,7 +1775,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				}
 
 				abort = true;
-				move_to_err_state(qp);
 				break;
 			}
 
@@ -1792,7 +1790,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					qp->res.key);
 
 			abort = true;
-			move_to_err_state(qp);
 			break;
 		}
 
@@ -1855,7 +1852,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 				wqe->op_status = NTRDMA_WC_ERR_RDMA_RANGE;
 				abort = true;
-				move_to_err_state(qp);
 				break;
 			}
 
@@ -1891,7 +1887,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 			"ntc_request_memcpy (len=%zu) error %d", len, -rc);
 
 		abort = true;
-		move_to_err_state(qp);
 		goto err_memcpy;
 	}
 
@@ -1905,7 +1900,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d\n", rc);
 
 		abort = true;
-		move_to_err_state(qp);
 		goto err_memcpy;
 	}
 	/* update the vbell and signal the peer */
@@ -2049,7 +2043,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				ntrdma_err(dev, "WQE with error %d received on  qp %d\n",
 					wqe.op_status, rqp->qp_key);
 				abort = true;
-				move_to_err_state(qp);
 				break;
 			}
 
@@ -2060,7 +2053,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					ntrdma_send_fail(cqe, &wqe, wqe.op_status);
 
 				abort = true;
-				move_to_err_state(qp);
 				ntrdma_err(dev,
 						"qp %d, recv_key %d, recv_pos %d, recv_base %d, wqe_op_status %d move to error state\n",
 						rqp->qp_key, wqe.recv_key,
@@ -2076,7 +2068,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 					ntrdma_send_fail(cqe, &wqe, wqe.op_status);
 
 				abort = true;
-				move_to_err_state(qp);
 				ntrdma_err(dev,
 						"qp %d, recv_pos = recv_end = %d, wqe_op_status %d move to error state\n",
 						rqp->qp_key, recv_pos,
@@ -2097,7 +2088,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				ntrdma_recv_fail(recv_cqe, recv_wqe, recv_wqe->op_status);
 
 				abort = true;
-				move_to_err_state(qp);
 				ntrdma_err(dev, "qp %d, recv_wqe_op_status %d\n",
 						rqp->qp_key,
 						recv_wqe->op_status);
@@ -2115,7 +2105,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				ntrdma_recv_fail(recv_cqe, recv_wqe, wqe.op_status);
 
 			abort = true;
-			move_to_err_state(qp);
 			ntrdma_err(dev, "Error wqe op status %d  pos %u QP %d\n",
 					wqe.op_status, pos, qp->res.key);
 			break;
