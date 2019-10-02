@@ -161,14 +161,26 @@ void ntrdma_debugfs_deinit(void)
 
 void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)
 {
+	struct dentry *dev_dbg;
+
 	if (!debug) {
 		dev->debug = NULL;
 		return;
 	}
 
-	dev->debug = debugfs_create_dir(dev_name(&dev->ibdev.dev), debug);
-	if (!dev->debug)
+	mutex_lock(&dev->debugfs_lock);
+	if (dev->debug) {
+		mutex_unlock(&dev->debugfs_lock);
 		return;
+	}
+	dev_dbg = debugfs_create_dir(dev_name(&dev->ibdev.dev), debug);
+	if (IS_ERR(dev_dbg)) {
+		dev->debug = NULL;
+		mutex_unlock(&dev->debugfs_lock);
+		return;
+	}
+	dev->debug = dev_dbg;
+	mutex_unlock(&dev->debugfs_lock);
 
 	debugfs_create_file("info", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_info_ops);
@@ -191,6 +203,7 @@ void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)
 void ntrdma_debugfs_dev_del(struct ntrdma_dev *dev)
 {
 	debugfs_remove_recursive(dev->debug);
+	dev->debug = NULL;
 }
 
 void ntrdma_debugfs_cq_add(struct ntrdma_cq *cq)
@@ -198,7 +211,11 @@ void ntrdma_debugfs_cq_add(struct ntrdma_cq *cq)
 	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
 	char buf[NTRDMA_DEBUGFS_NAME_MAX];
 
+	ntrdma_debugfs_dev_add(dev);
 	if (!dev->debug) {
+		ntrdma_err(dev,
+				"No debugfs for dev %p when try to create debugfs for cq %p\n",
+				dev, cq);
 		cq->debug = NULL;
 		return;
 	}
@@ -223,7 +240,11 @@ void ntrdma_debugfs_mr_add(struct ntrdma_mr *mr)
 	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
 	char buf[NTRDMA_DEBUGFS_NAME_MAX];
 
+	ntrdma_debugfs_dev_add(dev);
 	if (!dev->debug) {
+		ntrdma_err(dev,
+				"No debugfs for dev %p when try to create debugfs for mr %p\n",
+				dev, mr);
 		mr->debug = NULL;
 		return;
 	}
@@ -248,7 +269,11 @@ void ntrdma_debugfs_rmr_add(struct ntrdma_rmr *rmr)
 	struct ntrdma_dev *dev = ntrdma_rmr_dev(rmr);
 	char buf[NTRDMA_DEBUGFS_NAME_MAX];
 
+	ntrdma_debugfs_dev_add(dev);
 	if (!dev->debug) {
+		ntrdma_err(dev,
+				"No debugfs for dev %p when try to create debugfs for rmr %p\n",
+				dev, rmr);
 		rmr->debug = NULL;
 		return;
 	}
@@ -273,7 +298,13 @@ void ntrdma_debugfs_qp_add(struct ntrdma_qp *qp)
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	char buf[NTRDMA_DEBUGFS_NAME_MAX];
 
+	ntrdma_info(dev, "Add QP %d\n", qp->res.key);
+	TRACE("Add QP %d\n", qp->res.key);
+	ntrdma_debugfs_dev_add(dev);
 	if (!dev->debug) {
+		ntrdma_err(dev,
+				"No debugfs for dev %p when try to create debugfs for qp %p\n",
+				dev, qp);
 		qp->debug = NULL;
 		return;
 	}

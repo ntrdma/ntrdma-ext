@@ -96,6 +96,7 @@ struct ntrdma_dev {
 
 	/* debugfs */
 	struct dentry			*debug;
+	struct mutex			debugfs_lock;
 
 	/* protocol version */
 	u32				version;

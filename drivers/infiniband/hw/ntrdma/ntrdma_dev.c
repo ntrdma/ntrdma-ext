@@ -114,6 +114,9 @@ int ntrdma_dev_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 	dev->ntc = ntc;
 	dev->dma_chan = ntc_req_rr(ntc);
 
+	/* Must be before device is registered (in ntrdma_dev_ib_init) */
+	mutex_init(&dev->debugfs_lock);
+
 	rc = ntrdma_dev_vbell_init(dev,
 				   NTRDMA_DEV_VBELL_COUNT,
 				   NTRDMA_DEV_VBELL_START);
