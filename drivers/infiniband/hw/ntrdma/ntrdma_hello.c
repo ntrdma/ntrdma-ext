@@ -33,6 +33,7 @@
 #include "ntrdma_hello.h"
 #include "ntrdma_res.h"
 #include "ntrdma_vbell.h"
+#include "ntrdma_cq.h"
 
 enum status {
 	NOT_DONE = 0,
@@ -259,6 +260,7 @@ static int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 	rc = ntrdma_dev_eth_hello_done(dev, &in->eth_prep);
 	if (unlikely(rc))
 		return rc;
+	ntrdma_cq_arm_resync(dev);
 
 	return DONE;
 }

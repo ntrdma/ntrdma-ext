@@ -87,6 +87,25 @@ int ntrdma_cq_add(struct ntrdma_cq *cq)
 	return 0;
 }
 
+void ntrdma_cq_arm_resync(struct ntrdma_dev *dev)
+{
+	struct ntrdma_cq *cq;
+
+	mutex_lock(&dev->res_lock);
+	list_for_each_entry(cq, &dev->cq_list, obj.dev_entry) {
+		spin_lock_bh(&cq->arm_lock);
+		if (cq->arm) {
+			ntrdma_dev_vbell_add_clear(dev, &cq->vbell,
+					cq->vbell_idx);
+			ntrdma_info(dev, "re arm cq %p vbell %d\n", cq,
+					cq->vbell_idx);
+			TRACE("re arm cq %p, vbell %d\n", cq, cq->vbell_idx);
+		}
+		spin_unlock_bh(&cq->arm_lock);
+	}
+	mutex_unlock(&dev->res_lock);
+}
+
 void ntrdma_cq_del(struct ntrdma_cq *cq)
 {
 	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);

@@ -100,6 +100,7 @@ static inline void ntrdma_cq_repo(struct ntrdma_cq *cq)
 	ntrdma_obj_repo(&cq->obj);
 }
 
+void ntrdma_cq_arm_resync(struct ntrdma_dev *dev);
 void ntrdma_cq_arm(struct ntrdma_cq *cq);
 #define ntrdma_cq_cue(__cq) _ntrdma_cq_cue(__cq, __func__)
 void _ntrdma_cq_cue(struct ntrdma_cq *cq, const char *f);
