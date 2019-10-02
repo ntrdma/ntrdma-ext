@@ -32,7 +32,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-
+#include <linux/bitmap.h>
 #include <linux/debugfs.h>
 #include <linux/dmaengine.h>
 #include <linux/interrupt.h>
@@ -41,6 +41,7 @@
 #include <linux/ntb.h>
 #include <linux/pci.h>
 #include <linux/timer.h>
+#include <linux/cpumask.h>
 
 #include <linux/ntc.h>
 #include <linux/ntc_trace.h>
@@ -1751,6 +1752,45 @@ static void ntc_setup_debugfs(struct ntc_ntb_dev *dev)
 			    dev, &ntc_debugfs_fops);
 }
 
+static int set_affinity(struct ntb_dev *ntb)
+{
+	cpumask_t cpu_mask;
+	int max_irqs, msi_irqs_base, i = 0, rc = 0;
+	struct pci_dev *pdev = ntb->pdev;
+	unsigned int online_cpus = 0;
+
+	max_irqs = ntb_db_vector_count(ntb);
+	if (max_irqs <= 0 || max_irqs > NTB_MAX_IRQS) {
+		pr_err("max_irqs %d is not supported\n", max_irqs);
+		return -EFAULT;
+	}
+
+	msi_irqs_base = pci_irq_vector(pdev, 0);
+	online_cpus = num_online_cpus();
+
+	if (online_cpus <= 0) {
+		pr_err("online_cpus is %d, modulo is undefined\n",
+				online_cpus);
+		return -EFAULT;
+	}
+
+	pr_info("msi_irq_base %u, max_irqs %d, online CPUs %d\n",
+			msi_irqs_base, max_irqs, online_cpus);
+
+	for (i = 0 ; i < max_irqs ; i++) {
+		cpumask_clear(&cpu_mask);
+		cpumask_set_cpu(i % online_cpus, &cpu_mask);
+		pr_info("SET AFFINITY: irq %d cpu %d cpumask %lu\n",
+			msi_irqs_base + i, i % online_cpus,
+			*(unsigned long *)cpumask_bits(&cpu_mask));
+		rc = irq_set_affinity_hint(msi_irqs_base + i, &cpu_mask);
+		if (rc < 0)
+			return rc;
+	}
+	return 0;
+}
+
+
 static int ntc_ntb_probe(struct ntb_client *self,
 			 struct ntb_dev *ntb)
 {
@@ -1800,6 +1840,9 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	dev->ntc.dev.release = ntc_ntb_release;
 
 	ntc_setup_debugfs(dev);
+	rc = set_affinity(dev->ntb);
+	if (rc < 0)
+		pr_debug("set_affinity failed rc %d\n", rc);
 
 	return ntc_register_device(&dev->ntc);
 
