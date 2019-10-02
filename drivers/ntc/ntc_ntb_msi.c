@@ -66,6 +66,8 @@ static unsigned long mw1_len;
 module_param(mw1_len, ulong, 0444);
 static unsigned long mw1_mm_len;
 module_param(mw1_mm_len, ulong, 0444);
+static unsigned num_dma_chan;
+module_param(num_dma_chan, uint, 0444);
 
 struct ntc_ntb_coherent_buffer {
 	void *ptr;
@@ -996,10 +998,10 @@ EXPORT_SYMBOL(ntc_req_submit);
 static int ntc_ntb_req_prep_flags(bool fence)
 {
 	int flags = NTC_NTB_DMA_PREP_FLAGS;
-
+#if 0
 	if (fence)
 		flags |= DMA_PREP_FENCE;
-
+#endif
 	return flags;
 }
 
@@ -1526,7 +1528,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	ntc->dev.parent = &dev->ntb->dev;
 
 	ntc->ntb_dev = ntc_ntb_dma_dev(dev);
-	ntc->dma_engine_dev = ntc->dma_chan->device->dev;
+	ntc->dma_engine_dev = ntc->dma_chan[0]->device->dev;
 
 	/* make sure link is disabled and warnings are cleared */
 	ntb_link_disable(dev->ntb);
@@ -1650,12 +1652,21 @@ static bool ntc_ntb_filter_bus(struct dma_chan *chan,
 static void ntc_ntb_release(struct device *device)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_of_dev(device);
+	struct dma_chan *dma;
+	int i;
 
 	pr_debug("release %s\n", dev_name(&dev->ntc.dev));
 
 	ntc_ntb_dev_deinit(dev);
 	put_device(&dev->ntb->dev);
-	dma_release_channel(dev->ntc.dma_chan);
+
+	for (i = 0; i < ARRAY_SIZE(dev->ntc.dma_chan); i++) {
+		dma = dev->ntc.dma_chan[i];
+		dev->ntc.dma_chan[i] = NULL;
+		if (!dma)
+			break;
+		dma_release_channel(dma);
+	}
 	kfree(dev);
 }
 
@@ -1747,6 +1758,7 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	struct dma_chan *dma;
 	dma_cap_mask_t mask;
 	int node, rc;
+	int i, j;
 
 	pr_debug("probe ntb %s\n", dev_name(&ntb->dev));
 
@@ -1761,15 +1773,22 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	dma_cap_set(DMA_MEMCPY, mask);
 
 	node = dev_to_node(&ntb->dev);
-	dma = dma_request_channel(mask, ntc_ntb_filter_bus, &node);
-	if (!dma) {
-		pr_debug("no dma for new device %s\n",
-			 dev_name(&ntb->dev));
+
+	for (i = 0, j = 0; i < num_dma_chan; i++) {
+		dma = dma_request_channel(mask, ntc_ntb_filter_bus, &node);
+		dev->ntc.dma_chan[j] = dma;
+		if (dma)
+			j++;
+	}
+	for (; j < ARRAY_SIZE(dev->ntc.dma_chan); j++)
+		dev->ntc.dma_chan[j] = NULL;
+
+	if (!dev->ntc.dma_chan[0]) {
+		pr_debug("no dma for new device %s\n", dev_name(&ntb->dev));
 		rc = -ENODEV;
 		goto err_dma;
 	}
-
-	dev->ntc.dma_chan = dma;
+	dev->ntc.dma_chan_rr_index = 0;
 
 	get_device(&ntb->dev);
 	dev->ntb = ntb;
@@ -1786,7 +1805,13 @@ static int ntc_ntb_probe(struct ntb_client *self,
 
 err_init:
 	put_device(&ntb->dev);
-	dma_release_channel(dma);
+	for (i = 0; i < ARRAY_SIZE(dev->ntc.dma_chan); i++) {
+		dma = dev->ntc.dma_chan[i];
+		dev->ntc.dma_chan[i] = NULL;
+		if (!dma)
+			break;
+		dma_release_channel(dma);
+	}
 err_dma:
 	kfree(dev);
 err_dev:
@@ -1818,6 +1843,8 @@ int __init ntc_init(void)
 
 	info("%s %s init", DRIVER_DESCRIPTION, DRIVER_VERSION);
 
+	if (!num_dma_chan || (num_dma_chan > NTC_MAX_DMA_CHANS))
+		num_dma_chan = NTC_MAX_DMA_CHANS;
 	if (!mw0_mm_len)
 		mw0_mm_len = mw0_len;
 	if (!mw0_len)
