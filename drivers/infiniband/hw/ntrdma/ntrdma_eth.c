@@ -120,7 +120,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	dev->eth = eth;
 
 	eth->dev = dev;
-	eth->req = NULL;
+	eth->dma_chan = ntc_req_rr(dev->ntc);
 	eth->enable = false;
 	eth->ready = false;
 	eth->link = false;
@@ -469,11 +469,7 @@ static void ntrdma_eth_rx_fill(struct ntrdma_eth *eth)
 			return;
 		}
 
-		req = ntc_req_create(dev->ntc);
-		if (WARN_ON(!req)) {
-			spin_unlock_bh(&eth->rx_prod_lock);
-			return;
-		}
+		req = eth->dma_chan;
 
 		ntrdma_ring_produce(eth->rx_prod,
 				    eth->rx_cmpl,
@@ -710,14 +706,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 	tx_off = off & (SMP_CACHE_BYTES - 1);
 
-	if (eth->req) {
-		req = eth->req;
-	} else {
-		req = ntc_req_create(dev->ntc);
-		if (!req)
-			return NETDEV_TX_BUSY;
-		eth->req = req;
-	}
+	req = eth->dma_chan;
 
 	if (len + tx_off > tx_wqe.size) {
 		eth->napi.dev->stats.tx_errors++;
@@ -811,8 +800,6 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 		ntrdma_dev_vbell_peer(dev, req, eth->peer_vbell_idx);
 		ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
 		ntc_req_submit(dev->ntc, req);
-
-		eth->req = NULL;
 	}
 	goto done;
 

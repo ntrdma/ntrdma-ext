@@ -54,6 +54,8 @@
 #define NTC_DRAM_MW_IDX 1
 #define NTC_MAX_NUM_MWS 2
 
+#define NTC_MAX_DMA_CHANS 8
+
 struct ntc_driver;
 struct ntc_dev;
 
@@ -205,7 +207,8 @@ struct ntc_driver {
 struct ntc_dev {
 	struct device			dev;
 	struct device			*ntb_dev;
-	struct dma_chan			*dma_chan;
+	struct dma_chan			*dma_chan[NTC_MAX_DMA_CHANS];
+	int				dma_chan_rr_index;
 	struct device			*dma_engine_dev;
 	const struct ntc_ctx_ops	*ctx_ops;
 	struct ntc_own_mw		own_mws[NTC_MAX_NUM_MWS];
@@ -461,52 +464,19 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 	return peer_mw->base + offset;
 }
 
-/**
- * ntc_req_create() - create a channel request context
- * @ntc:	Device context.
- *
- * Create and return a channel request context, for data operations over the
- * channel.  Ownership of the request is passed to the caller, and the request
- * may be appended with operations to copy buffered or immediate data, until it
- * is either canceled or submitted.
- *
- * The different submit and cancel functions are provided, to support different
- * channel implementations.  Some implementations may submit operations as soon
- * as they are appended to a request, while others may store operations in the
- * request, to be submitted at once as a batch of operations.  Therefore, the
- * driver must assume that operations may begin as soon as they are appended,
- * prior to submitting the request, and must not assume that canceling a
- * request actually prevents operations from being carried out.  The different
- * submit and cancel functions exist to provide a portable interface to use the
- * varying underlying channel implementations most efficiently.
- *
- * Return: A channel request context, otherwise an error pointer.
- */
-static inline struct dma_chan *ntc_req_create(struct ntc_dev *ntc)
+static inline struct dma_chan *ntc_req_rr(struct ntc_dev *ntc)
 {
-	return ntc->dma_chan;
-}
+	int i;
 
-/**
- * ntc_req_cancel() - cancel a channel request
- * @ntc:	Device context.
- * @chan:	Channel request context.
- *
- * Cancel a channel request instead of submitting it.  Ownership of the request
- * is passed from the caller back to the channel, and the caller no longer
- * holds a valid reference to the request.
- *
- * Some channel implementations may submit operations as soon as they are
- * appended to a request, therefore the driver must not assume that canceling a
- * request actually prevents operations from being carried out.  The cancel
- * function exists to provide a portable interface to use the varying
- * underlying channel implementations most efficiently.
- */
-static inline void ntc_req_cancel(struct ntc_dev *ntc, struct dma_chan *chan)
-{
-	dev_vdbg(&ntc->dev, "cancel request\n");
+	i = READ_ONCE(ntc->dma_chan_rr_index) + 1;
 
-	/* nothing to do */
+	if ((i >= ARRAY_SIZE(ntc->dma_chan)) || !ntc->dma_chan[i])
+		i = 0;
+
+	pr_info("ntc_req_rr returns dma_chan #%d", i);
+
+	WRITE_ONCE(ntc->dma_chan_rr_index, i);
+	return ntc->dma_chan[i];
 }
 
 /**

@@ -198,13 +198,11 @@ struct ntrdma_cmd_cb {
 
 	/* prepare a command in-place in the ring buffer */
 	int (*cmd_prep)(struct ntrdma_cmd_cb *cb,
-			union ntrdma_cmd *cmd,
-			struct dma_chan *req);
+			union ntrdma_cmd *cmd);
 
 	/* complete and free the command following a response */
 	int (*rsp_cmpl)(struct ntrdma_cmd_cb *cb,
-			const union ntrdma_rsp *rsp,
-			struct dma_chan *req);
+			const union ntrdma_rsp *rsp);
 };
 
 int ntrdma_dev_cmd_init(struct ntrdma_dev *dev,

@@ -49,17 +49,15 @@ struct ntrdma_mr_cmd_cb {
 	container_of(__cb, struct ntrdma_mr_cmd_cb, cb)
 
 static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct dma_chan *req);
+				union ntrdma_cmd *cmd);
 static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct dma_chan *req);
+				union ntrdma_cmd *cmd);
 static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
-				const union ntrdma_rsp *rsp,
-				struct dma_chan *req);
+				const union ntrdma_rsp *rsp);
 static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_cmd *cmd, struct dma_chan *req);
+				union ntrdma_cmd *cmd);
 static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
-				const union ntrdma_rsp *rsp,
-				struct dma_chan *req);
+				const union ntrdma_rsp *rsp);
 
 static int ntrdma_mr_enable(struct ntrdma_res *res);
 static int ntrdma_mr_disable(struct ntrdma_res *res);
@@ -158,7 +156,7 @@ err_append:
 }
 
 static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct dma_chan *req)
+				union ntrdma_cmd *cmd)
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
@@ -178,7 +176,7 @@ static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
 }
 
 static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
-				 union ntrdma_cmd *cmd, struct dma_chan *req)
+				union ntrdma_cmd *cmd)
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
@@ -204,8 +202,7 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 }
 
 static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
-				const union ntrdma_rsp *rsp,
-				struct dma_chan *req)
+				const union ntrdma_rsp *rsp)
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
@@ -261,7 +258,7 @@ err:
 }
 
 static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
-				  union ntrdma_cmd *cmd, struct dma_chan *req)
+				union ntrdma_cmd *cmd)
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
@@ -273,8 +270,7 @@ static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 }
 
 static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
-				const union ntrdma_rsp *rsp,
-				struct dma_chan *req)
+				const union ntrdma_rsp *rsp)
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;

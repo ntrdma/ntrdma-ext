@@ -71,6 +71,8 @@ struct ntrdma_qp {
 	struct ntrdma_cq		*send_cq;
 	struct ntrdma_poll		send_poll;
 
+	struct dma_chan			*dma_chan;
+
 	/* Protection domain key */
 	u32				pd_key;
 	/* Queue pair access flags */

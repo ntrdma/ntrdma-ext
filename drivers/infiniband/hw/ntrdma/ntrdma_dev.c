@@ -110,7 +110,9 @@ int ntrdma_dev_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 	int rc;
 	int i = 0;
 	int num_cpus;
+
 	dev->ntc = ntc;
+	dev->dma_chan = ntc_req_rr(ntc);
 
 	rc = ntrdma_dev_vbell_init(dev,
 				   NTRDMA_DEV_VBELL_COUNT,

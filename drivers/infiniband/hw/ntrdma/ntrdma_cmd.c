@@ -55,7 +55,7 @@ static void ntrdma_cmd_send_work_cb(struct work_struct *ws);
 static void ntrdma_cmd_send_vbell_cb(void *ctx);
 
 static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
-			   union ntrdma_rsp *rsp, struct dma_chan *req);
+			union ntrdma_rsp *rsp);
 
 static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev);
 static void ntrdma_cmd_recv_work_cb(struct work_struct *ws);
@@ -382,7 +382,7 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 		list_del(&cb->dev_entry);
 		pr_info("cmd quiesce: aborting post %ps\n",
 				cb->rsp_cmpl);
-		cb->rsp_cmpl(cb, NULL, NULL);
+		cb->rsp_cmpl(cb, NULL);
 	}
 
 	/* now lets cancel all pending cmds
@@ -395,7 +395,7 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 		list_del(&cb->dev_entry);
 		pr_info("cmd quiesce: aborting pend %ps\n",
 				cb->rsp_cmpl);
-		cb->rsp_cmpl(cb, NULL, NULL);
+		cb->rsp_cmpl(cb, NULL);
 	}
 
 	pr_info("cmd quiesce done\n");
@@ -494,9 +494,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 	const union ntrdma_rsp *cmd_send_rsp_buf;
 	u32 cmd_id;
 
-	req = ntc_req_create(dev->ntc);
-	if (!req)
-		return; /* FIXME: no req, now what? */
+	req = dev->dma_chan;
 
 	mutex_lock(&dev->cmd_send_lock);
 	{
@@ -549,7 +547,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			TRACE("CMD: respond received for %ps pos %u\n",
 				cb->rsp_cmpl, pos);
 
-			rc = cb->rsp_cmpl(cb, &cmd_send_rsp_buf[pos], req);
+			rc = cb->rsp_cmpl(cb, &cmd_send_rsp_buf[pos]);
 			WARN(rc, "%ps failed rc = %d", cb->rsp_cmpl, rc);
 			/* FIXME: command failed, now what? */
 		}
@@ -581,7 +579,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				cb->cmd_prep, pos);
 
 			cmd_send_buf[pos].hdr.cmd_id = pos;
-			rc = cb->cmd_prep(cb, &cmd_send_buf[pos], req);
+			rc = cb->cmd_prep(cb, &cmd_send_buf[pos]);
 			WARN(rc, "%ps failed rc = %d", cb->cmd_prep, rc);
 			/* FIXME: command failed, now what? */
 		}
@@ -625,9 +623,6 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
 				(pos - start), start,
 				dev->peer_cmd_recv_vbell_idx);
-
-		} else {
-			ntc_req_cancel(dev->ntc, req);
 		}
 
 		if (!ntrdma_cmd_done(dev)) {
@@ -1162,7 +1157,7 @@ err_sanity:
 }
 
 static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
-			union ntrdma_rsp *rsp, struct dma_chan *req)
+			union ntrdma_rsp *rsp)
 {
 	u32 op;
 
@@ -1223,9 +1218,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 	ntrdma_vdbg(dev, "called\n");
 
-	req = ntc_req_create(dev->ntc);
-	if (!req)
-		return; /* FIXME: no req, now what? */
+	req = dev->dma_chan;
 
 	mutex_lock(&dev->cmd_recv_lock);
 	{
@@ -1253,8 +1246,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			ntrdma_vdbg(dev, "cmd recv pos %d\n", pos);
 			rc = ntrdma_cmd_recv(dev,
 					&cmd_recv_buf[pos],
-					&cmd_recv_rsp_buf[pos],
-					req);
+					&cmd_recv_rsp_buf[pos]);
 			WARN(rc, "ntrdma_cmd_recv failed and unhandled FIXME\n");
 		}
 
@@ -1301,7 +1293,6 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			ntc_req_submit(dev->ntc, req);
 			schedule_work(&dev->cmd_recv_work);
 		} else {
-			ntc_req_cancel(dev->ntc, req);
 			if (ntrdma_cmd_recv_vbell_add(dev) == -EAGAIN)
 				schedule_work(&dev->cmd_recv_work);
 		}
