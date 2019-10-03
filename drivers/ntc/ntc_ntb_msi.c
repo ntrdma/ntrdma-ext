@@ -1366,7 +1366,7 @@ static int ntc_ntb_init_own_mw_reserved(struct ntc_ntb_dev *dev, int mw_idx)
 
 	if (data->mm_len) {
 		own_mw->base_ptr =
-			memremap(data->base_addr, data->mm_len, MEMREMAP_WC);
+			memremap(data->base_addr, data->mm_len, MEMREMAP_WB);
 		if (!own_mw->base_ptr) {
 			info("OWN MW: cannot memremap. Start %#lx. Size %#lx.",
 				data->base_addr, data->mm_len);
