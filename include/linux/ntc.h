@@ -1047,24 +1047,19 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 			buf->ptr = NULL;
 			return rc;
 		}
+
+		dma_addr = buf->own_mw->base +
+			(buf->ptr - buf->own_mw->base_ptr);
 	} else {
 		buf->own_mw = &ntc->own_mws[NTC_DRAM_MW_IDX];
 		buf->ptr = kmalloc_node(size, gfp, dev_to_node(&ntc->dev));
 		if (unlikely(!buf->ptr))
 			return -ENOMEM;
-	}
 
-	if (buf->own_mw->base_ptr)
-		dma_addr = buf->own_mw->base +
-			(buf->ptr - buf->own_mw->base_ptr);
-	else {
 		dma_addr = dma_map_single(ntc->ntb_dev, buf->ptr, size,
 					DMA_FROM_DEVICE);
 		if (unlikely(dma_mapping_error(ntc->ntb_dev, dma_addr))) {
-			if (!is_flat)
-				ntc_mm_free(&buf->own_mw->mm, buf->ptr, size);
-			else
-				kfree(buf->ptr);
+			kfree(buf->ptr);
 			return -EIO;
 		}
 	}
@@ -1177,7 +1172,7 @@ static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 {
 	bool is_flat = buf->own_mw->ntc->own_mws[NTC_DRAM_MW_IDX].is_flat;
 
-	if (buf->dma_addr && !buf->own_mw->base_ptr)
+	if (buf->dma_addr && is_flat)
 		dma_unmap_single(buf->own_mw->ntb_dev, buf->dma_addr,
 				buf->size, DMA_FROM_DEVICE);
 

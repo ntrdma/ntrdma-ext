@@ -1295,8 +1295,7 @@ static int ntc_ntb_init_own_mw_flat(struct ntc_ntb_dev *dev, int mw_idx)
 
 	own_mw->is_flat = true;
 
-	info("OWN MW: base %#llx size %#llx ptr %p",
-		own_mw->base, own_mw->size, own_mw->base_ptr);
+	info("OWN MW: FLAT base %#llx size %#llx", own_mw->base, own_mw->size);
 
 	return 0;
 }
@@ -1342,7 +1341,7 @@ static int ntc_ntb_init_own_mw_coherent(struct ntc_ntb_dev *dev, int mw_idx)
 
 	own_mw->base_ptr = buffer->ptr + (own_mw->base - buffer->dma_addr);
 
-	info("OWN MW: base %#llx size %#llx ptr %p",
+	info("OWN MW: COHERENT base %#llx size %#llx ptr %p",
 		own_mw->base, own_mw->size, own_mw->base_ptr);
 	info("OWN MW: Actual DMA %#llx ptr %p",
 		buffer->dma_addr, buffer->ptr);
@@ -1365,16 +1364,21 @@ static int ntc_ntb_init_own_mw_reserved(struct ntc_ntb_dev *dev, int mw_idx)
 	struct ntc_own_mw_data *data = &own_mw_data[mw_idx];
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
-	own_mw->base_ptr = memremap(data->base_addr, data->len, MEMREMAP_WC);
-	if (!own_mw->base_ptr) {
-		info("OWN MW: cannot ioremap. Start %#lx. Size %#lx.",
-			data->base_addr, data->len);
-		return -EIO;
-	}
+	if (data->mm_len) {
+		own_mw->base_ptr =
+			memremap(data->base_addr, data->mm_len, MEMREMAP_WC);
+		if (!own_mw->base_ptr) {
+			info("OWN MW: cannot memremap. Start %#lx. Size %#lx.",
+				data->base_addr, data->mm_len);
+			return -EIO;
+		}
+	} else
+		own_mw->base_ptr = NULL;
+
 	own_mw->base = data->base_addr;
 	own_mw->size = data->len;
 
-	info("OWN MW: base %#llx size %#llx ptr %p",
+	info("OWN MW: RESERVED base %#llx size %#llx base_ptr %p",
 		own_mw->base, own_mw->size, own_mw->base_ptr);
 
 	return 0;
@@ -1386,7 +1390,8 @@ static void ntc_ntb_deinit_own_mw_reserved(struct ntc_ntb_dev *dev,
 	struct ntc_dev *ntc = &dev->ntc;
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
-	memunmap(own_mw->base_ptr);
+	if (own_mw->base_ptr)
+		memunmap(own_mw->base_ptr);
 }
 
 static void ntc_ntb_deinit_own(struct ntc_ntb_dev *dev, int mw_idx)
@@ -1433,6 +1438,8 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 	data->reserved_used = false;
 	data->coherent_used = false;
 	data->flat_used = false;
+	data->len = PAGE_ALIGN(data->len);
+	data->mm_len = PAGE_ALIGN(data->mm_len);
 
 	ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx);
 
