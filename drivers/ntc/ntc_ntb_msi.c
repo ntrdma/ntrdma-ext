@@ -1890,6 +1890,7 @@ int __init ntc_init(void)
 {
 	int i;
 	unsigned long mw0_mm_prealloc = sizeof(struct ntc_ntb_info);
+	unsigned long mw0_min_mm_len = 0x100000;
 
 	info("%s %s init", DRIVER_DESCRIPTION, DRIVER_VERSION);
 
@@ -1897,6 +1898,10 @@ int __init ntc_init(void)
 		num_dma_chan = NTC_MAX_DMA_CHANS;
 	if (!mw0_mm_len)
 		mw0_mm_len = mw0_len;
+	if (!mw0_mm_len)
+		mw0_mm_len = mw0_mm_prealloc;
+	if (mw0_mm_len < mw0_min_mm_len)
+		mw0_mm_len = mw0_min_mm_len;
 	if (!mw0_len)
 		mw0_len = mw0_mm_len;
 
