@@ -208,7 +208,7 @@ struct ntc_dev {
 	struct device			dev;
 	struct device			*ntb_dev;
 	struct dma_chan			*dma_chan[NTC_MAX_DMA_CHANS];
-	int				dma_chan_rr_index;
+	atomic_t			dma_chan_rr_index;
 	struct device			*dma_engine_dev;
 	const struct ntc_ctx_ops	*ctx_ops;
 	struct ntc_own_mw		own_mws[NTC_MAX_NUM_MWS];
@@ -464,20 +464,7 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 	return peer_mw->base + offset;
 }
 
-static inline struct dma_chan *ntc_req_rr(struct ntc_dev *ntc)
-{
-	int i;
-
-	i = READ_ONCE(ntc->dma_chan_rr_index) + 1;
-
-	if ((i >= ARRAY_SIZE(ntc->dma_chan)) || !ntc->dma_chan[i])
-		i = 0;
-
-	pr_info("ntc_req_rr returns dma_chan #%d", i);
-
-	WRITE_ONCE(ntc->dma_chan_rr_index, i);
-	return ntc->dma_chan[i];
-}
+struct dma_chan *ntc_req_rr(struct ntc_dev *ntc);
 
 /**
  * ntc_req_submit() - submit a channel request
