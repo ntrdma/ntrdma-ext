@@ -33,6 +33,7 @@
 #ifndef NTRDMA_UTIL_H
 #define NTRDMA_UTIL_H
 
+#include <linux/slab.h>
 #include <linux/bitops.h>
 #include <linux/log2.h>
 #include <linux/spinlock.h>
@@ -114,6 +115,18 @@ static inline
 int ntrdma_kvec_resize_double(struct ntrdma_kvec *vec, int node)
 {
 	return ntrdma_kvec_resize_larger(vec, vec->cap << 1, node);
+}
+
+static inline void ntrdma_deinit_slab(struct kmem_cache **pslab)
+{
+	struct kmem_cache *slab = *pslab;
+
+	if (!slab)
+		return;
+
+	*pslab = NULL;
+
+	kmem_cache_destroy(slab);
 }
 
 #endif

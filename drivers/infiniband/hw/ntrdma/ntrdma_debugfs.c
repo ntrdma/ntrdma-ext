@@ -149,15 +149,24 @@ static inline void ntrdma_debugfs_print_cqe(struct seq_file *s,
 		   pre, cqe->rdma_len, cqe->imm_data);
 }
 
-void ntrdma_debugfs_init(void)
+int __init ntrdma_debugfs_init(void)
 {
-	if (debugfs_initialized())
-		debug = debugfs_create_dir(KBUILD_MODNAME, NULL);
+	if (!debugfs_initialized())
+		return 0;
+
+	debug = debugfs_create_dir(KBUILD_MODNAME, NULL);
+	if (!debug)
+		return -ENOMEM;
+
+	return 0;
 }
 
 void ntrdma_debugfs_deinit(void)
 {
-	debugfs_remove_recursive(debug);
+	if (debug) {
+		debugfs_remove_recursive(debug);
+		debug = NULL;
+	}
 }
 
 void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)

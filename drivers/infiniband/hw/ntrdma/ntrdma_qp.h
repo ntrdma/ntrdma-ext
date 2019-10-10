@@ -385,4 +385,8 @@ static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 	else
 		atomic_set(&qp->state, IB_QPS_ERR);
 }
+
+struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev);
+void ntrdma_free_rqp(struct ntrdma_rqp *rqp);
+
 #endif

@@ -165,19 +165,57 @@ struct ntc_driver ntrdma_driver = {
 	},
 };
 
+static void ntrdma_deinit(void)
+{
+	ntrdma_debugfs_deinit();
+	ntrdma_eth_module_deinit();
+	ntrdma_mr_module_deinit();
+	ntrdma_ib_module_deinit();
+	ntrdma_qp_module_deinit();
+}
+
 static int __init ntrdma_init(void)
 {
+	int rc;
+
 	pr_info("NTRDMA module init\n");
-	ntrdma_debugfs_init();
-	ntc_register_driver(&ntrdma_driver);
+
+	rc = ntrdma_qp_module_init();
+	if (rc < 0)
+		goto err;
+
+	rc = ntrdma_ib_module_init();
+	if (rc < 0)
+		goto err;
+
+	rc = ntrdma_mr_module_init();
+	if (rc < 0)
+		goto err;
+
+	rc = ntrdma_eth_module_init();
+	if (rc < 0)
+		goto err;
+
+	rc = ntrdma_debugfs_init();
+	if (rc < 0)
+		goto err;
+
+	rc = ntc_register_driver(&ntrdma_driver);
+	if (rc < 0)
+		goto err;
+
 	return 0;
+
+ err:
+	ntrdma_deinit();
+	return rc;
 }
 module_init(ntrdma_init);
 
-static void __exit ntrdma_exit(void)
+static __exit void ntrdma_exit(void)
 {
 	ntc_unregister_driver(&ntrdma_driver);
-	ntrdma_debugfs_deinit();
+	ntrdma_deinit();
 	pr_info("NTRDMA module exit\n");
 }
 module_exit(ntrdma_exit);

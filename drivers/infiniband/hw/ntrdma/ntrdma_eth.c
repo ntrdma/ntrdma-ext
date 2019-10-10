@@ -37,6 +37,8 @@
 #define MAX_WQES 4096
 #define SKINFO_SIZE SKB_DATA_ALIGN(sizeof(struct skb_shared_info))
 
+static struct kmem_cache *skb_cb_slab;
+
 static const struct net_device_ops ntrdma_eth_net_ops;
 static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget);
 static void ntrdma_eth_vbell_cb(void *ctx);
@@ -720,8 +722,8 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 	} else {
 		BUILD_BUG_ON(sizeof(struct ntrdma_skb_cb **) > sizeof(skb->cb));
 		skb_ctx = *(struct ntrdma_skb_cb **)skb->cb =
-			kmalloc_node(sizeof(struct ntrdma_skb_cb),
-				GFP_KERNEL, dev->node);
+			kmem_cache_alloc_node(skb_cb_slab, GFP_KERNEL,
+					dev->node);
 		if (!skb_ctx)
 			goto err_alloc_skb_ctx;
 		skb_ctx->ntc = dev->ntc;
@@ -806,7 +808,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 err_buf_map:
 	ntc_remote_buf_unmap(&skb_ctx->dst, dev->ntc);
 err_res_map:
-	kfree(skb_ctx);
+	kmem_cache_free(skb_cb_slab, skb_ctx);
 err_alloc_skb_ctx:
 	kfree_skb(skb);
 	eth->napi.dev->stats.tx_errors++;
@@ -837,7 +839,7 @@ static void ntrdma_eth_dma_cb(void *ctx)
 
 	ntc_local_buf_disown(&skb_ctx->src, skb_ctx->ntc);
 	ntc_remote_buf_unmap(&skb_ctx->dst, skb_ctx->ntc);
-	kfree(skb_ctx);
+	kmem_cache_free(skb_cb_slab, skb_ctx);
 
 	consume_skb(skb);
 
@@ -905,3 +907,18 @@ static const struct net_device_ops ntrdma_eth_net_ops = {
 	.ndo_set_mac_address = eth_mac_addr,
 	.ndo_validate_addr = eth_validate_addr,
 };
+
+int __init ntrdma_eth_module_init(void)
+{
+	if (!(skb_cb_slab = KMEM_CACHE(ntrdma_skb_cb, 0))) {
+		ntrdma_eth_module_deinit();
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+void ntrdma_eth_module_deinit(void)
+{
+	ntrdma_deinit_slab(&skb_cb_slab);
+}

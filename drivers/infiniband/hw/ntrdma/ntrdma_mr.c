@@ -45,6 +45,8 @@ struct ntrdma_mr_cmd_cb {
 	u32 sg_pos, sg_count;
 };
 
+static struct kmem_cache *mrcb_slab;
+
 #define ntrdma_cmd_cb_mrcb(__cb) \
 	container_of(__cb, struct ntrdma_mr_cmd_cb, cb)
 
@@ -105,7 +107,7 @@ static int ntrdma_mr_enable(struct ntrdma_res *res)
 
 	ntrdma_res_start_cmds(&mr->res);
 
-	mrcb = kmalloc_node(sizeof(*mrcb), GFP_KERNEL, dev->node);
+	mrcb = kmem_cache_alloc_node(mrcb_slab, GFP_KERNEL, dev->node);
 	if (!mrcb) {
 		rc = -ENOMEM;
 		goto err_create;
@@ -126,7 +128,7 @@ static int ntrdma_mr_enable(struct ntrdma_res *res)
 	ntrdma_dev_cmd_add(dev, &mrcb->cb);
 
 	while (end < mr->sg_count) {
-		mrcb = kmalloc_node(sizeof(*mrcb), GFP_KERNEL, dev->node);
+		mrcb = kmem_cache_alloc_node(mrcb_slab, GFP_KERNEL, dev->node);
 		if (!mrcb) {
 			rc = -ENOMEM;
 			goto err_append;
@@ -217,7 +219,7 @@ static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 
 	if (mrcb->sg_pos + mrcb->sg_count == mr->sg_count)
 		ntrdma_res_done_cmds(&mr->res);
-	kfree(mrcb);
+	kmem_cache_free(mrcb_slab, mrcb);
 
 	return 0;
 
@@ -236,7 +238,7 @@ static int ntrdma_mr_disable(struct ntrdma_res *res)
 
 	ntrdma_res_start_cmds(&mr->res);
 
-	mrcb = kmalloc_node(sizeof(*mrcb), GFP_KERNEL, dev->node);
+	mrcb = kmem_cache_alloc_node(mrcb_slab, GFP_KERNEL, dev->node);
 	if (!mrcb) {
 		rc = -ENOMEM;
 		goto err;
@@ -282,7 +284,7 @@ static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 	}
 
 	ntrdma_res_done_cmds(&mr->res);
-	kfree(mrcb);
+	kmem_cache_free(mrcb_slab, mrcb);
 
 	return 0;
 
@@ -348,3 +350,17 @@ struct ntrdma_rmr *ntrdma_dev_rmr_look(struct ntrdma_dev *dev, int key)
 	return ntrdma_rres_rmr(rres);
 }
 
+int __init ntrdma_mr_module_init(void)
+{
+	if (!(mrcb_slab = KMEM_CACHE(ntrdma_mr_cmd_cb, 0))) {
+		ntrdma_mr_module_deinit();
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+void ntrdma_mr_module_deinit(void)
+{
+	ntrdma_deinit_slab(&mrcb_slab);
+}

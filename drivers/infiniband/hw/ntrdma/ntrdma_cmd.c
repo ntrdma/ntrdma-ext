@@ -981,7 +981,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 		goto err_sanity;
 	}
 
-	rqp = kmalloc_node(sizeof(*rqp), GFP_KERNEL, dev->node);
+	rqp = ntrdma_alloc_rqp(GFP_KERNEL, dev);
 	if (!rqp) {
 		rc = -ENOMEM;
 		goto err_rqp;
@@ -1032,7 +1032,7 @@ err_add:
 	ntc_remote_buf_unmap(&attr.peer_send_cqe_buf, dev->ntc);
 err_peer_send_cqe_buf:
 err_init:
-	kfree(rqp);
+	ntrdma_free_rqp(rqp);
 err_rqp:
 err_sanity:
 	rsp->hdr.status = ~0;
@@ -1080,7 +1080,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	ntrdma_rqp_put(rqp);
 	ntrdma_rqp_repo(rqp);
 	ntrdma_rqp_deinit(rqp);
-	kfree(rqp);
+	ntrdma_free_rqp(rqp);
 
 	rsp->hdr.status = 0;
 	return 0;

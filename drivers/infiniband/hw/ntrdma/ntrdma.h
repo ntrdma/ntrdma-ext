@@ -70,8 +70,21 @@ struct ntrdma_vbell_head;
 union ntrdma_cmd;
 union ntrdma_rsp;
 
-void ntrdma_debugfs_init(void);
+int __init ntrdma_qp_module_init(void);
+void ntrdma_qp_module_deinit(void);
+
+int __init ntrdma_ib_module_init(void);
+void ntrdma_ib_module_deinit(void);
+
+int __init ntrdma_mr_module_init(void);
+void ntrdma_mr_module_deinit(void);
+
+int __init ntrdma_eth_module_init(void);
+void ntrdma_eth_module_deinit(void);
+
+int __init ntrdma_debugfs_init(void);
 void ntrdma_debugfs_deinit(void);
+
 void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev);
 void ntrdma_debugfs_dev_del(struct ntrdma_dev *dev);
 void ntrdma_debugfs_cq_add(struct ntrdma_cq *cq);

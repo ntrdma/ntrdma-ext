@@ -57,6 +57,12 @@
 #define DELL_VENDOR_ID 0x1028
 #define NOT_SUPPORTED 0
 
+static struct kmem_cache *ah_slab;
+static struct kmem_cache *cq_slab;
+static struct kmem_cache *pd_slab;
+static struct kmem_cache *qp_slab;
+static struct kmem_cache *ibuctx_slab;
+
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
 struct net_device *ntrdma_get_netdev(struct ib_device *ibdev,
@@ -140,7 +146,7 @@ static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
 				      struct rdma_ah_attr *ah_attr,
 				      struct ib_udata *udata)
 {
-	struct ntrdma_ah *ah = kzalloc(sizeof(*ah), GFP_ATOMIC);
+	struct ntrdma_ah *ah = kmem_cache_zalloc(ah_slab, GFP_ATOMIC);
 
 	if (!ah)
 		return ERR_PTR(-ENOMEM);
@@ -156,7 +162,8 @@ static int ntrdma_destroy_ah(struct ib_ah *ibah)
 {
 	struct ntrdma_ah *ah = container_of(ibah, struct ntrdma_ah, ibah);
 
-	kfree(ah);
+	kmem_cache_free(ah_slab, ah);
+
 	return 0;
 }
 
@@ -320,7 +327,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		goto err_cq;
 	}
 
-	cq = kmalloc_node(sizeof(*cq), GFP_KERNEL, dev->node);
+	cq = kmem_cache_alloc_node(cq_slab, GFP_KERNEL, dev->node);
 	if (!cq) {
 		rc = -ENOMEM;
 		goto err_cq;
@@ -350,7 +357,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 err_add:
 	ntrdma_cq_deinit(cq);
 err_init:
-	kfree(cq);
+	kmem_cache_free(cq_slab, cq);
 err_cq:
 	atomic_dec(&dev->cq_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
@@ -372,7 +379,7 @@ static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 	ntrdma_cq_del(cq);
 	ntrdma_cq_repo(cq);
 	ntrdma_cq_deinit(cq);
-	kfree(cq);
+	kmem_cache_free(cq_slab, cq);
 	atomic_dec(&dev->cq_num);
 	return 0;
 }
@@ -551,7 +558,7 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 		goto err_pd;
 	}
 
-	pd = kmalloc_node(sizeof(*pd), GFP_KERNEL, dev->node);
+	pd = kmem_cache_alloc_node(pd_slab, GFP_KERNEL, dev->node);
 	if (!pd) {
 		rc = -ENOMEM;
 		goto err_pd;
@@ -577,7 +584,7 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 err_add:
 	ntrdma_pd_deinit(pd);
 err_init:
-	kfree(pd);
+	kmem_cache_free(pd_slab, pd);
 err_pd:
 	atomic_dec(&dev->pd_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
@@ -600,7 +607,7 @@ static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 	ntrdma_pd_del(pd);
 	ntrdma_pd_repo(pd);
 	ntrdma_pd_deinit(pd);
-	kfree(pd);
+	kmem_cache_free(pd_slab, pd);
 	atomic_dec(&dev->pd_num);
 	return 0;
 }
@@ -622,7 +629,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		goto err_qp;
 	}
 
-	qp = kmalloc_node(sizeof(*qp), GFP_KERNEL, dev->node);
+	qp = kmem_cache_alloc_node(qp_slab, GFP_KERNEL, dev->node);
 	if (!qp) {
 		rc = -ENOMEM;
 		goto err_qp;
@@ -682,7 +689,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 err_add:
 	ntrdma_qp_deinit(qp);
 err_init:
-	kfree(qp);
+	kmem_cache_free(qp_slab, qp);
 err_qp:
 	atomic_dec(&dev->qp_num);
 	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
@@ -1011,7 +1018,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	ntrdma_qp_del(qp);
 	ntrdma_qp_repo(qp);
 	ntrdma_qp_deinit(qp);
-	kfree(qp);
+	kmem_cache_free(qp_slab, qp);
 
 	if (dev)
 		atomic_dec(&dev->qp_num);
@@ -1278,8 +1285,8 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 			}
 		}
 
-		rcv_sge->shadow = shadow =
-			kzalloc_node(sizeof(*shadow), GFP_KERNEL, dev->node);
+		rcv_sge->shadow =
+			shadow = ntrdma_zalloc_sge_shadow(GFP_KERNEL, dev);
 		if (!shadow) {
 			rc = -ENOMEM;
 			ntrdma_err(dev, "FAILED to alloc shadow");
@@ -1510,7 +1517,7 @@ static struct ib_ucontext *ntrdma_alloc_ucontext(struct ib_device *ibdev,
 	struct ib_ucontext *ibuctx;
 	int rc;
 
-	ibuctx = kmalloc_node(sizeof(*ibuctx), GFP_KERNEL, dev->node);
+	ibuctx = kmem_cache_alloc_node(ibuctx_slab, GFP_KERNEL, dev->node);
 	if (!ibuctx) {
 		rc = -ENOMEM;
 		goto err_ctx;
@@ -1518,14 +1525,13 @@ static struct ib_ucontext *ntrdma_alloc_ucontext(struct ib_device *ibdev,
 
 	return ibuctx;
 
-	// kfree(ibuctx);
 err_ctx:
 	return ERR_PTR(rc);
 }
 
 static int ntrdma_dealloc_ucontext(struct ib_ucontext *ibuctx)
 {
-	kfree(ibuctx);
+	kmem_cache_free(ibuctx_slab, ibuctx);
 
 	return 0;
 }
@@ -1668,4 +1674,27 @@ void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev)
 {
 	pr_info("NTRDMA IB dev deinit\n");
 	ib_unregister_device(&dev->ibdev);
+}
+
+int __init ntrdma_ib_module_init(void)
+{
+	if (!((ah_slab = KMEM_CACHE(ntrdma_ah, 0)) &&
+			(cq_slab = KMEM_CACHE(ntrdma_cq, 0)) &&
+			(pd_slab = KMEM_CACHE(ntrdma_pd, 0)) &&
+			(qp_slab = KMEM_CACHE(ntrdma_qp, 0)) &&
+			(ibuctx_slab = KMEM_CACHE(ib_ucontext, 0)))) {
+		ntrdma_ib_module_deinit();
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+void ntrdma_ib_module_deinit(void)
+{
+	ntrdma_deinit_slab(&ah_slab);
+	ntrdma_deinit_slab(&cq_slab);
+	ntrdma_deinit_slab(&pd_slab);
+	ntrdma_deinit_slab(&qp_slab);
+	ntrdma_deinit_slab(&ibuctx_slab);
 }
