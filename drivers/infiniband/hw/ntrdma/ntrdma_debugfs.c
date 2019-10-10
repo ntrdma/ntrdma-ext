@@ -108,7 +108,8 @@ void ntrdma_debugfs_print_wr_rcv_sg_list(struct seq_file *s, const char *pre,
 		if (!shadow)
 			seq_printf(s,
 				"%srcv_sg_list[%u] addr %#llx len %#x key %u\n",
-				pre, i, sge->addr, sge->len, sge->key);
+				pre, i, sge->sge.addr, sge->sge.length,
+				sge->sge.lkey);
 		else
 			seq_printf(s,
 				"%srcv_sg_list[%u] exp_buf_desc.size %#llx\n",
@@ -133,7 +134,7 @@ void ntrdma_debugfs_print_send_wqe(struct seq_file *s, const char *pre,
 		   pre, wqe_i, wqe->ulp_handle, wqe->op_code,
 		   wqe->op_status);
 	seq_printf(s, "%s\trecv %u rkey %u addr %#llx imm %#x sg_count %u\n",
-		   pre, wqe->recv_key, wqe->rdma_key, wqe->rdma_addr,
+		   pre, wqe->recv_key, wqe->rdma_sge.lkey, wqe->rdma_sge.addr,
 		   wqe->imm_data, wqe->sg_count);
 }
 

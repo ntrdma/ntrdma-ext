@@ -66,9 +66,7 @@ struct ntrdma_send_wqe {
 	u16				op_code;
 	u16				op_status;
 	u32				recv_key;
-	u32				rdma_key;
-	u32				rdma_len;
-	u64				rdma_addr;
+	struct ib_sge			rdma_sge;
 	u32				imm_data;
 
 	union {

@@ -1083,36 +1083,36 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		wqe->op_code = NTRDMA_WR_SEND;
 		wqe->op_status = 0;
 		wqe->recv_key = ~(u32)0;
-		wqe->rdma_key = 0;
-		wqe->rdma_len = 0;
-		wqe->rdma_addr = 0;
+		wqe->rdma_sge.lkey = 0;
+		wqe->rdma_sge.length = 0;
+		wqe->rdma_sge.addr = 0;
 		wqe->imm_data = 0;
 		break;
 	case IB_WR_SEND_WITH_IMM:
 		wqe->op_code = NTRDMA_WR_SEND_IMM;
 		wqe->op_status = 0;
 		wqe->recv_key = ~(u32)0;
-		wqe->rdma_key = 0;
-		wqe->rdma_len = 0;
-		wqe->rdma_addr = 0;
+		wqe->rdma_sge.lkey = 0;
+		wqe->rdma_sge.length = 0;
+		wqe->rdma_sge.addr = 0;
 		wqe->imm_data = ibwr->ex.imm_data;
 		break;
 	case IB_WR_RDMA_WRITE_WITH_IMM:
 		wqe->op_code = NTRDMA_WR_SEND_RDMA;
 		wqe->op_status = 0;
 		wqe->recv_key = ~(u32)0;
-		wqe->rdma_key = rdma_wr(ibwr)->rkey;
-		wqe->rdma_len = 0;
-		wqe->rdma_addr = rdma_wr(ibwr)->remote_addr;
+		wqe->rdma_sge.lkey = rdma_wr(ibwr)->rkey;
+		wqe->rdma_sge.length = 0;
+		wqe->rdma_sge.addr = rdma_wr(ibwr)->remote_addr;
 		wqe->imm_data = ibwr->ex.imm_data;
 		break;
 	case IB_WR_RDMA_WRITE:
 		wqe->op_code = NTRDMA_WR_RDMA_WRITE;
 		wqe->op_status = 0;
 		wqe->recv_key = ~(u32)0;
-		wqe->rdma_key = rdma_wr(ibwr)->rkey;
-		wqe->rdma_len = 0;
-		wqe->rdma_addr = rdma_wr(ibwr)->remote_addr;
+		wqe->rdma_sge.lkey = rdma_wr(ibwr)->rkey;
+		wqe->rdma_sge.length = 0;
+		wqe->rdma_sge.addr = rdma_wr(ibwr)->remote_addr;
 		wqe->imm_data = 0;
 		if (ibwr->send_flags & IB_SEND_INLINE)
 			return ntrdma_ib_send_to_inline_wqe(dev, wqe, ibwr, qp);
@@ -1121,9 +1121,9 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		wqe->op_code = NTRDMA_WR_RDMA_READ;
 		wqe->op_status = 0;
 		wqe->recv_key = ~(u32)0;
-		wqe->rdma_key = rdma_wr(ibwr)->rkey;
-		wqe->rdma_len = 0;
-		wqe->rdma_addr = rdma_wr(ibwr)->remote_addr;
+		wqe->rdma_sge.lkey = rdma_wr(ibwr)->rkey;
+		wqe->rdma_sge.length = 0;
+		wqe->rdma_sge.addr = rdma_wr(ibwr)->remote_addr;
 		wqe->imm_data = 0;
 		break;
 	default:
@@ -1146,7 +1146,7 @@ static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		wqe_snd_sg_list = snd_sg_list(i, wqe);
 
 		wqe_snd_sg_list->key = sg_list->lkey;
-		if (sg_list->lkey != NTRDMA_RESERVED_DMA_LEKY) {
+		if (!ntrdma_ib_sge_reserved(sg_list)) {
 			wqe_snd_sg_list->addr = sg_list->addr;
 			wqe_snd_sg_list->len = sg_list->length;
 		} else {
@@ -1208,9 +1208,9 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr, qp);
 
 			TRACE("OPCODE %d: flags %x, addr %llx, rc = %d QP %d num sges %d pos %d wr_id %llu\n",
-					ibwr->opcode, ibwr->send_flags,
-					wqe->rdma_addr, rc, qp->res.key,
-					ibwr->num_sge, pos, ibwr->wr_id);
+				ibwr->opcode, ibwr->send_flags,
+				wqe->rdma_sge.addr, rc, qp->res.key,
+				ibwr->num_sge, pos, ibwr->wr_id);
 
 			if (rc)
 				break;
@@ -1264,14 +1264,12 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 
 		key = sg_list->lkey;
 
-		if (key != NTRDMA_RESERVED_DMA_LEKY) {
+		if (!ntrdma_ib_sge_reserved(sg_list)) {
 			mr = ntrdma_dev_mr_look(dev, key);
 			if (mr) {
 				if (mr->access & IB_ACCESS_REMOTE_WRITE) {
 					rcv_sge->shadow = NULL;
-					rcv_sge->addr = sg_list->addr;
-					rcv_sge->len = sg_list->length;
-					rcv_sge->key = key;
+					rcv_sge->sge = *sg_list;
 					/* FIXME: dma callback for put mr */
 					ntrdma_mr_put(mr);
 					continue;
@@ -1289,7 +1287,7 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 		}
 		shadow->local_key = key;
 
-		if (key != NTRDMA_RESERVED_DMA_LEKY)
+		if (!ntrdma_ib_sge_reserved(sg_list))
 			shadow->local_addr = sg_list->addr;
 		else
 			ntc_local_buf_map_dma(&shadow->rcv_dma_buf,
@@ -1309,12 +1307,12 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 					&shadow->exp_buf);
 		ntrdma_info(dev,
 			"Allocating rcv %s buffer size %#x @DMA %#llx",
-			(key != NTRDMA_RESERVED_DMA_LEKY) ?
-			"MR" : "DMA", sg_list->length,
+			ntrdma_ib_sge_reserved(sg_list) ?
+			"DMA" : "MR", sg_list->length,
 			shadow->exp_buf.dma_addr);
 		TRACE("Allocating rcv %s buffer size %#x @DMA %#llx",
-			(key != NTRDMA_RESERVED_DMA_LEKY) ?
-			"MR" : "DMA", sg_list->length,
+			ntrdma_ib_sge_reserved(sg_list) ?
+			"DMA" : "MR", sg_list->length,
 			shadow->exp_buf.dma_addr);
 	}
 

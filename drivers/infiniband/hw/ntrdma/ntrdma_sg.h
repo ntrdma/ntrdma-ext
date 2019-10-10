@@ -67,21 +67,22 @@ struct ntrdma_wr_rcv_sge {
 	struct ntrdma_wr_rcv_sge_shadow *shadow;
 	union {
 		/* shadow == NULL */
-		struct {
-			u64		addr;
-			u32		len;
-			/* key != NTRDMA_RESERVED_DMA_LEKY */
-			u32		key;
-		};
+		/* sge.lkey != NTRDMA_RESERVED_DMA_LEKY */
+		struct ib_sge sge;
 		/* shadow != NULL: the desc of shadow->exp_buf */
 		struct ntc_remote_buf_desc exp_buf_desc;
 	};
 };
 
+static inline bool ntrdma_ib_sge_reserved(struct ib_sge *sge)
+{
+	return sge->lkey == NTRDMA_RESERVED_DMA_LEKY;
+}
+
 static inline u64 ntrdma_wr_rcv_sge_len(const struct ntrdma_wr_rcv_sge *sge)
 {
 	if (!sge->shadow)
-		return sge->len;
+		return sge->sge.length;
 	else
 		return sge->exp_buf_desc.size;
 }
@@ -90,7 +91,7 @@ static inline
 u32 ntrdma_wr_rcv_sge_remote_key(const struct ntrdma_wr_rcv_sge *sge)
 {
 	if (!sge->shadow)
-		return sge->key;
+		return sge->sge.lkey;
 	else
 		return NTRDMA_RESERVED_DMA_LEKY;
 }
