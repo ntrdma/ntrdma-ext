@@ -285,7 +285,7 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 	if (c->rmr) {
 		c->rmr_sge = c->rmr->sg_list;
 		c->rmr_sg_end = c->rmr_sge + c->rmr->sg_count;
-		c->next_io_off = c->rcv_sge_copy.addr +
+		c->next_io_off = c->rcv_sge_copy.sge.addr +
 			c->offset - c->rmr->addr;
 	} else
 		c->next_io_off = c->offset;
@@ -344,7 +344,7 @@ ntrdma_lrcv_cursor_update(struct ntrdma_lrcv_cursor *c, int *rc)
 	if (c->mr) {
 		c->mr_sge = c->mr->sg_list;
 		c->mr_sg_end = c->mr_sge + c->mr->sg_count;
-		c->next_io_off = c->lrcv_sge->addr - c->mr->addr;
+		c->next_io_off = c->lrcv_sge->sge.addr - c->mr->addr;
 	} else
 		c->next_io_off = 0;
 
