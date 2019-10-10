@@ -56,6 +56,10 @@ struct ntrdma_qp_cmd_cb {
 	struct ntrdma_qp *qp;
 };
 
+static struct kmem_cache *qpcb_slab;
+static struct kmem_cache *rqp_slab;
+static struct kmem_cache *shadow_slab;
+
 #define ntrdma_cmd_cb_qpcb(__cb) \
 	container_of(__cb, struct ntrdma_qp_cmd_cb, cb)
 
@@ -414,8 +418,7 @@ int ntrdma_qp_modify(struct ntrdma_qp *qp)
 
 	ntrdma_res_start_cmds(&qp->res);
 
-	qpcb = kmalloc_node(sizeof(*qpcb),
-			    GFP_KERNEL, dev->node);
+	qpcb = kmem_cache_alloc_node(qpcb_slab, GFP_KERNEL, dev->node);
 	if (!qpcb) {
 		rc = -ENOMEM;
 		goto err;
@@ -479,7 +482,7 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 	}
 
 	ntrdma_res_done_cmds(&qp->res);
-	kfree(qpcb);
+	kmem_cache_free(qpcb_slab, qpcb);
 
 	return 0;
 
@@ -506,8 +509,7 @@ static int ntrdma_qp_enable(struct ntrdma_res *res)
 
 	ntrdma_res_start_cmds(&qp->res);
 
-	qpcb = kmalloc_node(sizeof(*qpcb),
-			    GFP_KERNEL, dev->node);
+	qpcb = kmem_cache_alloc_node(qpcb_slab, GFP_KERNEL, dev->node);
 	if (!qpcb) {
 		rc = -ENOMEM;
 		goto err;
@@ -623,7 +625,7 @@ static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 		ntrdma_dev_cmd_add_unsafe(dev, &qpcb->cb);
 	} else {
 		ntrdma_res_done_cmds(&qp->res);
-		kfree(qpcb);
+		kmem_cache_free(qpcb_slab, qpcb);
 		ntrdma_qp_recv_work(qp);
 	}
 
@@ -650,8 +652,7 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 
 	ntrdma_res_start_cmds(&qp->res);
 
-	qpcb = kmalloc_node(sizeof(*qpcb),
-			    GFP_KERNEL, dev->node);
+	qpcb = kmem_cache_alloc_node(qpcb_slab, GFP_KERNEL, dev->node);
 	if (!qpcb) {
 		rc = -ENOMEM;
 		goto err;
@@ -701,7 +702,7 @@ static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 	}
 
 	ntrdma_qp_enable_disable_cmpl_common(qp, dev, NULL, true);
-	kfree(qpcb);
+	kmem_cache_free(qpcb_slab, qpcb);
 
 	return 0;
 
@@ -786,7 +787,7 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 	ntrdma_rqp_del(rqp);
 	ntrdma_rres_del_unsafe(&rqp->rres);
 	ntrdma_rqp_deinit(rqp);
-	kfree(rqp);
+	ntrdma_free_rqp(rqp);
 }
 
 static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
@@ -1013,7 +1014,7 @@ void ntrdma_recv_wqe_cleanup(struct ntrdma_recv_wqe *wqe)
 			continue;
 		rcv_sge->shadow = NULL;
 		ntc_export_buf_free(&shadow->exp_buf);
-		kfree(shadow);
+		ntrdma_free_sge_shadow(shadow);
 	}
 
 	wqe->sg_count = 0;
@@ -2301,4 +2302,44 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
 		ntrdma_rqp_send_cons_done(rqp);
 }
 
+struct ntrdma_wr_rcv_sge_shadow *
+ntrdma_zalloc_sge_shadow(gfp_t gfp, struct ntrdma_dev *dev)
+{
+	return kmem_cache_alloc_node(shadow_slab, gfp | __GFP_ZERO, dev->node);
+}
 
+void ntrdma_free_sge_shadow(struct ntrdma_wr_rcv_sge_shadow *shadow)
+{
+	kmem_cache_free(shadow_slab, shadow);
+}
+
+struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev)
+{
+	return kmem_cache_alloc_node(rqp_slab, gfp, dev->node);
+}
+
+void ntrdma_free_rqp(struct ntrdma_rqp *rqp)
+{
+	kmem_cache_free(rqp_slab, rqp);
+}
+
+
+int __init ntrdma_qp_module_init(void)
+{
+	if (!((qpcb_slab = KMEM_CACHE(ntrdma_qp_cmd_cb, 0)) &&
+			(rqp_slab = KMEM_CACHE(ntrdma_rqp, 0)) &&
+			(shadow_slab = KMEM_CACHE(ntrdma_wr_rcv_sge_shadow,
+						0)))) {
+		ntrdma_qp_module_deinit();
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+void ntrdma_qp_module_deinit(void)
+{
+	ntrdma_deinit_slab(&qpcb_slab);
+	ntrdma_deinit_slab(&rqp_slab);
+	ntrdma_deinit_slab(&shadow_slab);
+}

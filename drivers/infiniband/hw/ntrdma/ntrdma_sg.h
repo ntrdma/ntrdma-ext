@@ -96,4 +96,8 @@ u32 ntrdma_wr_rcv_sge_remote_key(const struct ntrdma_wr_rcv_sge *sge)
 		return NTRDMA_RESERVED_DMA_LEKY;
 }
 
+struct ntrdma_wr_rcv_sge_shadow *
+ntrdma_zalloc_sge_shadow(gfp_t gfp, struct ntrdma_dev *dev);
+void ntrdma_free_sge_shadow(struct ntrdma_wr_rcv_sge_shadow *shadow);
+
 #endif
