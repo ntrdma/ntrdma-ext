@@ -42,6 +42,7 @@
 #include <linux/pci.h>
 #include <linux/timer.h>
 #include <linux/cpumask.h>
+#include <linux/slab.h>
 
 #include <linux/ntc.h>
 #include <linux/ntc_trace.h>
@@ -91,6 +92,8 @@ struct ntc_own_mw_data {
 	bool flat_used;
 	bool mm_inited;
 } own_mw_data[2];
+
+static struct kmem_cache *imm_slab;
 
 static struct dentry *ntc_dbgfs;
 
@@ -996,13 +999,13 @@ int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *chan)
 }
 EXPORT_SYMBOL(ntc_req_submit);
 
-static int ntc_ntb_req_prep_flags(bool fence)
+static inline int ntc_ntb_req_prep_flags(bool fence)
 {
 	int flags = NTC_NTB_DMA_PREP_FLAGS;
-#if 0
+
 	if (fence)
 		flags |= DMA_PREP_FENCE;
-#endif
+
 	return flags;
 }
 
@@ -1069,7 +1072,7 @@ static void ntc_req_imm_cb(void *ctx)
 	if (imm->cb)
 		imm->cb(imm->cb_ctx);
 
-	kfree(imm);
+	kmem_cache_free(imm_slab, imm);
 }
 
 int ntc_req_imm(struct dma_chan *chan,
@@ -1102,8 +1105,8 @@ int ntc_req_imm(struct dma_chan *chan,
 		return 0;
 	}
 
-	imm = kmalloc_node(sizeof(*imm), GFP_ATOMIC,
-			dev_to_node(chan->device->dev));
+	imm = kmem_cache_alloc_node(imm_slab, GFP_ATOMIC,
+				dev_to_node(chan->device->dev));
 	if (!imm) {
 		rc = -ENOMEM;
 		goto err_imm;
@@ -1144,7 +1147,7 @@ err_memcpy:
 			 imm->data_len,
 			 DMA_TO_DEVICE);
 err_dma:
-	kfree(imm);
+	kmem_cache_free(imm_slab, imm);
 err_imm:
 	return rc;
 }
@@ -1886,6 +1889,14 @@ struct ntb_client ntc_ntb_client = {
 	},
 };
 
+static void ntc_deinit(void)
+{
+	if (imm_slab) {
+		kmem_cache_destroy(imm_slab);
+		imm_slab = NULL;
+	}
+}
+
 int __init ntc_init(void)
 {
 	int i;
@@ -1893,6 +1904,11 @@ int __init ntc_init(void)
 	unsigned long mw0_min_mm_len = 0x100000;
 
 	info("%s %s init", DRIVER_DESCRIPTION, DRIVER_VERSION);
+
+	if (!(imm_slab = KMEM_CACHE(ntc_ntb_imm, 0))) {
+		ntc_deinit();
+		return -ENOMEM;
+	}
 
 	if (!num_dma_chan || (num_dma_chan > NTC_MAX_DMA_CHANS))
 		num_dma_chan = NTC_MAX_DMA_CHANS;
@@ -1930,7 +1946,9 @@ int __init ntc_init(void)
 void __exit ntc_exit(void)
 {
 	ntb_unregister_client(&ntc_ntb_client);
-	debugfs_remove_recursive(ntc_dbgfs);
+	if (ntc_dbgfs)
+		debugfs_remove_recursive(ntc_dbgfs);
+	ntc_deinit();
 
 	info("%s %s exit", DRIVER_DESCRIPTION, DRIVER_VERSION);
 }
