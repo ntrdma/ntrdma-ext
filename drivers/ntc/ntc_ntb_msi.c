@@ -1838,7 +1838,7 @@ static int ntc_ntb_probe(struct ntb_client *self,
 		rc = -ENODEV;
 		goto err_dma;
 	}
-	dev->ntc.dma_chan_rr_index = 0;
+	atomic_set(&dev->ntc.dma_chan_rr_index, 0);
 
 	get_device(&ntb->dev);
 	dev->ntb = ntb;
