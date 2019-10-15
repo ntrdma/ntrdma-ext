@@ -837,7 +837,8 @@ static int ntrdma_debugfs_qp_send_wqe_show(struct seq_file *s, void *v)
 		sg_count = min_t(u32, wqe->sg_count, qp->send_wqe_sg_cap);
 
 		ntrdma_debugfs_print_wr_snd_sg_list(s, "\t",
-				snd_sg_list(0, wqe), sg_count);
+						const_snd_sg_list(0, wqe),
+						sg_count);
 	}
 
 	return 0;
@@ -1008,7 +1009,8 @@ static int ntrdma_debugfs_rqp_send_wqe_show(struct seq_file *s, void *v)
 		sg_count = min_t(u32, wqe->sg_count, rqp->send_wqe_sg_cap);
 
 		ntrdma_debugfs_print_wr_snd_sg_list(s, "\t",
-				snd_sg_list(0, wqe), sg_count);
+						const_snd_sg_list(0, wqe),
+						sg_count);
 	}
 
 	return 0;

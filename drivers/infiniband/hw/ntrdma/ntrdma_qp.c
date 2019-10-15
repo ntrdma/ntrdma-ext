@@ -1661,6 +1661,48 @@ static inline bool check_recv_wqe_sanity(struct ntrdma_rqp *rqp,
 		rqp->recv_wqe_size;
 }
 
+int ntrdma_qp_rdma_write(struct ntrdma_qp *qp, u32 pos,
+			struct ntrdma_send_wqe *wqe)
+{
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	struct dma_chan *req = qp->dma_chan;
+	struct ntrdma_wr_rcv_sge rdma_sge;
+	struct ntrdma_wr_snd_sge rdma_src_sge;
+	u32 rdma_len;
+	size_t off, data_shift;
+	dma_addr_t wqe_data_dma;
+	int rc;
+
+	if (ntrdma_ib_sge_reserved(&wqe->rdma_sge))
+		return -EINVAL;
+
+	rdma_sge.shadow = NULL;
+	rdma_sge.sge = wqe->rdma_sge;
+	rdma_sge.sge.length = ~(u32)0;
+
+	if (wqe->flags & IB_SEND_INLINE) {
+		off = (pos - 1) * qp->send_wqe_size;
+		data_shift = sizeof(struct ntrdma_send_wqe);
+		wqe_data_dma = qp->send_wqe_buf.dma_addr + off + data_shift;
+
+		ntc_local_buf_map_dma(&rdma_src_sge.snd_dma_buf,
+				dev->ntc, wqe->inline_len, wqe_data_dma);
+
+		rdma_src_sge.key = NTRDMA_RESERVED_DMA_LEKY;
+
+		rc = ntrdma_zip_rdma(dev, req, &rdma_len, &rdma_sge,
+				&rdma_src_sge, 1, 1, 0);
+	} else
+		rc = ntrdma_zip_rdma(dev, req, &rdma_len, &rdma_sge,
+				const_snd_sg_list(0, wqe),
+				1, wqe->sg_count, 0);
+
+	if (rc >= 0)
+		wqe->rdma_sge.length = rdma_len;
+
+	return rc;
+}
+
 static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
@@ -1669,18 +1711,14 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	struct ntrdma_send_wqe *wqe;
 	const struct ntrdma_recv_wqe *_recv_wqe = NULL;
 	struct ntrdma_recv_wqe recv_wqe;
-	u32 recv_wqe_recv_pos = 0;
-	struct ntrdma_wr_rcv_sge rdma_sge;
-	struct ntrdma_wr_snd_sge rdma_src_sge;
-	dma_addr_t wqe_data_dma;
 	u32 start, pos, end, base;
 	u32 recv_pos, recv_end, recv_base;
 	u32 rcv_start_offset;
 	u32 rdma_len;
-	size_t off, len, data_shift;
+	size_t off, len;
 	int rc;
 	bool abort = false;
-	
+
 	/* verify the qp state and lock for producing sends */
 	rc = ntrdma_qp_send_prod_start(qp);
 	if (rc) {
@@ -1760,7 +1798,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				break;
 			}
 
-			recv_wqe_recv_pos = recv_pos;
 			_recv_wqe = ntrdma_rqp_recv_wqe(rqp, recv_pos++);
 			recv_wqe = READ_ONCE(*_recv_wqe);
 
@@ -1795,40 +1832,9 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		}
 
 		if (ntrdma_wr_code_push_data(wqe->op_code)) {
-			if (ntrdma_wr_code_is_rdma(wqe->op_code)) {
-				if (!ntrdma_ib_sge_reserved(&wqe->rdma_sge)) {
-					rdma_sge.shadow = NULL;
-					rdma_sge.sge = wqe->rdma_sge;
-					rdma_sge.sge.length = ~(u32)0;
-
-					if (wqe->flags & IB_SEND_INLINE) {
-						off = (pos - 1) * qp->send_wqe_size;
-						data_shift = sizeof(struct ntrdma_send_wqe);
-						wqe_data_dma = qp->send_wqe_buf.dma_addr +
-								off + data_shift;
-
-						ntc_local_buf_map_dma(&rdma_src_sge.snd_dma_buf,
-							dev->ntc,
-							wqe->inline_len,
-							wqe_data_dma);
-
-						rdma_src_sge.key = NTRDMA_RESERVED_DMA_LEKY;
-
-						rc = ntrdma_zip_rdma(dev, req,
-								&rdma_len,
-								&rdma_sge,
-								&rdma_src_sge,
-								1, 1, 0);
-					} else/* From send to RDMA address. */
-						rc = ntrdma_zip_rdma(dev, req,
-								&rdma_len,
-								&rdma_sge,
-								snd_sg_list(0, wqe),
-								1, wqe->sg_count,
-								0);
-				} else
-					rc = -EINVAL;
-			} else if (check_recv_wqe_sanity(rqp, &recv_wqe)) {
+			if (ntrdma_wr_code_is_rdma(wqe->op_code))
+				rc = ntrdma_qp_rdma_write(qp, pos, wqe);
+			else if (check_recv_wqe_sanity(rqp, &recv_wqe)) {
 
 				if (qp->ibqp.qp_type == IB_QPT_GSI)
 					rcv_start_offset =
@@ -1839,10 +1845,12 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				/* This goes from send to post recv */
 				rc = ntrdma_zip_rdma(dev, req, &rdma_len,
 						_recv_wqe->rcv_sg_list,
-						snd_sg_list(0, wqe),
+						const_snd_sg_list(0, wqe),
 						recv_wqe.sg_count,
 						wqe->sg_count,
 						rcv_start_offset);
+				if (rc >= 0)
+					wqe->rdma_sge.length = rdma_len;
 			} else
 				rc = -EINVAL;
 			if (rc) {
@@ -1854,8 +1862,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				abort = true;
 				break;
 			}
-
-			wqe->rdma_sge.length = rdma_len;
 		}
 
 		if (pos == end) {

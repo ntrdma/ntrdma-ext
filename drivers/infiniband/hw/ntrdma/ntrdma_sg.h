@@ -74,7 +74,7 @@ struct ntrdma_wr_rcv_sge {
 	};
 };
 
-static inline bool ntrdma_ib_sge_reserved(struct ib_sge *sge)
+static inline bool ntrdma_ib_sge_reserved(const struct ib_sge *sge)
 {
 	return sge->lkey == NTRDMA_RESERVED_DMA_LEKY;
 }

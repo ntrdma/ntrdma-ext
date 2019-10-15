@@ -105,15 +105,29 @@ static inline size_t ntrdma_wqe_snd_inline_size(u32 inline_cap)
 	return inline_cap;
 }
 
-static inline struct ntrdma_wr_snd_sge *snd_sg_list(int index,
-		const struct ntrdma_send_wqe * const wqe)
+static inline struct ntrdma_wr_snd_sge *
+snd_sg_list(int index, struct ntrdma_send_wqe *wqe)
 {
-	return (struct ntrdma_wr_snd_sge *)(wqe + 1) + index;
+	void *past_wqe = wqe + 1;
+	struct ntrdma_wr_snd_sge *array = past_wqe;
+
+	return &array[index];
+}
+
+static inline const struct ntrdma_wr_snd_sge *
+const_snd_sg_list(int index, const struct ntrdma_send_wqe *wqe)
+{
+	const void *past_wqe = wqe + 1;
+	const struct ntrdma_wr_snd_sge *array = past_wqe;
+
+	return &array[index];
 }
 
 static inline u8 *snd_inline_data(struct ntrdma_send_wqe *wqe)
 {
-	return (u8 *)(wqe + 1);
+	void *past_wqe = wqe + 1;
+
+	return past_wqe;
 }
 
 static inline size_t ntrdma_wqe_rcv_sg_list_size(u32 sg_cap)
