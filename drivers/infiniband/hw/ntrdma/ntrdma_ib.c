@@ -1071,6 +1071,12 @@ static int ntrdma_ib_send_to_inline_wqe(struct ntrdma_dev *dev,
 	return 0;
 }
 
+static inline
+bool ntrdma_send_is_non_signaled_write(const struct ntrdma_send_wqe *wqe)
+{
+	return (wqe->op_code == NTRDMA_WR_RDMA_WRITE) &&
+		!(wqe->flags & IB_SEND_SIGNALED);
+}
 
 static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
 		struct ntrdma_send_wqe *wqe,
@@ -1184,6 +1190,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_send_wqe *wqe;
 	u32 pos, end, base;
+	bool had_immediate_work = false;
 	int rc;
 
 	/* verify the qp state and lock for posting sends */
@@ -1207,9 +1214,11 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			break;
 		}
 
+		wqe = NULL;
 		for (;;) {
 			/* current entry in the ring */
-			wqe = ntrdma_qp_send_wqe(qp, pos);
+			if (!wqe)
+				wqe = ntrdma_qp_send_wqe(qp, pos);
 
 			/* transform work request into the entry */
 			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr, qp);
@@ -1221,6 +1230,16 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 			if (rc)
 				break;
+
+			if (ntrdma_send_is_non_signaled_write(wqe)) {
+				/* SEND IT NOW! */
+				rc = ntrdma_qp_rdma_write(qp, pos, wqe);
+				if (rc < 0)
+					break;
+				had_immediate_work = true;
+				--pos; /* pos and wqe can be reused. */
+			} else
+				wqe = NULL;
 
 			ibwr = ibwr->next;
 			++pos;
@@ -1238,6 +1257,9 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 	/* release lock for state change or posting later sends */
 	ntrdma_qp_send_post_done(qp);
+
+	if (had_immediate_work)
+		ntc_req_submit(dev->ntc, qp->dma_chan);
 
 out:
 	*bad = ibwr;

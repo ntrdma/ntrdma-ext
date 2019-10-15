@@ -389,4 +389,7 @@ static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev);
 void ntrdma_free_rqp(struct ntrdma_rqp *rqp);
 
+int ntrdma_qp_rdma_write(struct ntrdma_qp *qp, u32 pos,
+			struct ntrdma_send_wqe *wqe);
+
 #endif
