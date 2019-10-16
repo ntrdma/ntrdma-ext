@@ -164,22 +164,22 @@ struct bus_type *ntc_bus_ptr(void)
 }
 EXPORT_SYMBOL(ntc_bus_ptr);
 
-struct dma_chan *ntc_req_rr(struct ntc_dev *ntc)
+struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type)
 {
 	int old_index;
 	int i;
 
 	do {
-		old_index = atomic_read(&ntc->dma_chan_rr_index);
+		old_index = atomic_read(&ntc->dma_chan_rr_index[type]);
 		i = old_index + 1;
 
 		if ((i >= ARRAY_SIZE(ntc->dma_chan)) || !ntc->dma_chan[i])
 			i = 0;
 
-	} while (atomic_cmpxchg(&ntc->dma_chan_rr_index, old_index, i) !=
+	} while (atomic_cmpxchg(&ntc->dma_chan_rr_index[type], old_index, i) !=
 		old_index);
 
-	pr_info("ntc_req_rr returns dma_chan #%d", i);
+	pr_info("ntc_req_rr for type %d returns dma_chan #%d", type, i);
 
 	return ntc->dma_chan[i];
 }

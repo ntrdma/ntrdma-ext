@@ -240,7 +240,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (rc)
 		goto err_res;
 
-	qp->dma_chan = ntc_req_rr(dev->ntc);
+	qp->dma_chan = ntc_req_rr(dev->ntc, NTC_QP_DMA_CHAN);
 
 	ntrdma_cq_get(recv_cq);
 	qp->recv_cq = recv_cq;

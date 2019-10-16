@@ -1802,6 +1802,7 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	struct ntc_ntb_dev *dev;
 	struct dma_chan *dma;
 	dma_cap_mask_t mask;
+	enum ntc_dma_chan_type type;
 	int node, rc;
 	int i, j;
 
@@ -1833,7 +1834,8 @@ static int ntc_ntb_probe(struct ntb_client *self,
 		rc = -ENODEV;
 		goto err_dma;
 	}
-	atomic_set(&dev->ntc.dma_chan_rr_index, 0);
+	for (type = 0; type < NTC_NUM_DMA_CHAN_TYPES; type++)
+		atomic_set(&dev->ntc.dma_chan_rr_index[type], 0);
 
 	get_device(&ntb->dev);
 	dev->ntb = ntb;
