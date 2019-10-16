@@ -112,7 +112,7 @@ int ntrdma_dev_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 	int num_cpus;
 
 	dev->ntc = ntc;
-	dev->dma_chan = ntc_req_rr(ntc);
+	dev->dma_chan = ntc_req_rr(ntc, NTC_DEV_DMA_CHAN);
 
 	/* Must be before device is registered (in ntrdma_dev_ib_init) */
 	mutex_init(&dev->debugfs_lock);

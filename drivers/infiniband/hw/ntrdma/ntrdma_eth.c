@@ -122,7 +122,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	dev->eth = eth;
 
 	eth->dev = dev;
-	eth->dma_chan = ntc_req_rr(dev->ntc);
+	eth->dma_chan = ntc_req_rr(dev->ntc, NTC_ETH_DMA_CHAN);
 	eth->enable = false;
 	eth->ready = false;
 	eth->link = false;

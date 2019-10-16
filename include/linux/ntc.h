@@ -75,6 +75,13 @@ static inline void __lame_iowrite64(u64 val, void __iomem *ptr)
 #endif
 #endif
 
+enum ntc_dma_chan_type {
+	NTC_DEV_DMA_CHAN,
+	NTC_ETH_DMA_CHAN,
+	NTC_QP_DMA_CHAN,
+	NTC_NUM_DMA_CHAN_TYPES
+};
+
 /**
  * struct ntc_driver_ops - ntc driver operations
  * @probe:		Notify driver of a new device.
@@ -208,7 +215,7 @@ struct ntc_dev {
 	struct device			dev;
 	struct device			*ntb_dev;
 	struct dma_chan			*dma_chan[NTC_MAX_DMA_CHANS];
-	atomic_t			dma_chan_rr_index;
+	atomic_t		dma_chan_rr_index[NTC_NUM_DMA_CHAN_TYPES];
 	struct device			*dma_engine_dev;
 	const struct ntc_ctx_ops	*ctx_ops;
 	struct ntc_own_mw		own_mws[NTC_MAX_NUM_MWS];
@@ -459,7 +466,7 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 	return peer_mw->base + offset;
 }
 
-struct dma_chan *ntc_req_rr(struct ntc_dev *ntc);
+struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type);
 
 /**
  * ntc_req_submit() - submit a channel request
