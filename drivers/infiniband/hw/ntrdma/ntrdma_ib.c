@@ -1238,7 +1238,8 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			if (rc)
 				break;
 
-			if (ntrdma_send_is_non_signaled_write(wqe)) {
+			if (!(ibwr->send_flags & IB_SEND_INLINE) &&
+				ntrdma_send_is_non_signaled_write(wqe)) {
 				/* SEND IT NOW! */
 				rc = ntrdma_qp_rdma_write(qp, pos, wqe);
 				if (rc < 0)
