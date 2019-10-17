@@ -1196,16 +1196,19 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	struct ntrdma_send_wqe *wqe;
 	u32 pos, end, base;
 	bool had_immediate_work = false;
-	bool had_deffer_work = false;
-	int rc;
+	bool has_deferred_work = false;
+	int rc = 0;
 
-	/* verify the qp state and lock for posting sends */
-	rc = ntrdma_qp_send_post_start(qp);
-	if (rc) {
-		ntrdma_err(dev,
-				"ntrdma_qp_send_post_start failed %d qp %d\n",
-				rc, qp->res.key);
-		goto out;
+	ntrdma_qp_send_post_lock(qp);
+
+	if (!ntrdma_qp_is_send_ready(qp)) {
+		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
+			atomic_read(&qp->state));
+
+		ntrdma_qp_send_post_unlock(qp);
+
+		*bad = ibwr;
+		return -EINVAL;
 	}
 
 	while (ibwr) {
@@ -1245,14 +1248,14 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 				if (rc < 0)
 					break;
 				had_immediate_work = true;
-				--pos; /* pos and wqe can be reused. */
+				/* pos and wqe can be reused. */
 			} else {
-				had_deffer_work = true;
 				wqe = NULL;
+				++pos;
+				has_deferred_work = true;
 			}
 
 			ibwr = ibwr->next;
-			++pos;
 
 			/* quit after the last request or end of range */
 			if (!ibwr || pos == end)
@@ -1265,13 +1268,14 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			break;
 	}
 
-	/* release lock for state change or posting later sends */
-	ntrdma_qp_send_post_done(qp, had_deffer_work);
+	if (has_deferred_work)
+		ntrdma_qp_schedule_send_work(qp);
+
+	ntrdma_qp_send_post_unlock(qp);
 
 	if (had_immediate_work)
 		ntc_req_submit(dev->ntc, qp->dma_chan);
 
-out:
 	*bad = ibwr;
 	return rc;
 }
