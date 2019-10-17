@@ -1262,41 +1262,6 @@ static void ntrdma_qp_recv_cmpl_put(struct ntrdma_qp *qp,
 	qp->recv_cmpl = ntrdma_ring_update(pos, base, qp->recv_cap);
 }
 
-int ntrdma_qp_send_post_start(struct ntrdma_qp *qp)
-{
-	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-
-	/* TODO need to put this lock in rdma_core and not here */
-	if (qp->ibqp.qp_type != IB_QPT_GSI)
-		mutex_lock(&qp->send_post_lock);
-	else
-		spin_lock(&qp->send_post_slock);
-
-	if (!is_state_send_ready(atomic_read(&qp->state))) {
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
-				atomic_read(&qp->state));
-		if (qp->ibqp.qp_type != IB_QPT_GSI)
-			mutex_unlock(&qp->send_post_lock);
-		else
-			spin_unlock(&qp->send_post_slock);
-		ntrdma_dbg(dev, "invalid qp %d state %u\n", qp->res.key,
-				atomic_read(&qp->state));
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-void ntrdma_qp_send_post_done(struct ntrdma_qp *qp, bool is_deffer)
-{
-	if (is_deffer)
-		tasklet_schedule(&qp->send_work);
-	if (qp->ibqp.qp_type != IB_QPT_GSI)
-		mutex_unlock(&qp->send_post_lock);
-	else
-		spin_unlock(&qp->send_post_slock);
-}
-
 void ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
 			     u32 *pos, u32 *end, u32 *base)
 {
@@ -1813,7 +1778,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 #ifdef CONFIG_NTRDMA_RETRY_RECV
 				--pos;
-				tasklet_schedule(&qp->send_work);
+				ntrdma_qp_schedule_send_work(qp);
 #else
 				if (!wqe->op_status)
 					wqe->op_status = NTRDMA_WC_ERR_RECV_MISSING;
@@ -1890,7 +1855,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		}
 
 		if (pos == end) {
-			tasklet_schedule(&qp->send_work);
+			ntrdma_qp_schedule_send_work(qp);
 			break;
 		}
 	}
@@ -1969,9 +1934,8 @@ err_rqp:
 		qp->send_abort = false;
 		qp->send_abort_first = false;
 		/* Make sure no ntrdma_post_send is running */
-		rc = ntrdma_qp_send_post_start(qp);
-		if (!rc)
-			ntrdma_qp_send_post_done(qp, false);
+		spin_lock(&qp->send_post_slock);
+		spin_unlock(&qp->send_post_slock);
 		ntrdma_qp_send_prod_put(qp, end, base);
 		ntrdma_qp_send_prod_done(qp);
 		ntrdma_cq_cue(qp->send_cq);

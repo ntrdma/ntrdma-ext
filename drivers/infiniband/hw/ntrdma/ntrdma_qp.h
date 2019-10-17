@@ -226,8 +226,27 @@ void ntrdma_qp_recv_post_get(struct ntrdma_qp *qp,
 void ntrdma_qp_recv_post_put(struct ntrdma_qp *qp,
 			     u32 pos, u32 base);
 
-int ntrdma_qp_send_post_start(struct ntrdma_qp *qp);
-void ntrdma_qp_send_post_done(struct ntrdma_qp *qp, bool is_deffer);
+static inline void ntrdma_qp_send_post_lock(struct ntrdma_qp *qp)
+{
+	if (qp->ibqp.qp_type != IB_QPT_GSI)
+		mutex_lock(&qp->send_post_lock);
+	else
+		spin_lock_bh(&qp->send_post_slock);
+}
+
+static inline void ntrdma_qp_send_post_unlock(struct ntrdma_qp *qp)
+{
+	if (qp->ibqp.qp_type != IB_QPT_GSI)
+		mutex_unlock(&qp->send_post_lock);
+	else
+		spin_unlock_bh(&qp->send_post_slock);
+}
+
+static inline void ntrdma_qp_schedule_send_work(struct ntrdma_qp *qp)
+{
+	tasklet_schedule(&qp->send_work);
+}
+
 void ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
 			     u32 *pos, u32 *end,
 			     u32 *base);
@@ -365,6 +384,11 @@ static inline bool is_state_out_of_reset(int state)
 {
 	return (is_state_valid(state) && !is_state_error(state) &&
 			(state != IB_QPS_RESET));
+}
+
+static inline bool ntrdma_qp_is_send_ready(struct ntrdma_qp *qp)
+{
+	return is_state_send_ready(atomic_read(&qp->state));
 }
 
 static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
