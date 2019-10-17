@@ -1377,6 +1377,7 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 	if (qp->send_abort) {
 		TRACE("qp %d (already in abort)\n", qp->res.key);
 		send_cons = qp->send_post;
+		qp->send_prod = qp->send_post;
 		ntrdma_qp_set_send_cons(qp, send_cons);
 	}
 	else
@@ -1980,6 +1981,10 @@ err_rqp:
 		qp->send_aborting = true;
 		qp->send_abort = false;
 		qp->send_abort_first = false;
+		/* Make sure no ntrdma_post_send is running */
+		rc = ntrdma_qp_send_post_start(qp);
+		if (!rc)
+			ntrdma_qp_send_post_done(qp, false);
 		ntrdma_qp_send_prod_put(qp, end, base);
 		ntrdma_qp_send_prod_done(qp);
 		ntrdma_cq_cue(qp->send_cq);
