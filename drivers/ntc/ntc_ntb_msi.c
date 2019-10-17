@@ -983,7 +983,7 @@ int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *chan)
 	dma_async_issue_pending(chan);
 
 	if (!((*my_i)++ & 0xff)) {
-		chan->device->device_tx_status(chan, *my_cookie, &txstate);
+		dmaengine_tx_status(chan, *my_cookie, &txstate);
 		*my_cookie = txstate.used;
 	}
 
@@ -1009,9 +1009,10 @@ int ntc_req_memcpy(struct dma_chan *chan,
 		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct dma_async_tx_descriptor *tx;
-	static dma_cookie_t last_cookie;
-	dma_cookie_t my_cookie;
+	static DEFINE_PER_CPU(dma_cookie_t, cookie);
+	dma_cookie_t *my_cookie;
 	int flags;
+	int rc = 0;
 
 	dev_vdbg(chan->device->dev,
 		"request memcpy dst %#llx src %#llx len %#llx\n",
@@ -1022,33 +1023,36 @@ int ntc_req_memcpy(struct dma_chan *chan,
 
 	flags = ntc_ntb_req_prep_flags(fence);
 
-	tx = chan->device->device_prep_dma_memcpy(chan, dst, src,
-			len, flags);  /*spin_lock_bh per chan*/
+	my_cookie = get_cpu_ptr(&cookie);
+
+	tx = dmaengine_prep_dma_memcpy(chan, dst, src, len, flags);
 	if (!tx) {
 
 		pr_warn("DMA ring is full for len %#llx waiting ...", len);
-		dma_sync_wait(chan, last_cookie); /* Busy waiting */
+		dma_sync_wait(chan, *my_cookie); /* Busy waiting */
 		pr_warn("DMA ring full for len %#llx retrying...", len);
 
-		tx = chan->device->device_prep_dma_memcpy(chan, dst, src,
-				len, flags);/*spin_lock_bh per chan*/
+		tx = dmaengine_prep_dma_memcpy(chan, dst, src, len, flags);
 		if (!tx) {
 			pr_err("DMA ring still full (len %#llx) after retrying",
 				len);
-			return -ENOMEM;
+			rc = -ENOMEM;
+			goto out;
 		}
 	}
 
 	tx->callback = cb;
 	tx->callback_param = cb_ctx;
 
-	my_cookie = dmaengine_submit(tx); /*spin_unlock_bh per chan*/
-	if (dma_submit_error(my_cookie))
-		return -EIO;
+	*my_cookie = dmaengine_submit(tx);
 
-	last_cookie = my_cookie;
+	if (dma_submit_error(*my_cookie))
+		rc = -EIO;
 
-	return 0;
+ out:
+	put_cpu_ptr(&cookie);
+
+	return rc;
 }
 EXPORT_SYMBOL(ntc_req_memcpy);
 
