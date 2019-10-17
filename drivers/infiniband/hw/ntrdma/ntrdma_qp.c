@@ -1300,9 +1300,10 @@ int ntrdma_qp_send_post_start(struct ntrdma_qp *qp)
 	return 0;
 }
 
-void ntrdma_qp_send_post_done(struct ntrdma_qp *qp)
+void ntrdma_qp_send_post_done(struct ntrdma_qp *qp, bool is_deffer)
 {
-	tasklet_schedule(&qp->send_work);
+	if (is_deffer)
+		tasklet_schedule(&qp->send_work);
 	if (qp->ibqp.qp_type != IB_QPT_GSI)
 		mutex_unlock(&qp->send_post_lock);
 	else

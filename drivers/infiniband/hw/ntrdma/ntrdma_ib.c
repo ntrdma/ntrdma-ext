@@ -1196,6 +1196,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	struct ntrdma_send_wqe *wqe;
 	u32 pos, end, base;
 	bool had_immediate_work = false;
+	bool had_deffer_work = false;
 	int rc;
 
 	/* verify the qp state and lock for posting sends */
@@ -1244,8 +1245,10 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 					break;
 				had_immediate_work = true;
 				--pos; /* pos and wqe can be reused. */
-			} else
+			} else {
+				had_deffer_work = true;
 				wqe = NULL;
+			}
 
 			ibwr = ibwr->next;
 			++pos;
@@ -1262,7 +1265,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	}
 
 	/* release lock for state change or posting later sends */
-	ntrdma_qp_send_post_done(qp);
+	ntrdma_qp_send_post_done(qp, had_deffer_work);
 
 	if (had_immediate_work)
 		ntc_req_submit(dev->ntc, qp->dma_chan);

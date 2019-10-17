@@ -216,7 +216,7 @@ void ntrdma_qp_recv_post_put(struct ntrdma_qp *qp,
 			     u32 pos, u32 base);
 
 int ntrdma_qp_send_post_start(struct ntrdma_qp *qp);
-void ntrdma_qp_send_post_done(struct ntrdma_qp *qp);
+void ntrdma_qp_send_post_done(struct ntrdma_qp *qp, bool is_deffer);
 void ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
 			     u32 *pos, u32 *end,
 			     u32 *base);
