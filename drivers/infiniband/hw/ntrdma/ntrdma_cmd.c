@@ -484,7 +484,6 @@ static inline int ntrdma_cmd_send_vbell_add(struct ntrdma_dev *dev)
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 {
-	struct dma_chan *req;
 	struct ntrdma_cmd_cb *cb;
 	u32 start, pos, end, base;
 	size_t off, len;
@@ -493,8 +492,6 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 	union ntrdma_cmd *cmd_send_buf;
 	const union ntrdma_rsp *cmd_send_rsp_buf;
 	u32 cmd_id;
-
-	req = dev->dma_chan;
 
 	mutex_lock(&dev->cmd_send_lock);
 	{
@@ -595,7 +592,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			off = start * sizeof(union ntrdma_cmd);
 			len = (pos - start) * sizeof(union ntrdma_cmd);
-			rc = ntc_request_memcpy_fenced(req,
+			rc = ntc_request_memcpy_fenced(&dev->dma_chan,
 						&dev->peer_cmd_recv_buf, off,
 						&dev->cmd_send_buf, off,
 						len);
@@ -605,7 +602,8 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 					len, -rc);
 
 			/* update the producer index on the peer */
-			rc = ntc_request_imm32(req, &dev->peer_cmd_recv_buf,
+			rc = ntc_request_imm32(&dev->dma_chan,
+					&dev->peer_cmd_recv_buf,
 					dev->peer_recv_prod_shift,
 					dev->cmd_send_prod, true, NULL, NULL);
 			if (rc < 0)
@@ -614,11 +612,12 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 					rc);
 
 			/* update the vbell and signal the peer */
-			ntrdma_dev_vbell_peer(dev, req,
+			ntrdma_dev_vbell_peer(dev, &dev->dma_chan,
 					dev->peer_cmd_recv_vbell_idx);
 
-			ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
-			ntc_req_submit(dev->ntc, req);
+			ntc_req_signal(dev->ntc, &dev->dma_chan, NULL, NULL,
+				NTB_DEFAULT_VEC(dev->ntc));
+			ntc_req_submit(dev->ntc, &dev->dma_chan);
 
 			TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
 				(pos - start), start,
@@ -1196,7 +1195,6 @@ static inline int ntrdma_cmd_recv_vbell_add(struct ntrdma_dev *dev)
 
 static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 {
-	struct dma_chan *req;
 	u32 start, pos, end, base;
 	size_t off, len;
 	int rc;
@@ -1204,8 +1202,6 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 	union ntrdma_rsp *cmd_recv_rsp_buf;
 
 	ntrdma_vdbg(dev, "called\n");
-
-	req = dev->dma_chan;
 
 	mutex_lock(&dev->cmd_recv_lock);
 	{
@@ -1251,7 +1247,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 			off = start * sizeof(union ntrdma_rsp);
 			len = (pos - start) * sizeof(union ntrdma_rsp);
-			rc = ntc_request_memcpy_fenced(req,
+			rc = ntc_request_memcpy_fenced(&dev->dma_chan,
 						&dev->peer_cmd_send_rsp_buf,
 						off,
 						&dev->cmd_recv_rsp_buf, off,
@@ -1262,7 +1258,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 					len, -rc);
 
 			/* update the producer index on the peer */
-			rc = ntc_request_imm32(req,
+			rc = ntc_request_imm32(&dev->dma_chan,
 					&dev->peer_cmd_send_rsp_buf,
 					dev->peer_send_cons_shift,
 					dev->cmd_recv_cons, true, NULL, NULL);
@@ -1273,11 +1269,12 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 			/* update the vbell and signal the peer */
 
-			ntrdma_dev_vbell_peer(dev, req,
+			ntrdma_dev_vbell_peer(dev, &dev->dma_chan,
 					      dev->peer_cmd_send_vbell_idx);
-			ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
+			ntc_req_signal(dev->ntc, &dev->dma_chan, NULL, NULL,
+				NTB_DEFAULT_VEC(dev->ntc));
 
-			ntc_req_submit(dev->ntc, req);
+			ntc_req_submit(dev->ntc, &dev->dma_chan);
 			schedule_work(&dev->cmd_recv_work);
 		} else {
 			if (ntrdma_cmd_recv_vbell_add(dev) == -EAGAIN)

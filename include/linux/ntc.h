@@ -194,6 +194,14 @@ struct ntc_remote_buf {
 	dma_addr_t dma_addr;
 };
 
+struct ntc_dma_chan {
+	struct ntc_dev *ntc;
+	struct dma_chan *chan;
+	dma_cookie_t last_cookie;
+	dma_cookie_t submit_cookie;
+	u32 submit_counter;
+};
+
 /**
  * struct ntc_driver - driver interested in ntc devices
  * @drv:		Linux driver object.
@@ -466,7 +474,13 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 	return peer_mw->base + offset;
 }
 
-struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type);
+void ntc_init_dma_chan(struct ntc_dma_chan *dma_chan,
+		struct ntc_dev *ntc, enum ntc_dma_chan_type type);
+
+static inline struct device *ntc_dma_chan_dev(struct ntc_dma_chan *dma_chan)
+{
+	return dma_chan->chan->device->dev;
+}
 
 /**
  * ntc_req_submit() - submit a channel request
@@ -486,7 +500,7 @@ struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type);
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *chan);
+int ntc_req_submit(struct ntc_dev *ntc, struct ntc_dma_chan *chan);
 
 /**
  * ntc_req_memcpy() - append a buffer to buffer memory copy operation
@@ -520,7 +534,7 @@ int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *chan);
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_memcpy(struct dma_chan *chan,
+int ntc_req_memcpy(struct ntc_dma_chan *chan,
 		dma_addr_t dst, dma_addr_t src, u64 len,
 		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx);
 
@@ -537,7 +551,7 @@ static inline bool ntc_segment_valid(u64 buf_size, u64 buf_offset, u64 len)
 }
 
 static inline
-int _ntc_request_memcpy(struct dma_chan *chan,
+int _ntc_request_memcpy(struct ntc_dma_chan *chan,
 			dma_addr_t dst_start, u64 dst_size, u64 dst_offset,
 			dma_addr_t src_start, u64 src_size, u64 src_offset,
 			u64 len, bool fence,
@@ -549,13 +563,13 @@ int _ntc_request_memcpy(struct dma_chan *chan,
 }
 
 static inline
-void ntc_prepare_to_copy(struct dma_chan *chan, dma_addr_t dma_addr, u64 len)
+void ntc_prepare_to_copy(struct ntc_dma_chan *chan, dma_addr_t dma_addr, u64 len)
 {
-	dma_sync_single_for_device(chan->device->dev, dma_addr, len,
+	dma_sync_single_for_device(ntc_dma_chan_dev(chan), dma_addr, len,
 				DMA_TO_DEVICE);
 }
 
-static inline int ntc_request_memcpy_with_cb(struct dma_chan *chan,
+static inline int ntc_request_memcpy_with_cb(struct ntc_dma_chan *chan,
 					const struct ntc_remote_buf *dst,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
@@ -580,7 +594,7 @@ static inline int ntc_request_memcpy_with_cb(struct dma_chan *chan,
 				len, false, cb, cb_ctx);
 }
 
-static inline int ntc_request_memcpy(struct dma_chan *chan,
+static inline int ntc_request_memcpy(struct ntc_dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				const struct ntc_local_buf *src,
@@ -601,7 +615,7 @@ static inline int ntc_request_memcpy(struct dma_chan *chan,
 				len, fence, NULL, NULL);
 }
 
-static inline int ntc_request_memcpy_fenced(struct dma_chan *chan,
+static inline int ntc_request_memcpy_fenced(struct ntc_dma_chan *chan,
 					const struct ntc_remote_buf *dst,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
@@ -612,7 +626,7 @@ static inline int ntc_request_memcpy_fenced(struct dma_chan *chan,
 				true);
 }
 
-static inline int ntc_request_memcpy_unfenced(struct dma_chan *chan,
+static inline int ntc_request_memcpy_unfenced(struct ntc_dma_chan *chan,
 					const struct ntc_remote_buf *dst,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
@@ -624,7 +638,7 @@ static inline int ntc_request_memcpy_unfenced(struct dma_chan *chan,
 }
 
 static inline
-int ntc_mr_request_memcpy_unfenced(struct dma_chan *chan,
+int ntc_mr_request_memcpy_unfenced(struct ntc_dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				const struct ntc_mr_buf *src,
@@ -645,7 +659,7 @@ int ntc_mr_request_memcpy_unfenced(struct dma_chan *chan,
 				len, false, NULL, NULL);
 }
 
-int ntc_req_imm(struct dma_chan *chan,
+int ntc_req_imm(struct ntc_dma_chan *chan,
 		u64 dst, void *ptr, size_t len, bool fence,
 		void (*cb)(void *cb_ctx), void *cb_ctx);
 
@@ -671,7 +685,7 @@ int ntc_req_imm(struct dma_chan *chan,
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_imm32(struct dma_chan *chan,
+static inline int ntc_req_imm32(struct ntc_dma_chan *chan,
 				dma_addr_t dst, u32 val,
 				bool fence, void (*cb)(void *cb_ctx),
 				void *cb_ctx)
@@ -680,7 +694,7 @@ static inline int ntc_req_imm32(struct dma_chan *chan,
 			fence, cb, cb_ctx);
 }
 
-static inline int _ntc_request_imm32(struct dma_chan *chan,
+static inline int _ntc_request_imm32(struct ntc_dma_chan *chan,
 				dma_addr_t dst_start,
 				u64 dst_size, u64 dst_offset,
 				u32 val, bool fence,
@@ -693,7 +707,7 @@ static inline int _ntc_request_imm32(struct dma_chan *chan,
 			fence, cb, cb_ctx);
 }
 
-static inline int ntc_request_imm32(struct dma_chan *chan,
+static inline int ntc_request_imm32(struct ntc_dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				u32 val, bool fence,
@@ -726,7 +740,7 @@ static inline int ntc_request_imm32(struct dma_chan *chan,
  *
  * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_imm64(struct dma_chan *chan,
+static inline int ntc_req_imm64(struct ntc_dma_chan *chan,
 				dma_addr_t dst, u64 val,
 				bool fence, void (*cb)(void *cb_ctx),
 				void *cb_ctx)
@@ -735,7 +749,7 @@ static inline int ntc_req_imm64(struct dma_chan *chan,
 			fence, cb, cb_ctx);
 }
 
-static inline int _ntc_request_imm64(struct dma_chan *chan,
+static inline int _ntc_request_imm64(struct ntc_dma_chan *chan,
 				dma_addr_t dst_start,
 				u64 dst_size, u64 dst_offset,
 				u64 val, bool fence,
@@ -748,7 +762,7 @@ static inline int _ntc_request_imm64(struct dma_chan *chan,
 			fence, cb, cb_ctx);
 }
 
-static inline int ntc_request_imm64(struct dma_chan *chan,
+static inline int ntc_request_imm64(struct ntc_dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				u64 val, bool fence,
@@ -785,7 +799,7 @@ static inline int ntc_request_imm64(struct dma_chan *chan,
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_signal(struct ntc_dev *ntc, struct dma_chan *chan,
+int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
 		void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
 
 static inline int ntc_phys_local_buf_map(struct ntc_local_buf *buf,

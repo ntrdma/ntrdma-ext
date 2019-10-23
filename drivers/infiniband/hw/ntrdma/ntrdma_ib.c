@@ -1274,7 +1274,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	ntrdma_qp_send_post_unlock(qp);
 
 	if (had_immediate_work)
-		ntc_req_submit(dev->ntc, qp->dma_chan);
+		ntc_req_submit(dev->ntc, &qp->dma_chan);
 
 	*bad = ibwr;
 	return rc;

@@ -309,7 +309,7 @@ int ntrdma_dev_vbell_add_clear(struct ntrdma_dev *dev,
 }
 
 void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
-			struct dma_chan *req, u32 idx)
+			struct ntc_dma_chan *chan, u32 idx)
 {
 	int rc;
 
@@ -319,7 +319,7 @@ void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
 	if (!dev->vbell_enable)
 		goto exit_unlock;
 
-	rc = ntc_request_imm32(req,
+	rc = ntc_request_imm32(chan,
 			&dev->peer_vbell_buf, idx * sizeof(u32),
 			++dev->vbell_peer_seq[idx],
 			true, NULL, NULL);

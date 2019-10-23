@@ -92,7 +92,7 @@ struct ntrdma_dev {
 	struct ntc_dev			*ntc;
 	struct work_struct		ntc_link_reset_work;
 
-	struct dma_chan			*dma_chan;
+	struct ntc_dma_chan		dma_chan;
 
 	/* debugfs */
 	struct dentry			*debug;

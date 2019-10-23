@@ -966,29 +966,22 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
 }
 EXPORT_SYMBOL(_ntc_link_reset);
 
-int ntc_req_submit(struct ntc_dev *ntc, struct dma_chan *chan)
+int ntc_req_submit(struct ntc_dev *ntc, struct ntc_dma_chan *chan)
 {
-	static DEFINE_PER_CPU(dma_cookie_t, cookie);
-	static DEFINE_PER_CPU(int, i);
-	dma_cookie_t *my_cookie;
-	int *my_i;
-
 	struct dma_tx_state txstate;
 
 	dev_vdbg(&ntc->dev, "submit request\n");
 
-	my_cookie = get_cpu_ptr(&cookie);
-	my_i = get_cpu_ptr(&i);
+	dma_async_issue_pending(chan->chan);
 
-	dma_async_issue_pending(chan);
-
-	if (!((*my_i)++ & 0xff)) {
-		dmaengine_tx_status(chan, *my_cookie, &txstate);
-		*my_cookie = txstate.used;
+	if (++chan->submit_counter >= 0xff)
+	{
+		chan->submit_counter = 0;
+		txstate.used = 0;
+		dmaengine_tx_status(chan->chan, chan->submit_cookie,
+				&txstate);
+		chan->submit_cookie = txstate.used;
 	}
-
-	put_cpu_ptr(&i);
-	put_cpu_ptr(&cookie);
 
 	return 0;
 }
@@ -1004,17 +997,14 @@ static inline int ntc_ntb_req_prep_flags(bool fence)
 	return flags;
 }
 
-int ntc_req_memcpy(struct dma_chan *chan,
+int ntc_req_memcpy(struct ntc_dma_chan *chan,
 		dma_addr_t dst, dma_addr_t src, u64 len,
 		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct dma_async_tx_descriptor *tx;
-	static DEFINE_PER_CPU(dma_cookie_t, cookie);
-	dma_cookie_t *my_cookie;
 	int flags;
-	int rc = 0;
 
-	dev_vdbg(chan->device->dev,
+	dev_vdbg(ntc_dma_chan_dev(chan),
 		"request memcpy dst %#llx src %#llx len %#llx\n",
 		 dst, src, len);
 
@@ -1023,36 +1013,29 @@ int ntc_req_memcpy(struct dma_chan *chan,
 
 	flags = ntc_ntb_req_prep_flags(fence);
 
-	my_cookie = get_cpu_ptr(&cookie);
-
-	tx = dmaengine_prep_dma_memcpy(chan, dst, src, len, flags);
+	tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len, flags);
 	if (!tx) {
 
 		pr_warn("DMA ring is full for len %#llx waiting ...", len);
-		dma_sync_wait(chan, *my_cookie); /* Busy waiting */
+		dma_sync_wait(chan->chan, chan->last_cookie); /* Busy waiting */
 		pr_warn("DMA ring full for len %#llx retrying...", len);
 
-		tx = dmaengine_prep_dma_memcpy(chan, dst, src, len, flags);
+		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
+					flags);
 		if (!tx) {
 			pr_err("DMA ring still full (len %#llx) after retrying",
 				len);
-			rc = -ENOMEM;
-			goto out;
+			return -ENOMEM;
 		}
 	}
 
 	tx->callback = cb;
 	tx->callback_param = cb_ctx;
 
-	*my_cookie = dmaengine_submit(tx);
+	if (dma_submit_error(chan->last_cookie = dmaengine_submit(tx)))
+		return -EIO;
 
-	if (dma_submit_error(*my_cookie))
-		rc = -EIO;
-
- out:
-	put_cpu_ptr(&cookie);
-
-	return rc;
+	return 0;
 }
 EXPORT_SYMBOL(ntc_req_memcpy);
 
@@ -1074,39 +1057,19 @@ static void ntc_req_imm_cb(void *ctx)
 	kmem_cache_free(imm_slab, imm);
 }
 
-int ntc_req_imm(struct dma_chan *chan,
+int ntc_req_imm(struct ntc_dma_chan *chan,
 		u64 dst, void *ptr, size_t len, bool fence,
 		void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct ntc_ntb_imm *imm;
 	int rc;
 
-	struct dma_async_tx_descriptor *tx;
-	dma_cookie_t cookie;
-	int flags;
-
-	if (chan->device->device_prep_dma_imm_data && len == 8) {
-		flags = ntc_ntb_req_prep_flags(fence);
-
-		tx = chan->device->device_prep_dma_imm_data(chan, dst,
-							    *(u64 *)ptr,
-							    flags);
-		if (!tx)
-			return -ENOMEM;
-
-		tx->callback = cb;
-		tx->callback_param = cb_ctx;
-
-		cookie = dmaengine_submit(tx);
-		if (dma_submit_error(cookie))
-			return -EIO;
-
-		return 0;
-	}
+	if (unlikely(!len || len > sizeof(imm->data_buf)))
+		return -EINVAL;
 
 	imm = kmem_cache_alloc_node(imm_slab, GFP_ATOMIC,
-				dev_to_node(chan->device->dev));
-	if (!imm) {
+				dev_to_node(ntc_dma_chan_dev(chan)));
+	if (unlikely(!imm)) {
 		rc = -ENOMEM;
 		goto err_imm;
 	}
@@ -1114,13 +1077,13 @@ int ntc_req_imm(struct dma_chan *chan,
 	memcpy(imm->data_buf, ptr, len);
 	imm->data_len = len;
 
-	imm->dma_dev = chan->device->dev;
+	imm->dma_dev = ntc_dma_chan_dev(chan);
 	imm->dma_addr = dma_map_single(imm->dma_dev,
 				       imm->data_buf,
 				       imm->data_len,
 				       DMA_TO_DEVICE);
 
-	if (dma_mapping_error(imm->dma_dev, imm->dma_addr)) {
+	if (unlikely(dma_mapping_error(imm->dma_dev, imm->dma_addr))) {
 		rc = -EIO;
 		goto err_dma;
 	}
@@ -1135,7 +1098,7 @@ int ntc_req_imm(struct dma_chan *chan,
 
 	rc = ntc_req_memcpy(chan, dst, imm->dma_addr, imm->data_len,
 			fence, ntc_req_imm_cb, imm);
-	if (rc)
+	if (unlikely(rc < 0))
 		goto err_memcpy;
 
 	return 0;
@@ -1152,7 +1115,7 @@ err_imm:
 }
 EXPORT_SYMBOL(ntc_req_imm);
 
-int ntc_req_signal(struct ntc_dev *ntc, struct dma_chan *chan,
+int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
 		void (*cb)(void *cb_ctx), void *cb_ctx, int vec)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
