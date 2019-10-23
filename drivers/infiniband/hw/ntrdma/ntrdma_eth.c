@@ -122,7 +122,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	dev->eth = eth;
 
 	eth->dev = dev;
-	eth->dma_chan = ntc_req_rr(dev->ntc, NTC_ETH_DMA_CHAN);
+	ntc_init_dma_chan(&eth->dma_chan, dev->ntc, NTC_ETH_DMA_CHAN);
 	eth->enable = false;
 	eth->ready = false;
 	eth->link = false;
@@ -456,7 +456,6 @@ void ntrdma_dev_eth_quiesce(struct ntrdma_dev *dev)
 static void ntrdma_eth_rx_fill(struct ntrdma_eth *eth)
 {
 	struct ntrdma_dev *dev = eth->dev;
-	struct dma_chan *req;
 	size_t off, len;
 	u32 start, pos, end, base;
 	struct ntc_remote_buf_desc *rx_wqe_buf;
@@ -468,8 +467,6 @@ static void ntrdma_eth_rx_fill(struct ntrdma_eth *eth)
 			spin_unlock_bh(&eth->rx_prod_lock);
 			return;
 		}
-
-		req = eth->dma_chan;
 
 		ntrdma_ring_produce(eth->rx_prod,
 				    eth->rx_cmpl,
@@ -507,7 +504,7 @@ more:
 
 		off = start * sizeof(*rx_wqe_buf);
 		len = (pos - start) * sizeof(*rx_wqe_buf);
-		rc = ntc_request_memcpy_fenced(req,
+		rc = ntc_request_memcpy_fenced(&eth->dma_chan,
 					&eth->peer_tx_wqe_buf, off,
 					&eth->rx_wqe_buf, off,
 					len);
@@ -523,16 +520,17 @@ more:
 		if (start != end)
 			goto more;
 
-		rc = ntc_request_imm32(req,
+		rc = ntc_request_imm32(&eth->dma_chan,
 				&eth->peer_tx_prod_buf, 0,
 				eth->rx_prod, true, NULL, NULL);
 		if (rc < 0)
 			ntrdma_err(dev,
 				"ntc_request_imm32 failed. rc=%d\n", rc);
 
-		ntrdma_dev_vbell_peer(dev, req, eth->peer_vbell_idx);
-		ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
-		ntc_req_submit(dev->ntc, req);
+		ntrdma_dev_vbell_peer(dev, &eth->dma_chan, eth->peer_vbell_idx);
+		ntc_req_signal(dev->ntc, &eth->dma_chan, NULL, NULL,
+			NTB_DEFAULT_VEC(dev->ntc));
+		ntc_req_submit(dev->ntc, &eth->dma_chan);
 	}
 	spin_unlock_bh(&eth->rx_prod_lock);
 }
@@ -664,7 +662,6 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 {
 	struct ntrdma_eth *eth = ntrdma_net_eth(net);
 	struct ntrdma_dev *dev = eth->dev;
-	struct dma_chan *req;
 	size_t off, len, tx_off;
 	u32 pos, end, base;
 	struct ntrdma_skb_cb *skb_ctx;
@@ -706,8 +703,6 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 	tx_off = off & (SMP_CACHE_BYTES - 1);
 
-	req = eth->dma_chan;
-
 	if (len + tx_off > tx_wqe.size) {
 		eth->napi.dev->stats.tx_errors++;
 		eth->napi.dev->stats.tx_dropped++;
@@ -744,7 +739,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 		if (rc < 0)
 			goto err_buf_map;
 
-		rc = ntc_request_memcpy_with_cb(req,
+		rc = ntc_request_memcpy_with_cb(&eth->dma_chan,
 						&skb_ctx->dst, 0,
 						&skb_ctx->src, off - tx_off,
 						len + tx_off,
@@ -777,7 +772,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 			off = pos * sizeof(struct ntc_remote_buf_desc);
 			len = (end - pos) * sizeof(struct ntc_remote_buf_desc);
-			rc = ntc_request_memcpy_fenced(req,
+			rc = ntc_request_memcpy_fenced(&eth->dma_chan,
 						&eth->peer_rx_cqe_buf, off,
 						&eth->tx_cqe_buf, off,
 						len);
@@ -790,16 +785,17 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 							  eth->tx_cap);
 		}
 
-		rc = ntc_request_imm32(req,
+		rc = ntc_request_imm32(&eth->dma_chan,
 				&eth->peer_rx_cons_buf, 0,
 				eth->tx_cmpl, true, NULL, NULL);
 		if (rc < 0)
 			ntrdma_err(dev,
 				"ntc_request_imm32 failed. rc=%d\n", rc);
 
-		ntrdma_dev_vbell_peer(dev, req, eth->peer_vbell_idx);
-		ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
-		ntc_req_submit(dev->ntc, req);
+		ntrdma_dev_vbell_peer(dev, &eth->dma_chan, eth->peer_vbell_idx);
+		ntc_req_signal(dev->ntc, &eth->dma_chan, NULL, NULL,
+			NTB_DEFAULT_VEC(dev->ntc));
+		ntc_req_submit(dev->ntc, &eth->dma_chan);
 	}
 	goto done;
 

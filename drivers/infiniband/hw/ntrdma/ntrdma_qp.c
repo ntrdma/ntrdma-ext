@@ -240,7 +240,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (rc)
 		goto err_res;
 
-	qp->dma_chan = ntc_req_rr(dev->ntc, NTC_QP_DMA_CHAN);
+	ntc_init_dma_chan(&qp->dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
 
 	ntrdma_cq_get(recv_cq);
 	qp->recv_cq = recv_cq;
@@ -1579,7 +1579,6 @@ static void ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	struct dma_chan *req;
 	u32 start, end, base;
 	size_t off, len;
 	int rc;
@@ -1598,17 +1597,13 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	if (start == end)
 		goto out;
 
-	req = qp->dma_chan;
-	if (!req)
-		goto out;
-
 	for (;;) {
 		ntrdma_qp_recv_prod_put(qp, end, base);
 
 		/* send the portion of the ring */
 		off = start * qp->recv_wqe_size;
 		len = (end - start) * qp->recv_wqe_size;
-		rc = ntc_request_memcpy_fenced(req,
+		rc = ntc_request_memcpy_fenced(&qp->dma_chan,
 					&qp->peer_recv_wqe_buf, off,
 					&qp->recv_wqe_buf, off,
 					len);
@@ -1629,14 +1624,14 @@ static void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	}
 
 	/* send the prod idx */
-	rc = ntc_request_imm32(req,
+	rc = ntc_request_imm32(&qp->dma_chan,
 			&qp->peer_recv_wqe_buf, qp->peer_recv_prod_shift,
 			qp->recv_prod, true, NULL, NULL);
 	if (rc < 0)
 		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d\n", rc);
 
 	/* submit the request */
-	ntc_req_submit(dev->ntc, req);
+	ntc_req_submit(dev->ntc, &qp->dma_chan);
 
 out:
 	/* release lock for state change or producing later recvs */
@@ -1655,7 +1650,6 @@ int ntrdma_qp_rdma_write(struct ntrdma_qp *qp, u32 pos,
 			struct ntrdma_send_wqe *wqe)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	struct dma_chan *req = qp->dma_chan;
 	struct ntrdma_wr_rcv_sge rdma_sge;
 	struct ntrdma_wr_snd_sge rdma_src_sge;
 	u32 rdma_len;
@@ -1680,10 +1674,10 @@ int ntrdma_qp_rdma_write(struct ntrdma_qp *qp, u32 pos,
 
 		rdma_src_sge.key = NTRDMA_RESERVED_DMA_LEKY;
 
-		rc = ntrdma_zip_rdma(dev, req, &rdma_len, &rdma_sge,
+		rc = ntrdma_zip_rdma(dev, &qp->dma_chan, &rdma_len, &rdma_sge,
 				&rdma_src_sge, 1, 1, 0);
 	} else
-		rc = ntrdma_zip_rdma(dev, req, &rdma_len, &rdma_sge,
+		rc = ntrdma_zip_rdma(dev, &qp->dma_chan, &rdma_len, &rdma_sge,
 				const_snd_sg_list(0, wqe),
 				1, wqe->sg_count, 0);
 
@@ -1697,7 +1691,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_rqp *rqp;
-	struct dma_chan *req;
 	struct ntrdma_send_wqe *wqe;
 	const struct ntrdma_recv_wqe *_recv_wqe = NULL;
 	struct ntrdma_recv_wqe recv_wqe;
@@ -1758,8 +1751,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* get the next consuming range in the recv ring */
 	ntrdma_rqp_recv_cons_get(rqp, &recv_pos, &recv_end, &recv_base);
-
-	req = qp->dma_chan;
 
 	for (pos = start;;) {
 		wqe = ntrdma_qp_send_wqe(qp, pos++);
@@ -1833,7 +1824,8 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					rcv_start_offset = 0;
 
 				/* This goes from send to post recv */
-				rc = ntrdma_zip_rdma(dev, req, &rdma_len,
+				rc = ntrdma_zip_rdma(dev, &qp->dma_chan,
+						&rdma_len,
 						_recv_wqe->rcv_sg_list,
 						const_snd_sg_list(0, wqe),
 						recv_wqe.sg_count,
@@ -1875,7 +1867,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* send the portion of the ring */
 	off = start * qp->send_wqe_size;
 	len = (pos - start) * qp->send_wqe_size;
-	rc = ntc_request_memcpy_fenced(req,
+	rc = ntc_request_memcpy_fenced(&qp->dma_chan,
 				&qp->peer_send_wqe_buf, off,
 				&qp->send_wqe_buf, off, len);
 	if (rc < 0) {
@@ -1889,7 +1881,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	this_cpu_add(dev_cnt.qp_send_work_bytes, len);
 
 	/* send the prod idx */
-	rc = ntc_request_imm32(req,
+	rc = ntc_request_imm32(&qp->dma_chan,
 			&qp->peer_send_wqe_buf, qp->peer_send_prod_shift,
 			qp->send_prod, true, NULL, NULL);
 	if (rc < 0) {
@@ -1900,11 +1892,12 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	}
 	/* update the vbell and signal the peer */
 	/* TODO: return value is ignored! */
-	ntrdma_dev_vbell_peer(dev, req,
+	ntrdma_dev_vbell_peer(dev, &qp->dma_chan,
 			qp->peer_send_vbell_idx);
 
 	/* TODO: return value is ignored! */
-	ntc_req_signal(dev->ntc, req, NULL, NULL, NTB_DEFAULT_VEC(dev->ntc));
+	ntc_req_signal(dev->ntc, &qp->dma_chan, NULL, NULL,
+		NTB_DEFAULT_VEC(dev->ntc));
 
 	TRACE_DATA(
 		"start %u pos %u QP %d RQP %d prod %u peer vbell idx %d (recv_pos %d, recv_base %d)\n",
@@ -1913,7 +1906,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* submit the request */
 	/* TODO: return value is ignored! */
-	ntc_req_submit(dev->ntc, req);
+	ntc_req_submit(dev->ntc, &qp->dma_chan);
 
 	/* release lock for state change or producing later sends */
 done:
@@ -1963,7 +1956,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 {
 	struct ntrdma_dev *dev = ntrdma_rqp_dev(rqp);
 	struct ntrdma_qp *qp;
-	struct dma_chan *req;
 	struct ntrdma_cqe *cqe, *recv_cqe = NULL;
 	const struct ntrdma_send_wqe *_wqe;
 	struct ntrdma_send_wqe wqe;
@@ -2025,8 +2017,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	/* get the next consuming range in the recv ring */
 	ntrdma_qp_recv_cons_get(qp, &recv_pos, &recv_end, &recv_base);
-
-	req = qp->dma_chan;
 
 	for (pos = start;;) {
 		cqe = ntrdma_rqp_send_cqe(rqp, pos);
@@ -2174,7 +2164,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	/* send the portion of the ring */
 	off = start * sizeof(struct ntrdma_cqe);
 	len = (pos - start) * sizeof(struct ntrdma_cqe);
-	rc = ntc_request_memcpy_fenced(req,
+	rc = ntc_request_memcpy_fenced(&qp->dma_chan,
 				&rqp->peer_send_cqe_buf, off,
 				&rqp->send_cqe_buf, off, len);
 	if (rc < 0) {
@@ -2187,7 +2177,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	this_cpu_add(dev_cnt.tx_cqes, pos - start);
 	/* send the cons idx */
-	rc = ntc_request_imm32(req,
+	rc = ntc_request_imm32(&qp->dma_chan,
 			&rqp->peer_send_cqe_buf, rqp->peer_send_cons_shift,
 			rqp->send_cons, true, NULL, NULL);
 	if (rc < 0) {
@@ -2197,9 +2187,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	if (do_signal) {
 		/* update the vbell and signal the peer */
-		ntrdma_dev_vbell_peer(dev, req,
+		ntrdma_dev_vbell_peer(dev, &qp->dma_chan,
 				rqp->peer_cmpl_vbell_idx);
-		ntc_req_signal(dev->ntc, req, NULL, NULL,
+		ntc_req_signal(dev->ntc, &qp->dma_chan, NULL, NULL,
 				NTB_DEFAULT_VEC(dev->ntc));
 
 		TRACE_DATA(
@@ -2212,7 +2202,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	}
 	/* submit the request */
 	/* TODO: return cpde? */
-	ntc_req_submit(dev->ntc, req);
+	ntc_req_submit(dev->ntc, &qp->dma_chan);
 
 	/* release lock for state change or consuming later sends */
 	ntrdma_rqp_send_cons_done(rqp);

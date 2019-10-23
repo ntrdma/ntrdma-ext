@@ -164,6 +164,7 @@ struct bus_type *ntc_bus_ptr(void)
 }
 EXPORT_SYMBOL(ntc_bus_ptr);
 
+static
 struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type)
 {
 	int old_index;
@@ -183,7 +184,17 @@ struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type)
 
 	return ntc->dma_chan[i];
 }
-EXPORT_SYMBOL(ntc_req_rr);
+
+void ntc_init_dma_chan(struct ntc_dma_chan *dma_chan,
+		struct ntc_dev *ntc, enum ntc_dma_chan_type type)
+{
+	dma_chan->ntc = ntc;
+	dma_chan->chan = ntc_req_rr(ntc, type);
+	dma_chan->last_cookie = 0;
+	dma_chan->submit_cookie = 0;
+	dma_chan->submit_counter = 0;
+}
+EXPORT_SYMBOL(ntc_init_dma_chan);
 
 static int __init ntc_driver_init(void)
 {
