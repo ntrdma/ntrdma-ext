@@ -580,12 +580,12 @@ static inline int ntc_request_memcpy_with_cb(struct dma_chan *chan,
 				len, false, cb, cb_ctx);
 }
 
-static inline int ntc_request_memcpy_fenced(struct dma_chan *chan,
-					const struct ntc_remote_buf *dst,
-					u64 dst_offset,
-					const struct ntc_local_buf *src,
-					u64 src_offset,
-					u64 len)
+static inline int ntc_request_memcpy(struct dma_chan *chan,
+				const struct ntc_remote_buf *dst,
+				u64 dst_offset,
+				const struct ntc_local_buf *src,
+				u64 src_offset,
+				u64 len, bool fence)
 {
 	if (unlikely(!ntc_segment_valid(src->size, src_offset, len)))
 		return -EINVAL;
@@ -598,7 +598,29 @@ static inline int ntc_request_memcpy_fenced(struct dma_chan *chan,
 	return _ntc_request_memcpy(chan,
 				dst->dma_addr, dst->size, dst_offset,
 				src->dma_addr, src->size, src_offset,
-				len, true, NULL, NULL);
+				len, fence, NULL, NULL);
+}
+
+static inline int ntc_request_memcpy_fenced(struct dma_chan *chan,
+					const struct ntc_remote_buf *dst,
+					u64 dst_offset,
+					const struct ntc_local_buf *src,
+					u64 src_offset,
+					u64 len)
+{
+	return ntc_request_memcpy(chan, dst, dst_offset, src, src_offset, len,
+				true);
+}
+
+static inline int ntc_request_memcpy_unfenced(struct dma_chan *chan,
+					const struct ntc_remote_buf *dst,
+					u64 dst_offset,
+					const struct ntc_local_buf *src,
+					u64 src_offset,
+					u64 len)
+{
+	return ntc_request_memcpy(chan, dst, dst_offset, src, src_offset, len,
+				false);
 }
 
 static inline
@@ -979,6 +1001,18 @@ static inline int ntc_local_buf_seq_write(struct seq_file *s,
  * Return:	The pointer to the buffer's memory.
  */
 static inline void *ntc_local_buf_deref(struct ntc_local_buf *buf)
+{
+	return buf->ptr;
+}
+
+/**
+ * ntc_local_buf_const_deref() - Retrieve const pointer to the buffer's memory.
+ * @buf:	Local buffer.
+ *
+ * Return:	The pointer to the buffer's memory.
+ */
+static inline const void *
+ntc_local_buf_const_deref(const struct ntc_local_buf *buf)
 {
 	return buf->ptr;
 }
