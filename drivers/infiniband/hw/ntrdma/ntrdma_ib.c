@@ -1191,6 +1191,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			    struct ib_send_wr *ibwr,
 			    struct ib_send_wr **bad)
 {
+	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 20);
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_send_wqe *wqe;
@@ -1207,8 +1208,8 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 		ntrdma_qp_send_post_unlock(qp);
 
-		*bad = ibwr;
-		return -EINVAL;
+		rc = -EINVAL;
+		goto out;
 	}
 
 	while (ibwr) {
@@ -1276,7 +1277,11 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	if (had_immediate_work)
 		ntc_req_submit(dev->ntc, &qp->dma_chan);
 
+ out:
 	*bad = ibwr;
+
+	NTC_PERF_MEASURE(perf);
+
 	return rc;
 }
 
@@ -1372,6 +1377,7 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 			    struct ib_recv_wr *ibwr,
 			    struct ib_recv_wr **bad)
 {
+	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 10);
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_recv_wqe *wqe;
@@ -1429,6 +1435,9 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 
 out:
 	*bad = ibwr;
+
+	NTC_PERF_MEASURE(perf);
+
 	return rc;
 }
 

@@ -1689,6 +1689,7 @@ int ntrdma_qp_rdma_write(struct ntrdma_qp *qp, u32 pos,
 
 static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 {
+	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 15);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_rqp *rqp;
 	struct ntrdma_send_wqe *wqe;
@@ -1707,7 +1708,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	if (rc) {
 		ntrdma_err(dev, "ntrdma_qp_send_prod_start failed rc = %d qp %d(%p)\n",
 				rc,qp->res.key, qp);
-		return;
+		goto out;
 	}
 
 	/* get the next producing range in the send ring */
@@ -1718,7 +1719,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* quit if there is no send work to do */
 	if (start == end) {
 		ntrdma_qp_send_prod_done(qp);
-		return;
+		goto out;
 	}
 
 	/* limit the range to batch size */
@@ -1911,12 +1912,12 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* release lock for state change or producing later sends */
 done:
 	ntrdma_qp_send_prod_done(qp);
-	return;
+	goto out;
 err_memcpy:
 	ntrdma_qp_send_prod_done(qp);
 	ntrdma_err(dev, "err_memcpy - rc = %d on qp %p", rc, qp);
 	ntrdma_unrecoverable_err(dev);
-	return;
+	goto out;
 
 err_recv:
 	ntrdma_rqp_put(rqp);
@@ -1936,6 +1937,9 @@ err_rqp:
 		ntrdma_qp_send_prod_done(qp);
 	ntrdma_err(dev, "err_rqp QP %d aborting = %d qp %p, cq %p end %d\n",
 			qp->send_aborting, qp->res.key, qp, qp->send_cq, end);
+
+ out:
+	NTC_PERF_MEASURE(perf);
 }
 
 static inline void ntrdma_rqp_send_vbell_clear(struct ntrdma_dev *dev,
