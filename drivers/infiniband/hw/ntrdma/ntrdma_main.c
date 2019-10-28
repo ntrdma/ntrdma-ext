@@ -37,6 +37,7 @@
 #include <linux/module.h>
 
 #include "ntrdma.h"
+#include "ntrdma_file.h"
 #include "ntrdma_dev.h"
 
 #define DRIVER_NAME "ntrdma"
@@ -204,6 +205,10 @@ static int __init ntrdma_init(void)
 	if (rc < 0)
 		goto err;
 
+	rc = ntrdma_file_register();
+	if (rc < 0)
+		goto err;
+
 	return 0;
 
  err:
@@ -214,6 +219,7 @@ module_init(ntrdma_init);
 
 static __exit void ntrdma_exit(void)
 {
+	ntrdma_file_unregister();
 	ntc_unregister_driver(&ntrdma_driver);
 	ntrdma_deinit();
 	pr_info("NTRDMA module exit\n");
