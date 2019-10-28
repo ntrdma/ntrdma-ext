@@ -5,6 +5,7 @@ ntrdma-y += ntrdma_cq.o
 ntrdma-y += ntrdma_debugfs.o
 ntrdma-y += ntrdma_dev.o
 ntrdma-y += ntrdma_eth.o
+ntrdma-y += ntrdma_file.o
 ntrdma-y += ntrdma_hello.o
 ntrdma-y += ntrdma_ib.o
 ntrdma-y += ntrdma_main.o
