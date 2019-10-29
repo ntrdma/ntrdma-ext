@@ -49,6 +49,7 @@ struct ntrdma_wr_snd_sge {
 		};
 		/* key == NTRDMA_RESERVED_DMA_LEKY */
 		struct ntc_local_buf	snd_dma_buf;
+		char			filler[24];
 	};
 };
 
