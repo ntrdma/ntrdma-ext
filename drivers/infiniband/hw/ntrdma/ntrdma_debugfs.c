@@ -130,12 +130,15 @@ static inline
 void ntrdma_debugfs_print_send_wqe(struct seq_file *s, const char *pre,
 				const struct ntrdma_send_wqe *wqe, u32 wqe_i)
 {
+	bool is_inline = ntrdma_send_wqe_is_inline(wqe);
+
 	seq_printf(s, "%ssend_wqe[%u] ulp %#llx code %#x stat %u\n",
 		   pre, wqe_i, wqe->ulp_handle, wqe->op_code,
 		   wqe->op_status);
-	seq_printf(s, "%s\trecv %u rkey %u addr %#llx imm %#x sg_count %u\n",
-		   pre, wqe->recv_key, wqe->rdma_sge.lkey, wqe->rdma_sge.addr,
-		   wqe->imm_data, wqe->sg_count);
+	seq_printf(s, "%s\trecv %u rkey %u addr %#llx imm %#x %s %u\n",
+		pre, wqe->recv_key, wqe->rdma_sge.lkey, wqe->rdma_sge.addr,
+		wqe->imm_data, is_inline ? "inline_len" : "sg_count",
+		is_inline ? wqe->inline_len : wqe->sg_count);
 }
 
 static inline void ntrdma_debugfs_print_cqe(struct seq_file *s,
@@ -831,14 +834,17 @@ static int ntrdma_debugfs_qp_send_wqe_show(struct seq_file *s, void *v)
 	for (i = 0; i < count; ++i) {
 		wqe = ntrdma_qp_send_wqe(qp, i);
 
-		ntrdma_debugfs_print_send_wqe(s, "",
-					      wqe, i);
+		ntrdma_debugfs_print_send_wqe(s, "", wqe, i);
 
-		sg_count = min_t(u32, wqe->sg_count, qp->send_wqe_sg_cap);
+		if (!ntrdma_send_wqe_is_inline(wqe)) {
+			sg_count = min_t(u32, wqe->sg_count,
+					qp->send_wqe_sg_cap);
 
-		ntrdma_debugfs_print_wr_snd_sg_list(s, "\t",
-						const_snd_sg_list(0, wqe),
-						sg_count);
+			ntrdma_debugfs_print_wr_snd_sg_list(s, "\t",
+							const_snd_sg_list(0,
+									wqe),
+							sg_count);
+		}
 	}
 
 	return 0;
@@ -1006,11 +1012,15 @@ static int ntrdma_debugfs_rqp_send_wqe_show(struct seq_file *s, void *v)
 		ntrdma_debugfs_print_send_wqe(s, "",
 					      wqe, i);
 
-		sg_count = min_t(u32, wqe->sg_count, rqp->send_wqe_sg_cap);
+		if (!ntrdma_send_wqe_is_inline(wqe)) {
+			sg_count = min_t(u32, wqe->sg_count,
+					rqp->send_wqe_sg_cap);
 
-		ntrdma_debugfs_print_wr_snd_sg_list(s, "\t",
-						const_snd_sg_list(0, wqe),
-						sg_count);
+			ntrdma_debugfs_print_wr_snd_sg_list(s, "\t",
+							const_snd_sg_list(0,
+									wqe),
+							sg_count);
+		}
 	}
 
 	return 0;

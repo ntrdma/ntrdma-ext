@@ -36,16 +36,17 @@
 #include "ntrdma_sg.h"
 
 /* work and completion queue entry op_code values */
-#define NTRDMA_WR_RECV			0 /* post recv and consumed by send */
-#define NTRDMA_WR_RECV_INV		1 /* recv consumed by send with inv */
-#define NTRDMA_WR_RECV_IMM		2 /* recv consumed by send with imm */
-#define NTRDMA_WR_RECV_RDMA		3 /* recv consumed by write with imm */
-#define NTRDMA_WR_SEND			4 /* post send */
-#define NTRDMA_WR_SEND_INV		5 /* post send with inv */
-#define NTRDMA_WR_SEND_IMM		6 /* post send with imm */
-#define NTRDMA_WR_SEND_RDMA		7 /* post write with imm */
-#define NTRDMA_WR_RDMA_WRITE		8 /* post rdma write */
-#define NTRDMA_WR_RDMA_READ		9 /* post rdma read */
+#define NTRDMA_WR_RDMA_WRITE		0 /* IB_WR_RDMA_WRITE post rdma write */
+#define NTRDMA_WR_SEND_RDMA		1 /* IB_WR_RDMA_WRITE_WITH_IMM post write with imm */
+#define NTRDMA_WR_SEND			2 /* IB_WR_SEND post send */
+#define NTRDMA_WR_SEND_IMM		3 /* IB_WR_SEND_WITH_IMM post send with imm */
+#define NTRDMA_WR_RDMA_READ		4 /* IB_WR_RDMA_READ post rdma read */
+#define NTRDMA_SEND_WR_MAX_SUPPORTED IB_WR_RDMA_READ
+#define NTRDMA_WR_RECV			5 /* post recv and consumed by send */
+#define NTRDMA_WR_RECV_INV		6 /* recv consumed by send with inv */
+#define NTRDMA_WR_RECV_IMM		7 /* recv consumed by send with imm */
+#define NTRDMA_WR_RECV_RDMA		8 /* recv consumed by write with imm */
+#define NTRDMA_WR_SEND_INV		9 /* post send with inv */
 
 /* completion queue entry op_status values */
 #define NTRDMA_WC_SUCCESS		0
@@ -61,6 +62,7 @@
 #define NTRDMA_WC_ERR_LOC_PORT		10
 
 
+/* MUST BE THE SAME AS IN USERSPACE */
 struct ntrdma_send_wqe {
 	u64				ulp_handle;
 	u16				op_code;
@@ -68,13 +70,11 @@ struct ntrdma_send_wqe {
 	u32				recv_key;
 	struct ib_sge			rdma_sge;
 	u32				imm_data;
-
+	u32				flags;
 	union {
-		u32	sg_count;
-		u8 inline_len;
+		u32			sg_count;
+		u32			inline_len;
 	};
-
-	int				flags;
 };
 
 struct ntrdma_recv_wqe {
@@ -103,6 +103,12 @@ static inline size_t ntrdma_wqe_snd_sg_list_size(u32 sg_cap)
 static inline size_t ntrdma_wqe_snd_inline_size(u32 inline_cap)
 {
 	return inline_cap;
+}
+
+static inline bool ntrdma_send_wqe_is_inline(const struct ntrdma_send_wqe *wqe)
+{
+	return (wqe->op_code == IB_WR_RDMA_WRITE) &&
+		(wqe->flags & IB_SEND_INLINE);
 }
 
 static inline struct ntrdma_wr_snd_sge *
@@ -174,10 +180,10 @@ static inline bool ntrdma_wr_code_is_recv(u16 op_code)
 static inline bool ntrdma_wr_code_is_send(u16 op_code)
 {
 	switch (op_code) {
-	case NTRDMA_WR_SEND:
+	case IB_WR_SEND:
 	case NTRDMA_WR_SEND_INV:
-	case NTRDMA_WR_SEND_IMM:
-	case NTRDMA_WR_SEND_RDMA:
+	case IB_WR_SEND_WITH_IMM:
+	case IB_WR_RDMA_WRITE_WITH_IMM:
 		return true;
 	}
 
@@ -187,9 +193,9 @@ static inline bool ntrdma_wr_code_is_send(u16 op_code)
 static inline bool ntrdma_wr_code_is_rdma(u16 op_code)
 {
 	switch (op_code) {
-	case NTRDMA_WR_SEND_RDMA:
-	case NTRDMA_WR_RDMA_WRITE:
-	case NTRDMA_WR_RDMA_READ:
+	case IB_WR_RDMA_WRITE_WITH_IMM:
+	case IB_WR_RDMA_WRITE:
+	case IB_WR_RDMA_READ:
 		return true;
 	}
 	return false;
@@ -198,11 +204,11 @@ static inline bool ntrdma_wr_code_is_rdma(u16 op_code)
 static inline bool ntrdma_wr_code_push_data(u16 op_code)
 {
 	switch (op_code) {
-	case NTRDMA_WR_SEND:
+	case IB_WR_SEND:
 	case NTRDMA_WR_SEND_INV:
-	case NTRDMA_WR_SEND_IMM:
-	case NTRDMA_WR_SEND_RDMA:
-	case NTRDMA_WR_RDMA_WRITE:
+	case IB_WR_SEND_WITH_IMM:
+	case IB_WR_RDMA_WRITE_WITH_IMM:
+	case IB_WR_RDMA_WRITE:
 		return true;
 	}
 	return false;
@@ -210,7 +216,7 @@ static inline bool ntrdma_wr_code_push_data(u16 op_code)
 
 static inline bool ntrdma_wr_code_pull_data(u16 op_code)
 {
-	return op_code == NTRDMA_WR_RDMA_READ;
+	return op_code == IB_WR_RDMA_READ;
 }
 
 int ntrdma_recv_wqe_sync(struct ntrdma_dev *dev, struct ntrdma_recv_wqe *wqe);

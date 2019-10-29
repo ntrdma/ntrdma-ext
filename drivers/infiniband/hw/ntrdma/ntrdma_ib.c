@@ -444,14 +444,14 @@ static inline int ntrdma_ib_wc_opcode_from_cqe(u32 op_code)
 		return IB_WC_RECV;
 	case NTRDMA_WR_RECV_RDMA:
 		return IB_WC_RECV_RDMA_WITH_IMM;
-	case NTRDMA_WR_SEND:
+	case IB_WR_SEND:
 	case NTRDMA_WR_SEND_INV:
-	case NTRDMA_WR_SEND_IMM:
+	case IB_WR_SEND_WITH_IMM:
 		return IB_WC_SEND;
-	case NTRDMA_WR_SEND_RDMA:
-	case NTRDMA_WR_RDMA_WRITE:
+	case IB_WR_RDMA_WRITE_WITH_IMM:
+	case IB_WR_RDMA_WRITE:
 		return IB_WC_RDMA_WRITE;
-	case NTRDMA_WR_RDMA_READ:
+	case IB_WR_RDMA_READ:
 		return IB_WC_RDMA_READ;
 	}
 	return -1;
@@ -719,7 +719,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 		fd = get_unused_fd_flags(flags);
 		if (fd < 0) {
-			ntrdma_err(dev, "get_unused_fd_flags failed: %d", fd);
+			ntrdma_qp_err(qp, "get_unused_fd_flags failed: %d", fd);
 			ntrdma_qp_put(qp); /* The initial ref */
 			return ERR_PTR(fd);
 		}
@@ -727,7 +727,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		file = anon_inode_getfile("ntrdma_qp", &ntrdma_qp_fops, qp,
 					flags);
 		if (IS_ERR(file)) {
-			ntrdma_err(dev, "anon_inode_getfile failed: %ld",
+			ntrdma_qp_err(qp, "anon_inode_getfile failed: %ld",
 				PTR_ERR(file));
 			ntrdma_qp_put(qp); /* The initial ref */
 			put_unused_fd(fd);
@@ -739,7 +739,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		ntrdma_qp_get(qp);
 
 		if (copy_to_user(ibudata->outbuf, &fd, sizeof(fd))) {
-			ntrdma_err(dev, "copy_to_user failed\n");
+			ntrdma_qp_err(qp, "copy_to_user failed");
 			fput(file); /* Close the file. */
 			ntrdma_qp_put(qp); /* The initial ref */
 			put_unused_fd(fd);
@@ -749,7 +749,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		fd_install(fd, file); /* fd now points to file */
 	}
 
-	ntrdma_dbg(dev, "added qp%d type %d\n",
+	ntrdma_qp_dbg(qp, "added qp%d type %d",
 			qp->res.key, ibqp_attr->qp_type);
 
 	return &qp->ibqp;
@@ -1087,45 +1087,42 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 }
 
 #define NUM_SUPPORTED_INLINE_SGE 1
-static int ntrdma_ib_send_to_inline_wqe(struct ntrdma_dev *dev,
-		struct ntrdma_send_wqe *wqe,
-		struct ib_send_wr *ibwr,
-		struct ntrdma_qp *qp)
+static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
+					struct ntrdma_send_wqe *wqe,
+					struct ib_sge *sg_list)
 {
-	int rc = 0;
-	if (ibwr->num_sge > NUM_SUPPORTED_INLINE_SGE) {
-		ntrdma_err(dev, "inline: num_sge %d is not supported\n",
-					   ibwr->num_sge);
-		return -EINVAL; // not supporting sge of inlines
+	bool from_user = (qp->ibqp.qp_type != IB_QPT_GSI);
+	u64 tail_size;
+	u64 entry_size;
+	u64 available_size;
+	int i;
+
+	for ((i = 0), (tail_size = 0), (available_size = wqe->inline_len);
+	     tail_size < available_size; (i++), (tail_size += entry_size)) {
+		entry_size = sg_list[i].length;
+		if (!entry_size)
+			continue;
+		if (from_user) {
+			if (copy_from_user(snd_inline_data(wqe) + tail_size,
+						(void __user *)sg_list[i].addr,
+						entry_size)) {
+				ntrdma_qp_err(qp, "copy from user failed");
+				return -EFAULT;
+			}
+		} else
+			memcpy(snd_inline_data(wqe) + tail_size,
+				phys_to_virt(sg_list[i].addr), entry_size);
 	}
 
-	if (ibwr->sg_list[0].length > qp->send_wqe_inline_cap) {
-		ntrdma_err(dev, "inline: length %d > MAX \n", ibwr->sg_list[0].length);
-		return -EIO;
-	}
+	this_cpu_add(dev_cnt.post_send_bytes, available_size);
 
-	wqe->sg_count = NUM_SUPPORTED_INLINE_SGE;
-
-	rc = copy_from_user(snd_inline_data(wqe),
-			(void *)ibwr->sg_list[0].addr,
-			ibwr->sg_list[0].length);
-
-	if (rc) {
-		ntrdma_err(dev, "copy from user failed (%d) for len %d\n",
-				wqe->inline_len,
-				ibwr->sg_list[0].length);
-
-		return -EIO;
-	}
-
-	wqe->inline_len = ibwr->sg_list[0].length;
-
-	this_cpu_add(dev_cnt.post_send_bytes,
-						ibwr->sg_list[0].length);
+	TRACE_DATA(
+		"OPCODE %d: flags %x, addr %llx QP %d inline len %d wrid %llu",
+		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
+		available_size, wqe->ulp_handle);
 
 	if (wqe->flags & IB_SEND_SIGNALED)
 		this_cpu_inc(dev_cnt.post_send_wqes_signalled);
-
 	this_cpu_inc(dev_cnt.post_send_wqes);
 
 	return 0;
@@ -1134,147 +1131,176 @@ static int ntrdma_ib_send_to_inline_wqe(struct ntrdma_dev *dev,
 static inline
 bool ntrdma_send_is_non_signaled_write(const struct ntrdma_send_wqe *wqe)
 {
-	return (wqe->op_code == NTRDMA_WR_RDMA_WRITE) &&
+	return (wqe->op_code == IB_WR_RDMA_WRITE) &&
 		!(wqe->flags & IB_SEND_SIGNALED);
 }
 
-static int ntrdma_ib_send_to_wqe(struct ntrdma_dev *dev,
-		struct ntrdma_send_wqe *wqe,
-		struct ib_send_wr *ibwr,
-		struct ntrdma_qp *qp)
+static inline bool ntrdma_send_opcode_is_rdma(int opcode)
 {
+	switch (opcode) {
+	case IB_WR_RDMA_WRITE_WITH_IMM:
+	case IB_WR_RDMA_WRITE:
+	case IB_WR_RDMA_READ:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static inline int ntrdma_ib_send_to_wqe(struct ntrdma_qp *qp,
+					struct ntrdma_send_wqe *wqe,
+					struct ib_send_wr *ibwr)
+{
+	bool is_rdma = ntrdma_send_opcode_is_rdma(ibwr->opcode);
+	bool from_user;
+	u64 tail_size;
+	u64 entry_size;
+	u64 available_size;
 	int i;
-	int sg_cap = qp->send_wqe_sg_cap;
-	struct ib_sge *sg_list;
-	struct ntrdma_wr_snd_sge *wqe_snd_sg_list;
 
 	wqe->ulp_handle = ibwr->wr_id;
+	wqe->op_code = ibwr->opcode;
+	wqe->op_status = 0;
+	wqe->recv_key = ~(u32)0;
+	wqe->rdma_sge.addr = (is_rdma ? rdma_wr(ibwr)->remote_addr : 0);
+	wqe->rdma_sge.lkey = (is_rdma ? rdma_wr(ibwr)->rkey : 0);
+	wqe->rdma_sge.length = 0;
+	wqe->imm_data = ibwr->ex.imm_data;
 	wqe->flags = ibwr->send_flags;
 
-	switch (ibwr->opcode) {
-	case IB_WR_SEND:
-		wqe->op_code = NTRDMA_WR_SEND;
-		wqe->op_status = 0;
-		wqe->recv_key = ~(u32)0;
-		wqe->rdma_sge.lkey = 0;
-		wqe->rdma_sge.length = 0;
-		wqe->rdma_sge.addr = 0;
-		wqe->imm_data = 0;
-		break;
-	case IB_WR_SEND_WITH_IMM:
-		wqe->op_code = NTRDMA_WR_SEND_IMM;
-		wqe->op_status = 0;
-		wqe->recv_key = ~(u32)0;
-		wqe->rdma_sge.lkey = 0;
-		wqe->rdma_sge.length = 0;
-		wqe->rdma_sge.addr = 0;
-		wqe->imm_data = ibwr->ex.imm_data;
-		break;
-	case IB_WR_RDMA_WRITE_WITH_IMM:
-		wqe->op_code = NTRDMA_WR_SEND_RDMA;
-		wqe->op_status = 0;
-		wqe->recv_key = ~(u32)0;
-		wqe->rdma_sge.lkey = rdma_wr(ibwr)->rkey;
-		wqe->rdma_sge.length = 0;
-		wqe->rdma_sge.addr = rdma_wr(ibwr)->remote_addr;
-		wqe->imm_data = ibwr->ex.imm_data;
-		break;
-	case IB_WR_RDMA_WRITE:
-		wqe->op_code = NTRDMA_WR_RDMA_WRITE;
-		wqe->op_status = 0;
-		wqe->recv_key = ~(u32)0;
-		wqe->rdma_sge.lkey = rdma_wr(ibwr)->rkey;
-		wqe->rdma_sge.length = 0;
-		wqe->rdma_sge.addr = rdma_wr(ibwr)->remote_addr;
-		wqe->imm_data = 0;
-		if (ibwr->send_flags & IB_SEND_INLINE)
-			return ntrdma_ib_send_to_inline_wqe(dev, wqe, ibwr, qp);
-		break;
-	case IB_WR_RDMA_READ:
-		wqe->op_code = NTRDMA_WR_RDMA_READ;
-		wqe->op_status = 0;
-		wqe->recv_key = ~(u32)0;
-		wqe->rdma_sge.lkey = rdma_wr(ibwr)->rkey;
-		wqe->rdma_sge.length = 0;
-		wqe->rdma_sge.addr = rdma_wr(ibwr)->remote_addr;
-		wqe->imm_data = 0;
-		break;
-	default:
-		ntrdma_dbg(dev, "unsupported send opcode %d\n",
-			   ibwr->opcode);
-		return -EINVAL;
-	}
-
-	if (ibwr->num_sge > sg_cap) {
-		ntrdma_dbg(dev, "too many num_sge %d\n",
-			   ibwr->num_sge);
-		return -EINVAL;
-	}
-
-	wqe->sg_count = ibwr->num_sge;
-
-
-	for (i = 0; i < ibwr->num_sge; ++i) {
-		sg_list = &ibwr->sg_list[i];
-		wqe_snd_sg_list = snd_sg_list(i, wqe);
-
-		wqe_snd_sg_list->key = sg_list->lkey;
-		if (!ntrdma_ib_sge_reserved(sg_list)) {
-			wqe_snd_sg_list->addr = sg_list->addr;
-			wqe_snd_sg_list->len = sg_list->length;
-		} else {
-			TRACE("Mapping local buffer of size %#x at %#lx\n",
-				(int)sg_list->length,
-				(long)(dma_addr_t)sg_list->addr);
-
-			ntc_local_buf_map_dma(&(wqe_snd_sg_list->snd_dma_buf),
-					dev->ntc, sg_list->length,
-					(dma_addr_t)sg_list->addr);
+	if (is_rdma) {
+		from_user = (qp->ibqp.qp_type != IB_QPT_GSI);
+		if (unlikely(from_user !=
+				(wqe->rdma_sge.lkey !=
+					NTRDMA_RESERVED_DMA_LEKY))) {
+			ntrdma_qp_err(qp, "from_user %d but key reserved %d",
+				from_user,
+				(wqe->rdma_sge.lkey ==
+					NTRDMA_RESERVED_DMA_LEKY));
+			return -EINVAL;
 		}
-		this_cpu_add(dev_cnt.post_send_bytes, sg_list->length);
 	}
 
-	if (wqe->flags & IB_SEND_SIGNALED)
-		this_cpu_add(dev_cnt.post_send_wqes_signalled,
-				wqe->sg_count);
+	if (ntrdma_send_wqe_is_inline(wqe)) {
+		available_size = qp->send_wqe_inline_cap;
+		for ((i = 0), (tail_size = 0); i < ibwr->num_sge; i++) {
+			entry_size = ibwr->sg_list[i].length;
+			if (!entry_size)
+				continue;
+			if (tail_size + entry_size < tail_size)
+				return -ENOMEM;
+			tail_size += entry_size;
+			if (available_size < tail_size)
+				return -ENOMEM;
+		}
+		wqe->inline_len = tail_size;
+	} else
+		wqe->sg_count = ibwr->num_sge;
 
-	this_cpu_add(dev_cnt.post_send_wqes, wqe->sg_count);
 	return 0;
 }
 
-static int ntrdma_post_send(struct ib_qp *ibqp,
-			    struct ib_send_wr *ibwr,
-			    struct ib_send_wr **bad)
+static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
+					struct ntrdma_send_wqe *wqe,
+					struct ib_sge *sg_list)
 {
-	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 20);
-	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
-	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	bool from_user = (qp->ibqp.qp_type != IB_QPT_GSI);
+	int sg_count = wqe->sg_count;
+	struct ib_sge *sge;
+	struct ntrdma_wr_snd_sge *wqe_snd_sge;
+	int i;
+
+	compiletime_assert(sizeof(wqe_snd_sge->snd_dma_buf) ==
+			sizeof(wqe_snd_sge->filler),
+			"Filler must be the same size as snd_dma_buf");
+
+	for (i = 0; i < sg_count; ++i) {
+		sge = &sg_list[i];
+		wqe_snd_sge = snd_sg_list(i, wqe);
+
+		wqe_snd_sge->key = sge->lkey;
+
+		if (unlikely(from_user != !ntrdma_ib_sge_reserved(sge))) {
+			ntrdma_qp_err(qp, "from_user %d but key reserved %d",
+				from_user, ntrdma_ib_sge_reserved(sge));
+			return -EINVAL;
+		}
+
+		if (from_user) {
+			wqe_snd_sge->addr = sge->addr;
+			wqe_snd_sge->len = sge->length;
+		} else {
+			TRACE_DATA("Mapping local buffer of size %#x at %#lx\n",
+				(int)sge->length,
+				(long)(dma_addr_t)sge->addr);
+
+			ntc_local_buf_map_dma(&(wqe_snd_sge->snd_dma_buf),
+					sge->length, sge->addr);
+		}
+		this_cpu_add(dev_cnt.post_send_bytes, sge->length);
+	}
+
+	TRACE_DATA(
+		"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu",
+		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
+		sg_count, wqe->ulp_handle);
+
+	if (wqe->flags & IB_SEND_SIGNALED)
+		this_cpu_add(dev_cnt.post_send_wqes_signalled, sg_count);
+	this_cpu_add(dev_cnt.post_send_wqes, sg_count);
+
+	return 0;
+}
+
+/*
+ * ntrdma_post_send_wqe():
+ *
+ * On error, return the (negative) error value.
+ * If the wqe was sent, return 1.
+ * Otherwise, return 0.
+ */
+static inline int ntrdma_post_send_wqe(struct ntrdma_qp *qp,
+				struct ntrdma_send_wqe *wqe,
+				struct ib_sge *sg_list)
+{
+	int rc;
+
+	if (ntrdma_send_wqe_is_inline(wqe))
+		return ntrdma_ib_send_to_inline_wqe(qp, wqe, sg_list);
+	else {
+		rc = ntrdma_ib_send_to_wqe_sgl(qp, wqe, sg_list);
+		if (rc < 0)
+			return rc;
+
+		if (wqe->flags & IB_SEND_SIGNALED)
+			return 0;
+
+		rc = ntrdma_qp_rdma_write_non_inline(qp, wqe);
+		if (rc < 0)
+			return rc;
+
+		return 1;
+	}
+}
+
+static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
+					struct ib_send_wr *ibwr,
+					struct ib_send_wr **bad,
+					bool *had_immediate_work,
+					bool *has_deferred_work)
+{
 	struct ntrdma_send_wqe *wqe;
 	u32 pos, end, base;
-	bool had_immediate_work = false;
-	bool has_deferred_work = false;
+	struct ib_sge *sg_list;
 	int rc = 0;
-
-	ntrdma_qp_send_post_lock(qp);
-
-	if (!ntrdma_qp_is_send_ready(qp)) {
-		ntrdma_err(dev, "qp %d state %d\n", qp->res.key,
-			atomic_read(&qp->state));
-
-		ntrdma_qp_send_post_unlock(qp);
-
-		rc = -EINVAL;
-		goto out;
-	}
 
 	while (ibwr) {
 		/* get the next posting range in the ring */
 		ntrdma_qp_send_post_get(qp, &pos, &end, &base);
 
 		if (pos == end) {
-			ntrdma_err(dev,
-					"posting too many sends QP %d\n",
-					qp->res.key);
+			ntrdma_qp_err(qp, "posting too many sends QP %d",
+				qp->res.key);
 			rc = -EINVAL;
 			break;
 		}
@@ -1285,30 +1311,35 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			if (!wqe)
 				wqe = ntrdma_qp_send_wqe(qp, pos);
 
-			/* transform work request into the entry */
-			rc = ntrdma_ib_send_to_wqe(dev, wqe, ibwr, qp);
+			if (unlikely((unsigned)ibwr->num_sge >
+					(unsigned)qp->send_wqe_sg_cap)) {
+				ntrdma_qp_dbg(qp, "too many sges %d", ibwr->num_sge);
+				rc = -EINVAL;
+				break;
+			}
 
-			TRACE_DATA(
-					"OPCODE %d: flags %x, addr %llx, rc = %d QP %d num sges %d pos %d wr_id %llu\n",
-				ibwr->opcode, ibwr->send_flags,
-				wqe->rdma_sge.addr, rc, qp->res.key,
-				ibwr->num_sge, pos, ibwr->wr_id);
+			if (unlikely((unsigned)ibwr->opcode > (unsigned)
+					NTRDMA_SEND_WR_MAX_SUPPORTED)) {
+				rc = -EINVAL;
+				break;
+			}
 
-			if (rc)
+			sg_list = ibwr->sg_list;
+			rc = ntrdma_ib_send_to_wqe(qp, wqe, ibwr);
+			if (rc < 0)
 				break;
 
-			if (!(ibwr->send_flags & IB_SEND_INLINE) &&
-				ntrdma_send_is_non_signaled_write(wqe)) {
-				/* SEND IT NOW! */
-				rc = ntrdma_qp_rdma_write(qp, pos, wqe);
-				if (rc < 0)
-					break;
-				had_immediate_work = true;
+			rc = ntrdma_post_send_wqe(qp, wqe, sg_list);
+			if (rc < 0)
+				break;
+
+			if (rc > 0) {
+				*had_immediate_work = true;
 				/* pos and wqe can be reused. */
 			} else {
 				wqe = NULL;
 				++pos;
-				has_deferred_work = true;
+				*has_deferred_work = true;
 			}
 
 			ibwr = ibwr->next;
@@ -1320,20 +1351,44 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 		/* update the next posting range */
 		ntrdma_qp_send_post_put(qp, pos, base);
 
-		if (rc)
+		if (rc < 0)
 			break;
 	}
+
+	*bad = ibwr;
+
+	return rc;
+}
+
+static int ntrdma_post_send(struct ib_qp *ibqp,
+			struct ib_send_wr *ibwr,
+			struct ib_send_wr **bad)
+{
+	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 20);
+	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
+	bool had_immediate_work = false;
+	bool has_deferred_work = false;
+	int rc;
+
+	ntrdma_qp_send_post_lock(qp);
+
+	if (ntrdma_qp_is_send_ready(qp))
+		rc = ntrdma_post_send_locked(qp, ibwr, bad,
+					&had_immediate_work,
+					&has_deferred_work);
+	else {
+		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
+			atomic_read(&qp->state));
+		rc = -EINVAL;
+	}
+
+	ntrdma_qp_send_post_unlock(qp);
 
 	if (has_deferred_work)
 		ntrdma_qp_schedule_send_work(qp);
 
-	ntrdma_qp_send_post_unlock(qp);
-
 	if (had_immediate_work)
-		ntc_req_submit(dev->ntc, &qp->dma_chan);
-
- out:
-	*bad = ibwr;
+		ntc_req_submit(ntrdma_qp_dev(qp)->ntc, &qp->dma_chan);
 
 	NTRDMA_PERF_MEASURE(perf);
 
@@ -1394,7 +1449,6 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 			shadow->local_addr = sg_list->addr;
 		else
 			ntc_local_buf_map_dma(&shadow->rcv_dma_buf,
-					dev->ntc,
 					sg_list->length,
 					sg_list->addr);
 
@@ -1828,6 +1882,13 @@ void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev)
 
 int __init ntrdma_ib_module_init(void)
 {
+	compiletime_assert((IB_WR_SEND == NTRDMA_WR_SEND) &&
+			(IB_WR_SEND_WITH_IMM == NTRDMA_WR_SEND_IMM) &&
+			(IB_WR_RDMA_WRITE_WITH_IMM == NTRDMA_WR_SEND_RDMA) &&
+			(IB_WR_RDMA_WRITE == NTRDMA_WR_RDMA_WRITE) &&
+			(IB_WR_RDMA_READ == NTRDMA_WR_RDMA_READ),
+			"IB_WR and NTRDMA_WR enums must match for supported");
+
 	if (!((ah_slab = KMEM_CACHE(ntrdma_ah, 0)) &&
 			(cq_slab = KMEM_CACHE(ntrdma_cq, 0)) &&
 			(pd_slab = KMEM_CACHE(ntrdma_pd, 0)) &&

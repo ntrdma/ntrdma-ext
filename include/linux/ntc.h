@@ -931,7 +931,6 @@ static inline int ntc_local_buf_map_prealloced(struct ntc_local_buf *buf,
  * @dma_addr:	DMA address of the buffer.
  */
 static inline int ntc_local_buf_map_dma(struct ntc_local_buf *buf,
-					struct ntc_dev *ntc,
 					u64 size, dma_addr_t dma_addr)
 {
 	buf->ptr = NULL;

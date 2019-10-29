@@ -172,6 +172,15 @@ inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp);
 #define ntrdma_recv_poll_qp(__poll) \
 	container_of(__poll, struct ntrdma_qp, recv_poll)
 
+#define ntrdma_qp_dbg(__qp, __args...)			\
+	ntrdma_dbg(ntrdma_qp_dev(__qp), ## __args)
+
+#define ntrdma_qp_err(__qp, __fmt, __args...)			\
+	ntrdma_err(ntrdma_qp_dev(__qp), __fmt, ## __args)
+
+#define ntrdma_qp_info(__qp, __fmt, __args...)			\
+	ntrdma_info(ntrdma_qp_dev(__qp), __fmt, ## __args)
+
 struct ntrdma_qp_init_attr {
 	u32 pd_key;
 	u32 recv_wqe_cap;
@@ -404,7 +413,7 @@ static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev);
 void ntrdma_free_rqp(struct ntrdma_rqp *rqp);
 
-int ntrdma_qp_rdma_write(struct ntrdma_qp *qp, u32 pos,
-			struct ntrdma_send_wqe *wqe);
+inline int ntrdma_qp_rdma_write_non_inline(struct ntrdma_qp *qp,
+					struct ntrdma_send_wqe *wqe);
 
 #endif
