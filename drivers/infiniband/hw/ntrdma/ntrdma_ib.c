@@ -34,6 +34,8 @@
 #include <linux/in6.h>
 #include <linux/slab.h>
 #include <linux/random.h>
+#include <linux/file.h>
+#include <linux/anon_inodes.h>
 
 #include <rdma/ib_user_verbs.h>
 #include <linux/ntc_trace.h>
@@ -57,11 +59,22 @@
 #define DELL_VENDOR_ID 0x1028
 #define NOT_SUPPORTED 0
 
+static int ntrdma_qp_file_release(struct inode *inode, struct file *filp);
+static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
+				unsigned long arg);
+
 static struct kmem_cache *ah_slab;
 static struct kmem_cache *cq_slab;
 static struct kmem_cache *pd_slab;
 static struct kmem_cache *qp_slab;
 static struct kmem_cache *ibuctx_slab;
+
+static struct file_operations ntrdma_qp_fops = {
+	.owner		= THIS_MODULE,
+	.release	= ntrdma_qp_file_release,
+	.unlocked_ioctl	= ntrdma_qp_file_ioctl,
+	.compat_ioctl	= ntrdma_qp_file_ioctl,
+};
 
 void ntrdma_free_qp(struct ntrdma_qp *qp)
 {
@@ -639,6 +652,9 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	struct ntrdma_cq *send_cq = ntrdma_ib_cq(ibqp_attr->send_cq);
 	struct ntrdma_qp *qp;
 	struct ntrdma_qp_init_attr qp_attr;
+	struct file *file;
+	int fd;
+	int flags;
 	int rc;
 
 	if (atomic_inc_return(&dev->qp_num) >= NTRDMA_DEV_MAX_QP) {
@@ -697,6 +713,41 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	qp->ibqp.qp_num = qp->res.key;
 	atomic_set(&qp->state, IB_QPS_RESET);
+
+	if (ibudata && ibudata->outlen >= sizeof(fd)) {
+		flags = O_RDWR | O_CLOEXEC;
+
+		fd = get_unused_fd_flags(flags);
+		if (fd < 0) {
+			ntrdma_err(dev, "get_unused_fd_flags failed: %d", fd);
+			ntrdma_qp_put(qp); /* The initial ref */
+			return ERR_PTR(fd);
+		}
+
+		file = anon_inode_getfile("ntrdma_qp", &ntrdma_qp_fops, qp,
+					flags);
+		if (IS_ERR(file)) {
+			ntrdma_err(dev, "anon_inode_getfile failed: %ld",
+				PTR_ERR(file));
+			ntrdma_qp_put(qp); /* The initial ref */
+			put_unused_fd(fd);
+			return (void *)file;
+		}
+		/*
+		 * Ref taken below will be released in ntrdma_qp_file_release().
+		 */
+		ntrdma_qp_get(qp);
+
+		if (copy_to_user(ibudata->outbuf, &fd, sizeof(fd))) {
+			ntrdma_err(dev, "copy_to_user failed\n");
+			fput(file); /* Close the file. */
+			ntrdma_qp_put(qp); /* The initial ref */
+			put_unused_fd(fd);
+			return ERR_PTR(-EFAULT);
+		}
+
+		fd_install(fd, file); /* fd now points to file */
+	}
 
 	ntrdma_dbg(dev, "added qp%d type %d\n",
 			qp->res.key, ibqp_attr->qp_type);
@@ -1658,6 +1709,22 @@ int ntrdma_process_mad(struct ib_device *device,
 
 	return IB_MAD_RESULT_SUCCESS;
 }
+
+static int ntrdma_qp_file_release(struct inode *inode, struct file *filp)
+{
+	struct ntrdma_qp *qp = filp->private_data;
+
+	ntrdma_qp_put(qp);
+
+	return 0;
+}
+
+static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
+			unsigned long arg)
+{
+	return 0;
+}
+
 int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 {
 	struct ib_device *ibdev = &dev->ibdev;
