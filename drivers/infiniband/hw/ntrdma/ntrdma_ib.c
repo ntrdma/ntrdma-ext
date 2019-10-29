@@ -690,6 +690,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	if (rc)
 		goto err_init;
 
+	ntrdma_debugfs_qp_add(qp); /* TODO: status must be checked. */
 	rc = ntrdma_qp_add(qp);
 	if (rc)
 		goto err_add;
@@ -702,7 +703,10 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	return &qp->ibqp;
 
-	// ntrdma_qp_del(qp);
+	/*
+	ntrdma_qp_remove(qp);
+	ntrdma_debugfs_qp_del(qp);
+	*/
 err_add:
 	ntrdma_qp_deinit(qp);
 err_init:
