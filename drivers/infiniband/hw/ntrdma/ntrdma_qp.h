@@ -192,7 +192,6 @@ int ntrdma_qp_modify(struct ntrdma_qp *qp);
 
 static inline int ntrdma_qp_add(struct ntrdma_qp *qp)
 {
-	ntrdma_debugfs_qp_add(qp);
 	return ntrdma_res_add(&qp->res);
 }
 
