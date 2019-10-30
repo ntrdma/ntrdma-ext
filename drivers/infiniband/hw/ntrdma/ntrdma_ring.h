@@ -36,7 +36,7 @@
 #include "linux/types.h"
 
 /* Initialize a range of indices for production */
-static inline void ntrdma_ring_produce(u32 prod, u32 cons, u32 cap,
+static inline bool ntrdma_ring_produce(u32 prod, u32 cons, u32 cap,
 				       u32 *prod_idx, u32 *prod_end,
 				       u32 *base)
 {
@@ -64,6 +64,8 @@ static inline void ntrdma_ring_produce(u32 prod, u32 cons, u32 cap,
 			(((int)prod - (int)cons < 0) && ((int)cons - (int)prod < (int)cap)),
 			"the distance between prod %u and cons %u must be < cap %u",
 			prod, cons, cap);
+
+	return *prod_idx != *prod_end;
 }
 
 /* Initialize a range of indices for consumption */
