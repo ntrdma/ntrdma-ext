@@ -36,6 +36,7 @@
 #include <rdma/ib_verbs.h>
 
 #include "ntrdma_cmd.h"
+#include "ntrdma_ring.h"
 #include "ntrdma_res.h"
 
 struct ntrdma_dev;
@@ -181,6 +182,9 @@ inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp);
 #define ntrdma_qp_info(__qp, __fmt, __args...)			\
 	ntrdma_info(ntrdma_qp_dev(__qp), __fmt, ## __args)
 
+#define ntrdma_qp_info_ratelimited(__qp, __fmt, __args...)		\
+	ntrdma_info_ratelimited(ntrdma_qp_dev(__qp), __fmt, ## __args)
+
 struct ntrdma_qp_init_attr {
 	u32 pd_key;
 	u32 recv_wqe_cap;
@@ -218,21 +222,27 @@ void ntrdma_qp_put(struct ntrdma_qp *qp);
 
 void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp);
 
-struct ntrdma_recv_wqe *ntrdma_qp_recv_wqe(struct ntrdma_qp *qp,
-					   u32 pos);
-struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,
-				      u32 pos);
-struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
-					   u32 pos);
+inline struct ntrdma_recv_wqe *ntrdma_qp_recv_wqe(struct ntrdma_qp *qp,
+						u32 pos);
+inline struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,
+					u32 pos);
+inline struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
+						u32 pos);
+inline
 const struct ntrdma_cqe *ntrdma_qp_send_cqe(struct ntrdma_qp *qp, u32 pos);
 
-int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp);
-void ntrdma_qp_recv_post_done(struct ntrdma_qp *qp);
-void ntrdma_qp_recv_post_get(struct ntrdma_qp *qp,
-			     u32 *pos, u32 *end,
-			     u32 *base);
-void ntrdma_qp_recv_post_put(struct ntrdma_qp *qp,
-			     u32 pos, u32 base);
+static inline bool ntrdma_qp_recv_post_get(struct ntrdma_qp *qp,
+					u32 *pos, u32 *end, u32 *base)
+{
+	return ntrdma_ring_produce(qp->recv_post, qp->recv_cmpl, qp->recv_cap,
+				pos, end, base);
+}
+
+static inline void ntrdma_qp_recv_post_put(struct ntrdma_qp *qp,
+					u32 pos, u32 base)
+{
+	qp->recv_post = ntrdma_ring_update(pos, base, qp->recv_cap);
+}
 
 static inline void ntrdma_qp_send_post_lock(struct ntrdma_qp *qp)
 {
@@ -255,11 +265,32 @@ static inline void ntrdma_qp_schedule_send_work(struct ntrdma_qp *qp)
 	tasklet_schedule(&qp->send_work);
 }
 
-void ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
-			     u32 *pos, u32 *end,
-			     u32 *base);
-void ntrdma_qp_send_post_put(struct ntrdma_qp *qp,
-			     u32 pos, u32 base);
+static inline bool ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
+					u32 *pos, u32 *end, u32 *base)
+{
+	return ntrdma_ring_produce(qp->send_post, qp->send_cmpl, qp->send_cap,
+				pos, end, base);
+}
+
+static inline void ntrdma_qp_send_post_put(struct ntrdma_qp *qp,
+					u32 pos, u32 base)
+{
+	qp->send_post = ntrdma_ring_update(pos, base, qp->send_cap);
+}
+
+static inline void ntrdma_qp_recv_prod_get(struct ntrdma_qp *qp,
+					u32 *pos, u32 *end, u32 *base)
+{
+	ntrdma_ring_consume(qp->recv_post, qp->recv_prod, qp->recv_cap,
+			pos, end, base);
+}
+
+static inline void ntrdma_qp_recv_prod_put(struct ntrdma_qp *qp,
+					u32 pos, u32 base)
+{
+	qp->recv_prod = ntrdma_ring_update(pos, base, qp->recv_cap);
+}
+
 
 /* Remote Queue Pair */
 struct ntrdma_rqp {
@@ -323,6 +354,18 @@ inline u32 ntrdma_rqp_recv_prod(struct ntrdma_rqp *rqp);
 #define ntrdma_rres_rqp(__rres) \
 	container_of(__rres, struct ntrdma_rqp, rres)
 
+#define ntrdma_rqp_dbg(__qp, __args...)			\
+	ntrdma_dbg(ntrdma_rqp_dev(__qp), ## __args)
+
+#define ntrdma_rqp_err(__qp, __fmt, __args...)			\
+	ntrdma_err(ntrdma_rqp_dev(__qp), __fmt, ## __args)
+
+#define ntrdma_rqp_info(__qp, __fmt, __args...)			\
+	ntrdma_info(ntrdma_rqp_dev(__qp), __fmt, ## __args)
+
+#define ntrdma_rqp_info_ratelimited(__qp, __fmt, __args...)		\
+	ntrdma_info_ratelimited(ntrdma_rqp_dev(__qp), __fmt, ## __args)
+
 struct ntrdma_rqp_init_attr {
 	u32 pd_key;
 	u32 recv_wqe_idx;
@@ -355,14 +398,14 @@ static inline void ntrdma_rqp_get(struct ntrdma_rqp *rqp)
 	ntrdma_rres_get(&rqp->rres);
 }
 
-void ntrdma_rqp_put(struct ntrdma_rqp *rqp);
+inline void ntrdma_rqp_put(struct ntrdma_rqp *rqp);
 
-const struct ntrdma_recv_wqe *ntrdma_rqp_recv_wqe(struct ntrdma_rqp *rqp,
-						u32 pos);
+inline inline const struct ntrdma_recv_wqe *ntrdma_rqp_recv_wqe(struct ntrdma_rqp *rqp,
+								u32 pos);
 const struct ntrdma_send_wqe *ntrdma_rqp_send_wqe(struct ntrdma_rqp *rqp,
 						u32 pos);
-struct ntrdma_cqe *ntrdma_rqp_send_cqe(struct ntrdma_rqp *rqp,
-				       u32 pos);
+inline struct ntrdma_cqe *ntrdma_rqp_send_cqe(struct ntrdma_rqp *rqp,
+					u32 pos);
 
 struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, int key);
 struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, int key);
@@ -415,5 +458,29 @@ void ntrdma_free_rqp(struct ntrdma_rqp *rqp);
 
 inline int ntrdma_qp_rdma_write_non_inline(struct ntrdma_qp *qp,
 					struct ntrdma_send_wqe *wqe);
+
+static inline int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp)
+{
+	mutex_lock(&qp->recv_post_lock);
+	if (!is_state_out_of_reset(atomic_read(&qp->state))) {
+		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
+				atomic_read(&qp->state));
+		mutex_unlock(&qp->recv_post_lock);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+void ntrdma_qp_recv_work(struct ntrdma_qp *qp);
+static inline void ntrdma_qp_recv_post_done(struct ntrdma_qp *qp)
+{
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+
+	if (dev->res_enable)
+		ntrdma_qp_recv_work(qp);
+
+	mutex_unlock(&qp->recv_post_lock);
+}
 
 #endif

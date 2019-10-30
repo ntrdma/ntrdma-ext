@@ -1296,9 +1296,7 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 
 	while (ibwr) {
 		/* get the next posting range in the ring */
-		ntrdma_qp_send_post_get(qp, &pos, &end, &base);
-
-		if (pos == end) {
+		if (!ntrdma_qp_send_post_get(qp, &pos, &end, &base)) {
 			ntrdma_qp_err(qp, "posting too many sends QP %d",
 				qp->res.key);
 			rc = -EINVAL;
@@ -1500,11 +1498,9 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 
 	while (ibwr) {
 		/* get the next posting range in the ring */
-		ntrdma_qp_recv_post_get(qp, &pos, &end, &base);
-
-		if (pos == end) {
+		if (!ntrdma_qp_recv_post_get(qp, &pos, &end, &base)) {
 			/* posting too many oustanding requests */
-			ntrdma_dbg(dev, "posting too many recvs\n");
+			ntrdma_qp_dbg(qp, "posting too many recvs");
 			rc = -EINVAL;
 			break;
 		}
