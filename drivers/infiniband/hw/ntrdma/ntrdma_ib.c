@@ -52,12 +52,21 @@
 #include "ntrdma_wr.h"
 #include "ntrdma_eth.h"
 
+#define NTRDMA_IOCTL_BASE 'N'
+
+#define NTRDMA_IOCTL_SEND		_IOWR(NTRDMA_IOCTL_BASE, 0x30, u32)
+
 #define NTRDMA_PKEY_DEFAULT 0xffff
 #define NTRDMA_GIB_TBL_LEN 1
 #define NTRDMA_PKEY_TBL_LEN 2
 
 #define DELL_VENDOR_ID 0x1028
 #define NOT_SUPPORTED 0
+
+struct ntrdma_snd_hdr {
+	u32				wqe_counter;
+	u32				first_wqe_size;
+};
 
 static int ntrdma_qp_file_release(struct inode *inode, struct file *filp);
 static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
@@ -1769,10 +1778,176 @@ static int ntrdma_qp_file_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
+						struct ntrdma_send_wqe *wqe,
+						u32 wqe_size)
+{
+	struct ntrdma_wr_snd_sge *wqe_snd_sge;
+	int i;
+
+	wqe->op_status = 0;
+	wqe->recv_key = ~(u32)0;
+	wqe->rdma_sge.length = 0;
+
+	if (unlikely((wqe->rdma_sge.lkey ==
+				NTRDMA_RESERVED_DMA_LEKY) ||
+			((unsigned)wqe->op_code > (unsigned)
+				NTRDMA_SEND_WR_MAX_SUPPORTED)))
+		return -EINVAL;
+
+	if (ntrdma_send_wqe_is_inline(wqe)) {
+		if (unlikely(wqe->inline_len != wqe_size - sizeof(*wqe)))
+			return -EINVAL;
+	} else {
+		if (unlikely(wqe->sg_count * sizeof(struct ntrdma_wr_snd_sge) !=
+				wqe_size - sizeof(*wqe)))
+			return -EINVAL;
+
+		for (i = 0; i < wqe->sg_count; i++) {
+			wqe_snd_sge = snd_sg_list(i, wqe);
+			if (unlikely(wqe_snd_sge->key ==
+					NTRDMA_RESERVED_DMA_LEKY))
+				return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
+						void __user *_uptr,
+						bool *had_immediate_work,
+						bool *has_deferred_work)
+{
+	struct ntrdma_send_wqe *wqe;
+	u32 pos, end, base;
+	size_t max_size = sizeof(struct ntrdma_send_wqe) +
+		max_t(size_t, qp->send_wqe_inline_cap,
+			qp->send_wqe_sg_cap * sizeof(struct ntrdma_wr_snd_sge));
+	void __user *uptr = _uptr;
+	struct ntrdma_snd_hdr hdr;
+	u32 wqe_size;
+	u32 next_wqe_size;
+	int i = 0;
+	int rc = 0;
+
+	if (copy_from_user(&hdr, uptr, sizeof(hdr))) {
+		rc = -EFAULT;
+		goto out;
+	}
+	uptr += sizeof(hdr);
+	wqe_size = hdr.first_wqe_size;
+
+	while ((rc >= 0) && (i < hdr.wqe_counter)) {
+		/* get the next posting range in the ring */
+		if (!ntrdma_qp_send_post_get(qp, &pos, &end, &base)) {
+			ntrdma_qp_err(qp, "posting too many sends QP %d",
+				qp->res.key);
+			rc = -EINVAL;
+			break;
+		}
+
+		wqe = NULL;
+		for (; i < hdr.wqe_counter; i++) {
+			/* current entry in the ring */
+			if (!wqe)
+				wqe = ntrdma_qp_send_wqe(qp, pos);
+
+			if (unlikely(wqe_size > max_size)) {
+				ntrdma_qp_err(qp, "wqe_size %d max_size %d",
+					wqe_size, (int)max_size);
+				rc = -EINVAL;
+				break;
+			}
+
+			if (copy_from_user(wqe, uptr, wqe_size)) {
+				rc = -EFAULT;
+				break;
+			}
+			uptr += wqe_size;
+			next_wqe_size = wqe->recv_key;
+
+			rc = ntrdma_validate_post_send_wqe(qp, wqe, wqe_size);
+			if (rc < 0)
+				break;
+			wqe_size = next_wqe_size;
+
+			if (!(wqe->flags & IB_SEND_SIGNALED) &&
+				!ntrdma_send_wqe_is_inline(wqe)) {
+				rc = ntrdma_qp_rdma_write_non_inline(qp, wqe);
+				if (rc < 0)
+					break;
+
+				*had_immediate_work = true;
+				/* pos and wqe can be reused. */
+			} else {
+				wqe = NULL;
+				++pos;
+				*has_deferred_work = true;
+			}
+		}
+
+		/* update the next posting range */
+		ntrdma_qp_send_post_put(qp, pos, base);
+	}
+
+ out:
+	if (rc < 0) {
+		if (copy_to_user(_uptr, &i, sizeof(i)))
+			rc = -EFAULT;
+	}
+
+	return rc;
+}
+
+static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp,
+					void __user *_uptr)
+{
+	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 20);
+	bool had_immediate_work = false;
+	bool has_deferred_work = false;
+	int rc;
+
+	ntrdma_qp_send_post_lock(qp);
+
+	if (ntrdma_qp_is_send_ready(qp))
+		rc = ntrdma_qp_process_send_ioctl_locked(qp, _uptr,
+							&had_immediate_work,
+							&has_deferred_work);
+	else {
+		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
+			atomic_read(&qp->state));
+		rc = -EINVAL;
+	}
+
+	ntrdma_qp_send_post_unlock(qp);
+
+	if (has_deferred_work)
+		ntrdma_qp_schedule_send_work(qp);
+
+	if (had_immediate_work)
+		ntc_req_submit(ntrdma_qp_dev(qp)->ntc, &qp->dma_chan);
+
+	NTRDMA_PERF_MEASURE(perf);
+
+	if (rc < 0)
+		ntrdma_qp_err(qp, "%s returning %d", __func__, rc);
+
+	return rc;
+}
+
 static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
 			unsigned long arg)
 {
-	return 0;
+	struct ntrdma_qp *qp = filp->private_data;
+	void __user *argp = (typeof(argp))arg;
+
+	switch (cmd) {
+	case NTRDMA_IOCTL_SEND:
+		return ntrdma_qp_process_send_ioctl(qp, argp);
+	default:
+		return -EINVAL;
+	}
 }
 
 int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
