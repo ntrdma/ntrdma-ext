@@ -37,18 +37,12 @@
 
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
-static const struct ntrdma_wr_snd_sge *
-snd_sg_list_skip_empty(const struct ntrdma_wr_snd_sge *snd_sge,
-		const struct ntrdma_wr_snd_sge *snd_sg_end)
+static const struct ib_sge *
+snd_sg_list_skip_empty(const struct ib_sge *snd_sge,
+		const struct ib_sge *snd_sg_end)
 {
-	u64 len;
-
 	for (; snd_sge != snd_sg_end; snd_sge++) {
-		if (snd_sge->key == NTRDMA_RESERVED_DMA_LEKY)
-			len = snd_sge->snd_dma_buf.size;
-		else
-			len = snd_sge->len;
-		if (len)
+		if (snd_sge->length)
 			break;
 	}
 
@@ -72,8 +66,8 @@ rcv_sg_list_skip_empty(const struct ntrdma_wr_rcv_sge *rcv_sge,
 
 struct ntrdma_snd_cursor {
 	struct ntrdma_dev *dev;
-	const struct ntrdma_wr_snd_sge *snd_sge;
-	const struct ntrdma_wr_snd_sge *snd_sg_end;
+	const struct ib_sge *snd_sge;
+	const struct ib_sge *snd_sg_end;
 	u64 snd_rem;
 	struct ntrdma_mr *mr;
 	u32 mr_key;
@@ -111,7 +105,7 @@ struct ntrdma_lrcv_cursor {
 static inline void
 ntrdma_snd_cursor_init(struct ntrdma_snd_cursor *c,
 		struct ntrdma_dev *dev,
-		const struct ntrdma_wr_snd_sge *snd_sg_list,
+		const struct ib_sge *snd_sg_list,
 		u32 snd_sg_count)
 {
 	c->dev = dev;
@@ -194,13 +188,13 @@ ntrdma_snd_cursor_update(struct ntrdma_snd_cursor *c, int *rc)
 		return false;
 	}
 
-	if (c->mr && (c->mr_key != c->snd_sge->key)) {
+	if (c->mr && (c->mr_key != c->snd_sge->lkey)) {
 		/* FIXME: dma callback for put mr */
 		ntrdma_mr_put(c->mr);
 		c->mr = NULL;
 	}
 
-	c->mr_key = c->snd_sge->key;
+	c->mr_key = c->snd_sge->lkey;
 
 	if (!c->mr && (c->mr_key != NTRDMA_RESERVED_DMA_LEKY)) {
 		/* Get a reference to snd mr */
@@ -212,15 +206,13 @@ ntrdma_snd_cursor_update(struct ntrdma_snd_cursor *c, int *rc)
 		}
 	}
 
+	c->snd_rem = c->snd_sge->length;
 	if (c->mr) {
-		c->snd_rem = c->snd_sge->len;
 		c->mr_sge = c->mr->sg_list;
 		c->mr_sg_end = c->mr_sge + c->mr->sg_count;
 		c->next_io_off = c->snd_sge->addr - c->mr->addr;
-	} else {
-		c->snd_rem = c->snd_sge->snd_dma_buf.size;
+	} else
 		c->next_io_off = 0;
-	}
 
  next_io_off_update:
 	if (c->mr) {
@@ -442,6 +434,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 	struct ntc_dev *ntc;
 	struct ntc_remote_buf *rcv_buf;
 	struct ntc_remote_buf remote;
+	struct ntc_local_buf snd_dma_buf;
 	int rc;
 
 	if (len < 0)
@@ -469,11 +462,14 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 						len);
 	else {
 		TRACE("DMA copy %#lx bytes from %#lx offset %#lx\n",
-			(long)len, (long)snd->snd_sge->snd_dma_buf.dma_addr,
+			(long)len, (long)snd->snd_sge->addr,
 			(long)snd->next_io_off);
 
+		ntc_local_buf_map_dma(&snd_dma_buf,
+				snd->snd_sge->length, snd->snd_sge->addr);
+
 		rc = ntc_request_memcpy_fenced(chan, rcv_buf, rcv->next_io_off,
-					&snd->snd_sge->snd_dma_buf,
+					&snd_dma_buf,
 					snd->next_io_off, len);
 	}
 
@@ -505,7 +501,7 @@ static inline s64 ntrdma_lrcv_cursor_next_io_deref(struct ntrdma_lrcv_cursor *c)
 int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 		u32 *rdma_len,
 		const struct ntrdma_wr_rcv_sge *rcv_sg_list,
-		const struct ntrdma_wr_snd_sge *snd_sg_list,
+		const struct ib_sge *snd_sg_list,
 		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset)
 {
 	u32 total_len = 0;

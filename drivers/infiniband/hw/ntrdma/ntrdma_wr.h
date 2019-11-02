@@ -97,7 +97,7 @@ struct ntrdma_cqe {
 
 static inline size_t ntrdma_wqe_snd_sg_list_size(u32 sg_cap)
 {
-	return sg_cap * sizeof(struct ntrdma_wr_snd_sge);
+	return sg_cap * sizeof(struct ib_sge);
 }
 
 static inline size_t ntrdma_wqe_snd_inline_size(u32 inline_cap)
@@ -111,20 +111,20 @@ static inline bool ntrdma_send_wqe_is_inline(const struct ntrdma_send_wqe *wqe)
 		(wqe->flags & IB_SEND_INLINE);
 }
 
-static inline struct ntrdma_wr_snd_sge *
+static inline struct ib_sge *
 snd_sg_list(int index, struct ntrdma_send_wqe *wqe)
 {
 	void *past_wqe = wqe + 1;
-	struct ntrdma_wr_snd_sge *array = past_wqe;
+	struct ib_sge *array = past_wqe;
 
 	return &array[index];
 }
 
-static inline const struct ntrdma_wr_snd_sge *
+static inline const struct ib_sge *
 const_snd_sg_list(int index, const struct ntrdma_send_wqe *wqe)
 {
 	const void *past_wqe = wqe + 1;
-	const struct ntrdma_wr_snd_sge *array = past_wqe;
+	const struct ib_sge *array = past_wqe;
 
 	return &array[index];
 }

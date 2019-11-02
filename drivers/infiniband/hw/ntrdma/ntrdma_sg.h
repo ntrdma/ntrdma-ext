@@ -39,20 +39,6 @@
 
 #include "ntrdma.h"
 
-struct ntrdma_wr_snd_sge {
-	u32				key;
-	union {
-		/* key != NTRDMA_RESERVED_DMA_LEKY */
-		struct {
-			u64		addr;
-			u32		len;
-		};
-		/* key == NTRDMA_RESERVED_DMA_LEKY */
-		struct ntc_local_buf	snd_dma_buf;
-		char			filler[24];
-	};
-};
-
 struct ntrdma_wr_rcv_sge_shadow {
 	u32				local_key;
 	union {
