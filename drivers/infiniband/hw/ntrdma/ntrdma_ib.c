@@ -1826,7 +1826,7 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 }
 
 static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
-						void __user *_uptr,
+						void volatile *_uptr,
 						bool *had_immediate_work,
 						bool *has_deferred_work)
 {
@@ -1835,17 +1835,14 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 	size_t max_size = sizeof(struct ntrdma_send_wqe) +
 		max_t(size_t, qp->send_wqe_inline_cap,
 			qp->send_wqe_sg_cap * sizeof(struct ib_sge));
-	void __user *uptr = _uptr;
+	void volatile *uptr = _uptr;
 	struct ntrdma_snd_hdr hdr;
 	u32 wqe_size;
 	u32 next_wqe_size;
 	int i = 0;
 	int rc = 0;
 
-	if (copy_from_user(&hdr, uptr, sizeof(hdr))) {
-		rc = -EFAULT;
-		goto out;
-	}
+	memcpy(&hdr, (void *)uptr, sizeof(hdr));
 	uptr += sizeof(hdr);
 	wqe_size = hdr.first_wqe_size;
 
@@ -1871,10 +1868,7 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 				break;
 			}
 
-			if (copy_from_user(wqe, uptr, wqe_size)) {
-				rc = -EFAULT;
-				break;
-			}
+			memcpy(wqe, (void *)uptr, wqe_size);
 			uptr += wqe_size;
 			next_wqe_size = wqe->recv_key;
 
@@ -1902,26 +1896,27 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 		ntrdma_qp_send_post_put(qp, pos, base);
 	}
 
- out:
-	if (rc < 0) {
-		if (copy_to_user(_uptr, &i, sizeof(i)))
-			rc = -EFAULT;
-	}
+	if (rc < 0)
+		*(u32 volatile *)_uptr = i;
 
 	return rc;
 }
 
-static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp,
-					void __user *_uptr)
+static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 {
 	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 20);
 	bool had_immediate_work = false;
 	bool has_deferred_work = false;
+	void volatile *_uptr;
 	int rc;
+
+	if (unlikely(!qp->send_page))
+		return -EINVAL;
+	_uptr = page_address(qp->send_page);
 
 	ntrdma_qp_send_post_lock(qp);
 
-	if (ntrdma_qp_is_send_ready(qp))
+	if (likely(ntrdma_qp_is_send_ready(qp)))
 		rc = ntrdma_qp_process_send_ioctl_locked(qp, _uptr,
 							&had_immediate_work,
 							&has_deferred_work);
@@ -1951,11 +1946,10 @@ static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
 			unsigned long arg)
 {
 	struct ntrdma_qp *qp = filp->private_data;
-	void __user *argp = (typeof(argp))arg;
 
 	switch (cmd) {
 	case NTRDMA_IOCTL_SEND:
-		return ntrdma_qp_process_send_ioctl(qp, argp);
+		return ntrdma_qp_process_send_ioctl(qp);
 	default:
 		return -EINVAL;
 	}
