@@ -318,6 +318,11 @@ err_send_wqe_buf:
 	ntrdma_cq_put(qp->recv_cq);
 	ntrdma_res_deinit(&qp->res);
 err_res:
+	if (qp->send_page) {
+		put_page(qp->send_page);
+		qp->send_page = NULL;
+	}
+
 	return rc;
 }
 
