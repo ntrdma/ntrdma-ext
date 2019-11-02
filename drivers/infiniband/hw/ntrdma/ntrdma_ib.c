@@ -661,6 +661,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	struct ntrdma_cq *send_cq = ntrdma_ib_cq(ibqp_attr->send_cq);
 	struct ntrdma_qp *qp;
 	struct ntrdma_qp_init_attr qp_attr;
+	u64 uptr;
 	struct file *file;
 	int fd;
 	int flags;
@@ -722,6 +723,27 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	qp->ibqp.qp_num = qp->res.key;
 	atomic_set(&qp->state, IB_QPS_RESET);
+
+	if (ibudata && ibudata->inlen >= sizeof(u64)) {
+		if (copy_from_user(&uptr, ibudata->inbuf, sizeof(u64))) {
+			ntrdma_qp_err(qp, "copy_from_user failed");
+			ntrdma_qp_put(qp); /* The initial ref */
+			return ERR_PTR(-EFAULT);
+		}
+
+		if (!uptr) {
+			ntrdma_qp_err(qp, "uptr is NULL");
+			ntrdma_qp_put(qp); /* The initial ref */
+			return ERR_PTR(-EINVAL);
+		}
+
+		rc = get_user_pages_fast(uptr, 1, 1, &qp->send_page);
+		if (rc < 0) {
+			ntrdma_qp_err(qp, "get_user_pages_fast failed: %d", rc);
+			ntrdma_qp_put(qp); /* The initial ref */
+			return ERR_PTR(rc);
+		}
+	}
 
 	if (ibudata && ibudata->outlen >= sizeof(fd)) {
 		flags = O_RDWR | O_CLOEXEC;
@@ -1756,6 +1778,11 @@ int ntrdma_process_mad(struct ib_device *device,
 static int ntrdma_qp_file_release(struct inode *inode, struct file *filp)
 {
 	struct ntrdma_qp *qp = filp->private_data;
+
+	if (qp->send_page) {
+		put_page(qp->send_page);
+		qp->send_page = NULL;
+	}
 
 	ntrdma_qp_put(qp);
 

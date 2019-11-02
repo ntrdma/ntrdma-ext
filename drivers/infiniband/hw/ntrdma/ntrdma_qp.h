@@ -85,6 +85,8 @@ struct ntrdma_qp {
 
 	struct ntc_dma_chan		dma_chan;
 
+	struct page			*send_page;
+
 	/* Protection domain key */
 	u32				pd_key;
 	/* Queue pair access flags */
