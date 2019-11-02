@@ -1551,7 +1551,7 @@ static inline int ntrdma_qp_rdma_write_inline(struct ntrdma_qp *qp, u32 pos,
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_wr_rcv_sge rdma_sge;
-	struct ntrdma_wr_snd_sge rdma_src_sge;
+	struct ib_sge rdma_src_sge;
 	u32 rdma_len;
 	size_t off, data_shift;
 	dma_addr_t wqe_data_dma;
@@ -1568,10 +1568,9 @@ static inline int ntrdma_qp_rdma_write_inline(struct ntrdma_qp *qp, u32 pos,
 	data_shift = sizeof(struct ntrdma_send_wqe);
 	wqe_data_dma = qp->send_wqe_buf.dma_addr + off + data_shift;
 
-	ntc_local_buf_map_dma(&rdma_src_sge.snd_dma_buf,
-			wqe->inline_len, wqe_data_dma);
-
-	rdma_src_sge.key = NTRDMA_RESERVED_DMA_LEKY;
+	rdma_src_sge.addr = wqe_data_dma;
+	rdma_src_sge.length = wqe->inline_len;
+	rdma_src_sge.lkey = NTRDMA_RESERVED_DMA_LEKY;
 
 	rc = ntrdma_zip_rdma(dev, &qp->dma_chan, &rdma_len, &rdma_sge,
 			&rdma_src_sge, 1, 1, 0);

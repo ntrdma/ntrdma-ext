@@ -1216,18 +1216,13 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
 	bool from_user = (qp->ibqp.qp_type != IB_QPT_GSI);
 	int sg_count = wqe->sg_count;
 	struct ib_sge *sge;
-	struct ntrdma_wr_snd_sge *wqe_snd_sge;
+	struct ib_sge *wqe_snd_sge;
 	int i;
-
-	compiletime_assert(sizeof(wqe_snd_sge->snd_dma_buf) ==
-			sizeof(wqe_snd_sge->filler),
-			"Filler must be the same size as snd_dma_buf");
 
 	for (i = 0; i < sg_count; ++i) {
 		sge = &sg_list[i];
 		wqe_snd_sge = snd_sg_list(i, wqe);
-
-		wqe_snd_sge->key = sge->lkey;
+		*wqe_snd_sge = *sge;
 
 		if (unlikely(from_user != !ntrdma_ib_sge_reserved(sge))) {
 			ntrdma_qp_err(qp, "from_user %d but key reserved %d",
@@ -1235,17 +1230,6 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
 			return -EINVAL;
 		}
 
-		if (from_user) {
-			wqe_snd_sge->addr = sge->addr;
-			wqe_snd_sge->len = sge->length;
-		} else {
-			TRACE_DATA("Mapping local buffer of size %#x at %#lx\n",
-				(int)sge->length,
-				(long)(dma_addr_t)sge->addr);
-
-			ntc_local_buf_map_dma(&(wqe_snd_sge->snd_dma_buf),
-					sge->length, sge->addr);
-		}
 		this_cpu_add(dev_cnt.post_send_bytes, sge->length);
 	}
 
@@ -1782,7 +1766,7 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 						struct ntrdma_send_wqe *wqe,
 						u32 wqe_size)
 {
-	struct ntrdma_wr_snd_sge *wqe_snd_sge;
+	struct ib_sge *wqe_snd_sge;
 	int i;
 
 	wqe->op_status = 0;
@@ -1799,13 +1783,13 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 		if (unlikely(wqe->inline_len != wqe_size - sizeof(*wqe)))
 			return -EINVAL;
 	} else {
-		if (unlikely(wqe->sg_count * sizeof(struct ntrdma_wr_snd_sge) !=
+		if (unlikely(wqe->sg_count * sizeof(struct ib_sge) !=
 				wqe_size - sizeof(*wqe)))
 			return -EINVAL;
 
 		for (i = 0; i < wqe->sg_count; i++) {
 			wqe_snd_sge = snd_sg_list(i, wqe);
-			if (unlikely(wqe_snd_sge->key ==
+			if (unlikely(wqe_snd_sge->lkey ==
 					NTRDMA_RESERVED_DMA_LEKY))
 				return -EINVAL;
 		}
@@ -1823,7 +1807,7 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 	u32 pos, end, base;
 	size_t max_size = sizeof(struct ntrdma_send_wqe) +
 		max_t(size_t, qp->send_wqe_inline_cap,
-			qp->send_wqe_sg_cap * sizeof(struct ntrdma_wr_snd_sge));
+			qp->send_wqe_sg_cap * sizeof(struct ib_sge));
 	void __user *uptr = _uptr;
 	struct ntrdma_snd_hdr hdr;
 	u32 wqe_size;

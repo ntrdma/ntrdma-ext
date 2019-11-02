@@ -82,14 +82,15 @@ void ntrdma_debugfs_print_rmr_sg_list(struct seq_file *s, const char *pre,
 
 static inline
 void ntrdma_debugfs_print_wr_snd_sg_list(struct seq_file *s, const char *pre,
-					const struct ntrdma_wr_snd_sge *sg_list,
+					const struct ib_sge *sg_list,
 					u32 sg_count)
 {
 	u32 i;
 
 	for (i = 0; i < sg_count; ++i)
 		seq_printf(s, "%ssnd_sg_list[%u] addr %#llx len %#x key %u\n",
-			   pre, i, sg_list[i].addr, sg_list[i].len, sg_list[i].key);
+			pre, i,
+			sg_list[i].addr, sg_list[i].length, sg_list[i].lkey);
 }
 
 static inline
