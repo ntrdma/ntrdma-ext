@@ -91,6 +91,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 void ntrdma_mr_deinit(struct ntrdma_mr *mr)
 {
 	ntc_mr_buf_clear_sgl(mr->sg_list, mr->sg_count);
+	ntrdma_res_deinit(&mr->res);
 }
 
 static int ntrdma_mr_enable(struct ntrdma_res *res)
