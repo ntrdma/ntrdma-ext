@@ -427,3 +427,4 @@ void ntrdma_rres_remove(struct ntrdma_rres *rres)
 	ntrdma_rres_remove_unsafe(rres);
 	mutex_unlock(&dev->rres_lock);
 }
+
