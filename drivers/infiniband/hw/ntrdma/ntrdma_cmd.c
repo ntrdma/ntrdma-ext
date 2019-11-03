@@ -1110,8 +1110,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	if (!is_state_error(cmd.state)) {
 		rqp->qp_key = cmd.dest_qp_key;
 		TRACE("RQP %d got qp_key %d\n", rqp->rres.key, rqp->qp_key);
-	} else
-		rqp->qp_key = -1;
+	}
 	tasklet_schedule(&rqp->send_work);
 	ntrdma_rqp_put(rqp);
 
