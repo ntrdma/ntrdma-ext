@@ -1057,8 +1057,10 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	qp = ntrdma_dev_qp_look_and_get(dev, rqp->qp_key);
 	TRACE("stall qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
 	ntrdma_qp_send_stall(qp, rqp);
-	if (qp)
+	if (qp) {
+		qp->rqp_key = -1;
 		ntrdma_qp_put(qp);
+	}
 
 	ntrdma_rres_remove(&rqp->rres);
 	ntrdma_rqp_del(rqp);
@@ -1108,9 +1110,11 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	rqp->state = cmd.state;
 	rqp->access = cmd.access;
 
-	//rqp->access = cmd.access; /* TODO: qp access flags */
-	rqp->qp_key = cmd.dest_qp_key;
-
+	if (!is_state_error(cmd.state)) {
+		rqp->qp_key = cmd.dest_qp_key;
+		TRACE("RQP %d got qp_key %d\n", rqp->rres.key, rqp->qp_key);
+	} else
+		rqp->qp_key = -1;
 	tasklet_schedule(&rqp->send_work);
 	ntrdma_rqp_put(rqp);
 

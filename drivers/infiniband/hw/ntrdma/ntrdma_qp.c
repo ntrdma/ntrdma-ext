@@ -666,11 +666,13 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 
 	if (qp && dev)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
-	TRACE("qp %p rqp %p - key %d\n", qp, rqp, qp ? qp->res.key : rqp ?
-			rqp->rres.key : -1);
+	TRACE("qp %p (key %d) rqp %p (key %d)\n", qp, qp ? qp->res.key : -1,
+			rqp, rqp ? rqp->rres.key : -1);
 	ntrdma_qp_send_stall(qp, rqp);
-	if (rqp)
+	if (rqp) {
+		rqp->qp_key = -1;
 		ntrdma_rqp_put(rqp);
+	}
 
 	ntrdma_res_start_cmds(&qp->res);
 
@@ -1956,7 +1958,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	TRACE_DATA(
 		"start %u pos %u QP %d RQP %d prod %u peer vbell idx %d (recv_pos %d, recv_base %d)\n",
-		start, pos, qp->res.key, rqp->qp_key, qp->send_prod,
+		start, pos, qp->res.key, qp->rqp_key, qp->send_prod,
 		qp->peer_send_vbell_idx, recv_pos, recv_base);
 
 	/* submit the request */
@@ -2253,7 +2255,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 		TRACE_DATA(
 				"Signal QP %d RQP %d cons %u start %u pos %u peer vbell idx %d\n",
-				qp->res.key, rqp->qp_key,
+				qp->res.key, qp->rqp_key,
 				rqp->send_cons,
 				start,
 				pos,
