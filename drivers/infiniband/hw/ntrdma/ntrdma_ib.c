@@ -1965,6 +1965,9 @@ static void mr_release(struct kref *kref)
 	ntrdma_mr_deinit(mr);
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);
+	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
+		"Free list element while in the list, obj %p, res %p, mr %p (key %d)\n",
+		obj, res, mr, mr->res.key);
 	kfree(mr);
 	atomic_dec(&dev->mr_num);
 }

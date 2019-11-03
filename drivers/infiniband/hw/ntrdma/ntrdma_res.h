@@ -36,6 +36,7 @@
 #include <linux/completion.h>
 #include <linux/mutex.h>
 #include <linux/types.h>
+#include <linux/poison.h>
 
 #include "ntrdma_obj.h"
 #include "ntrdma_dev.h"
@@ -170,4 +171,12 @@ static inline void ntrdma_rres_put(struct ntrdma_rres *rres,
 {
 	ntrdma_obj_put(&rres->obj, release);
 }
+
+static inline bool ntrdma_list_is_entry_poisoned(struct list_head *entry)
+{
+	if (entry->next == LIST_POISON1 && entry->prev == LIST_POISON2)
+		return true;
+	return false;
+}
+
 #endif

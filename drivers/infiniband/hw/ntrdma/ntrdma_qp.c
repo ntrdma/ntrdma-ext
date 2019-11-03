@@ -346,6 +346,9 @@ static void ntrdma_qp_release(struct kref *kref)
 
 	ntrdma_debugfs_qp_del(qp);
 	ntrdma_qp_deinit(qp);
+	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
+		"Free list element while in the list, obj %p, res %p, qp %p (key %d)\n",
+		obj, res, qp, qp->res.key);
 	ntrdma_free_qp(qp);
 
 	if (dev)
