@@ -1367,7 +1367,7 @@ static void ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
 	if (qp->recv_abort) {
 		opt = qp->recv_abort_first ? NTRDMA_WC_ERR_LOC_PORT :
 				NTRDMA_WC_ERR_ABORTED;
-		ntrdma_recv_fail(outcqe, wqe, NTRDMA_WC_ERR_ABORTED);
+		ntrdma_recv_fail(outcqe, wqe, opt);
 		qp->recv_abort_first = false;
 		ntrdma_info(dev, "fail completion opt %d QP %d\n",
 				opt, qp->res.key);
