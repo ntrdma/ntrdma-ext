@@ -159,8 +159,6 @@ struct ntrdma_qp {
 	spinlock_t		recv_prod_lock;
 	spinlock_t		recv_cons_lock;
 	struct mutex	recv_cmpl_lock;
-
-	struct tasklet_struct		send_work;
 };
 
 inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp);
@@ -251,7 +249,7 @@ static inline void ntrdma_qp_send_post_lock(struct ntrdma_qp *qp)
 	if (qp->ibqp.qp_type != IB_QPT_GSI)
 		mutex_lock(&qp->send_post_lock);
 	else
-		spin_lock_bh(&qp->send_post_slock);
+		spin_lock_bh(&qp->send_post_slock); /* Potential deadlock? */
 }
 
 static inline void ntrdma_qp_send_post_unlock(struct ntrdma_qp *qp)
@@ -262,9 +260,10 @@ static inline void ntrdma_qp_send_post_unlock(struct ntrdma_qp *qp)
 		spin_unlock_bh(&qp->send_post_slock);
 }
 
-static inline void ntrdma_qp_schedule_send_work(struct ntrdma_qp *qp)
-{
-	tasklet_schedule(&qp->send_work);
+bool ntrdma_qp_send_work(struct ntrdma_qp *qp);
+
+static inline int ntrdma_qp_submit_dma(struct ntrdma_qp *qp) {
+	return ntc_req_submit(ntrdma_qp_dev(qp)->ntc, &qp->dma_chan);
 }
 
 static inline bool ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
