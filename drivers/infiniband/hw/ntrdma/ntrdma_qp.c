@@ -98,10 +98,8 @@ static void ntrdma_qp_poll_send_put_and_done(struct ntrdma_poll *poll,
 static void ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 				struct ntrdma_cqe *outcqe, u32 pos);
 
-static void ntrdma_qp_send_work(struct ntrdma_qp *qp);
 static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp);
 
-static void ntrdma_qp_work_cb(unsigned long ptrhld);
 static void ntrdma_rqp_work_cb(unsigned long ptrhld);
 static void ntrdma_rqp_vbell_cb(void *ctx);
 
@@ -295,14 +293,9 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	ntrdma_cq_add_poll(qp->recv_cq, &qp->recv_poll);
 	ntrdma_cq_add_poll(qp->send_cq, &qp->send_poll);
 
-	tasklet_init(&qp->send_work,
-		     ntrdma_qp_work_cb,
-		     to_ptrhld(qp));
-
 	return 0;
 
 deinit:
-	tasklet_kill(&qp->send_work);
 	ntrdma_cq_del_poll(qp->send_cq, &qp->send_poll);
 	ntrdma_cq_del_poll(qp->recv_cq, &qp->recv_poll);
 	kfree(qp->recv_cqe_buf);
@@ -719,7 +712,7 @@ static void ntrdma_qp_reset(struct ntrdma_res *res)
 	 */
 	if (qp->ibqp.qp_type == IB_QPT_GSI) {
 		ntrdma_qp_send_cmpl_start(qp);
-		spin_lock_irqsave(&qp->send_post_slock, irqflags);
+		spin_lock_irqsave(&qp->send_post_slock, irqflags); /* Potential deadlock? */
 		ntrdma_ring_consume(qp->send_post, qp->send_cmpl,
 				qp->send_cap, &start_cmpl, &end, &base);
 		ntrdma_ring_consume(qp->send_post, ntrdma_qp_send_cons(qp),
@@ -1595,7 +1588,7 @@ static inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp, u32 pos,
 		return ntrdma_qp_rdma_write_non_inline(qp, wqe);
 }
 
-static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
+bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 {
 	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 15);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
@@ -1610,6 +1603,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	size_t off, len;
 	int rc;
 	bool abort = false;
+	bool reschedule = false;
 
 	/* verify the qp state and lock for producing sends */
 	rc = ntrdma_qp_send_prod_start(qp);
@@ -1632,7 +1626,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	}
 
 	/* limit the range to batch size */
-	end = min_t(u32, end, start + NTRDMA_QP_BATCH_SIZE);
+	/* end = min_t(u32, end, start + NTRDMA_QP_BATCH_SIZE); */
 
 	/* On GSI qp we do not change qp state in reset, since it cannot move
 	 * to SQE state without error completion, we move it to aborting
@@ -1679,7 +1673,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 #ifdef CONFIG_NTRDMA_RETRY_RECV
 				--pos;
-				ntrdma_qp_schedule_send_work(qp);
+				reschedule = true;
 #else
 				if (!wqe->op_status)
 					wqe->op_status = NTRDMA_WC_ERR_RECV_MISSING;
@@ -1756,7 +1750,7 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		}
 
 		if (pos == end) {
-			ntrdma_qp_schedule_send_work(qp);
+			reschedule = true;
 			break;
 		}
 	}
@@ -1813,10 +1807,6 @@ static void ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		start, pos, qp->res.key, qp->rqp_key, qp->send_prod,
 		qp->peer_send_vbell_idx, recv_pos, recv_base);
 
-	/* submit the request */
-	/* TODO: return value is ignored! */
-	ntc_req_submit(dev->ntc, &qp->dma_chan);
-
 	/* release lock for state change or producing later sends */
 done:
 	ntrdma_qp_send_prod_done(qp);
@@ -1835,9 +1825,7 @@ err_rqp:
 		qp->send_aborting = true;
 		qp->send_abort = false;
 		qp->send_abort_first = false;
-		/* Make sure no ntrdma_post_send is running */
-		spin_lock(&qp->send_post_slock);
-		spin_unlock(&qp->send_post_slock);
+		/* We know no other ntrdma_post_send is running */
 		ntrdma_qp_send_prod_put(qp, end, base);
 		ntrdma_qp_send_prod_done(qp);
 		ntrdma_cq_cue(qp->send_cq);
@@ -1848,6 +1836,8 @@ err_rqp:
 
  out:
 	NTRDMA_PERF_MEASURE(perf);
+
+	return reschedule;
 }
 
 static inline void ntrdma_rqp_send_vbell_clear(struct ntrdma_dev *dev,
@@ -2132,13 +2122,6 @@ err_memcpy:
 	ntrdma_err(dev, "%s Failed qp key %d\n",
 			__func__, rqp->qp_key);
 	ntrdma_unrecoverable_err(dev);
-}
-
-static void ntrdma_qp_work_cb(unsigned long ptrhld)
-{
-	struct ntrdma_qp *qp = of_ptrhld(ptrhld);
-
-	ntrdma_qp_send_work(qp);
 }
 
 static void ntrdma_rqp_work_cb(unsigned long ptrhld)

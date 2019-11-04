@@ -1298,6 +1298,23 @@ static inline int ntrdma_post_send_wqe(struct ntrdma_qp *qp,
 	}
 }
 
+static inline int ntrdma_qp_additional_work(struct ntrdma_qp *qp,
+					bool has_deferred_work,
+					bool had_immediate_work) {
+	int rc = 0;
+	bool reschedule;
+
+	if (has_deferred_work)
+		do {
+			reschedule = ntrdma_qp_send_work(qp);
+			rc = ntrdma_qp_submit_dma(qp);
+		} while (reschedule);
+	else if (had_immediate_work)
+		rc = ntrdma_qp_submit_dma(qp);
+
+	return rc;
+}
+
 static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 					struct ib_send_wr *ibwr,
 					struct ib_send_wr **bad,
@@ -1395,13 +1412,10 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 		rc = -EINVAL;
 	}
 
+	/* TODO: return value is ignored! */
+	ntrdma_qp_additional_work(qp, has_deferred_work, had_immediate_work);
+
 	ntrdma_qp_send_post_unlock(qp);
-
-	if (has_deferred_work)
-		ntrdma_qp_schedule_send_work(qp);
-
-	if (had_immediate_work)
-		ntc_req_submit(ntrdma_qp_dev(qp)->ntc, &qp->dma_chan);
 
 	NTRDMA_PERF_MEASURE(perf);
 
@@ -1926,13 +1940,10 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 		rc = -EINVAL;
 	}
 
+	/* TODO: return value is ignored! */
+	ntrdma_qp_additional_work(qp, has_deferred_work, had_immediate_work);
+
 	ntrdma_qp_send_post_unlock(qp);
-
-	if (has_deferred_work)
-		ntrdma_qp_schedule_send_work(qp);
-
-	if (had_immediate_work)
-		ntc_req_submit(ntrdma_qp_dev(qp)->ntc, &qp->dma_chan);
 
 	NTRDMA_PERF_MEASURE(perf);
 
