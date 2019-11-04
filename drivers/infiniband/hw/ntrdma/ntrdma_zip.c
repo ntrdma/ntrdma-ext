@@ -548,6 +548,94 @@ out:
 	return rc;
 }
 
+static inline s64 ntrdma_cursor_next_imm_io(struct ntrdma_dev *dev,
+					struct ntrdma_rcv_cursor *rcv,
+					const void *snd_data,
+					u32 snd_data_size,
+					struct ntc_dma_chan *chan)
+{
+	s64 len = min_t(u64, snd_data_size,
+			ntrdma_rcv_cursor_next_io_size(rcv));
+	struct ntc_dev *ntc;
+	struct ntc_remote_buf *rcv_buf;
+	struct ntc_remote_buf remote;
+	int rc;
+
+	if (unlikely(len < 0))
+		return -EINVAL;
+
+	ntc = dev->ntc;
+
+	if (!rcv->rmr) {
+		rc = ntc_remote_buf_map(&remote, ntc,
+					&rcv->rcv_sge->exp_buf_desc);
+		if (rc < 0)
+			return rc;
+		TRACE("DMA copy %#lx bytes to remote at %#lx offset %#lx\n",
+			(long)len,
+			(long)rcv->rcv_sge->exp_buf_desc.chan_addr.value,
+			(long)rcv->next_io_off);
+		rcv_buf = &remote;
+	} else
+		rcv_buf = rcv->rmr_sge;
+
+	rc = ntc_mr_request_memcpy_unfenced_imm(chan, rcv_buf, rcv->next_io_off,
+						snd_data, len);
+
+	if (!rcv->rmr)
+		ntc_remote_buf_unmap(&remote, ntc);
+
+	if (rc < 0) {
+		ntrdma_err(dev, "ntc_req_imm (len=%lu) error %d\n",
+			(long)len, -rc);
+		return rc;
+	} else
+		return len;
+}
+
+int ntrdma_zip_rdma_imm(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
+			const struct ntrdma_wr_rcv_sge *rcv_sg_list,
+			const void *snd_data,
+			u32 rcv_sg_count, u32 snd_data_size,
+			u32 rcv_start_offset)
+{
+	u32 total_len = 0;
+	s64 len;
+	int rc = 0;
+	struct ntrdma_rcv_cursor rcv_cursor;
+
+	if (unlikely(!snd_data_size))
+		return 0;
+
+	ntrdma_rcv_cursor_init(&rcv_cursor, dev, rcv_sg_list, rcv_sg_count,
+			rcv_start_offset);
+
+	if (!ntrdma_rcv_cursor_update(&rcv_cursor, &rc))
+		goto out;
+
+	do {
+		len = ntrdma_cursor_next_imm_io(dev, &rcv_cursor,
+						snd_data, snd_data_size, chan);
+		if (len < 0) {
+			rc = len;
+			break;
+		}
+
+		snd_data += len;
+		snd_data_size -= len;
+		total_len += len;
+
+	} while ((snd_data_size > 0) &&
+		ntrdma_rcv_cursor_forward(&rcv_cursor, len, &rc));
+
+out:
+	ntrdma_rcv_cursor_deinit(&rcv_cursor);
+
+	this_cpu_add(dev_cnt.qp_send_work_bytes, total_len);
+
+	return rc;
+}
+
 int ntrdma_zip_sync(struct ntrdma_dev *dev,
 		struct ntrdma_wr_rcv_sge *lrcv_sg_list, u32 lrcv_sg_count)
 {

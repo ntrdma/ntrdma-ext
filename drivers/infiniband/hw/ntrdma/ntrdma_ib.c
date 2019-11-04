@@ -1281,21 +1281,22 @@ static inline int ntrdma_post_send_wqe(struct ntrdma_qp *qp,
 	int rc;
 
 	if (ntrdma_send_wqe_is_inline(wqe))
-		return ntrdma_ib_send_to_inline_wqe(qp, wqe, sg_list);
-	else {
+		rc = ntrdma_ib_send_to_inline_wqe(qp, wqe, sg_list);
+	else
 		rc = ntrdma_ib_send_to_wqe_sgl(qp, wqe, sg_list);
-		if (rc < 0)
-			return rc;
 
-		if (wqe->flags & IB_SEND_SIGNALED)
-			return 0;
+	if (rc < 0)
+		return rc;
 
-		rc = ntrdma_qp_rdma_write_non_inline(qp, wqe);
-		if (rc < 0)
-			return rc;
+	if ((wqe->flags & IB_SEND_SIGNALED) ||
+		(wqe->op_code != IB_WR_RDMA_WRITE))
+		return 0;
 
-		return 1;
-	}
+	rc = ntrdma_qp_rdma_write(qp, wqe);
+	if (rc < 0)
+		return rc;
+
+	return 1;
 }
 
 static inline int ntrdma_qp_additional_work(struct ntrdma_qp *qp,
@@ -1892,8 +1893,8 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 			wqe_size = next_wqe_size;
 
 			if (!(wqe->flags & IB_SEND_SIGNALED) &&
-				!ntrdma_send_wqe_is_inline(wqe)) {
-				rc = ntrdma_qp_rdma_write_non_inline(qp, wqe);
+				(wqe->op_code == IB_WR_RDMA_WRITE)) {
+				rc = ntrdma_qp_rdma_write(qp, wqe);
 				if (rc < 0)
 					break;
 
