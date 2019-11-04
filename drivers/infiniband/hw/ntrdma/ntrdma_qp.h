@@ -457,8 +457,8 @@ static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev);
 void ntrdma_free_rqp(struct ntrdma_rqp *rqp);
 
-inline int ntrdma_qp_rdma_write_non_inline(struct ntrdma_qp *qp,
-					struct ntrdma_send_wqe *wqe);
+inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
+				struct ntrdma_send_wqe *wqe);
 
 static inline int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp)
 {

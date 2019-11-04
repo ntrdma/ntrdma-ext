@@ -1058,7 +1058,7 @@ static void ntc_req_imm_cb(void *ctx)
 }
 
 int ntc_req_imm(struct ntc_dma_chan *chan,
-		u64 dst, void *ptr, size_t len, bool fence,
+		u64 dst, const void *ptr, size_t len, bool fence,
 		void (*cb)(void *cb_ctx), void *cb_ctx)
 {
 	struct ntc_ntb_imm *imm;

@@ -660,7 +660,7 @@ int ntc_mr_request_memcpy_unfenced(struct ntc_dma_chan *chan,
 }
 
 int ntc_req_imm(struct ntc_dma_chan *chan,
-		u64 dst, void *ptr, size_t len, bool fence,
+		u64 dst, const void *ptr, size_t len, bool fence,
 		void (*cb)(void *cb_ctx), void *cb_ctx);
 
 /**
@@ -771,6 +771,20 @@ static inline int ntc_request_imm64(struct ntc_dma_chan *chan,
 	return _ntc_request_imm64(chan,
 				dst->dma_addr, dst->size, dst_offset,
 				val, fence, cb, cb_ctx);
+}
+
+static inline
+int ntc_mr_request_memcpy_unfenced_imm(struct ntc_dma_chan *chan,
+				const struct ntc_remote_buf *dst,
+				u64 dst_offset,
+				const void *src_data,
+				u32 len)
+{
+	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, len)))
+		return -EINVAL;
+
+	return ntc_req_imm(chan, dst->dma_addr, src_data, len,
+			false, NULL, NULL);
 }
 
 /**
