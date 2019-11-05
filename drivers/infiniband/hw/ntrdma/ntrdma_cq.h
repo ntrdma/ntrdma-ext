@@ -72,6 +72,8 @@ struct ntrdma_cq {
 	struct ntrdma_vbell		vbell;
 	u32				vbell_idx;
 	bool				need_cue;
+
+	struct page			*poll_page;
 };
 
 #define ntrdma_ib_cq(__ibcq) \
@@ -79,6 +81,18 @@ struct ntrdma_cq {
 
 #define ntrdma_cq_dev(__cq) \
 	ntrdma_obj_dev(&(__cq)->obj)
+
+#define ntrdma_cq_dbg(__cq, __args...)			\
+	ntrdma_dbg(ntrdma_cq_dev(__cq), ## __args)
+
+#define ntrdma_cq_err(__cq, __fmt, __args...)			\
+	ntrdma_err(ntrdma_cq_dev(__cq), __fmt, ## __args)
+
+#define ntrdma_cq_info(__cq, __fmt, __args...)			\
+	ntrdma_info(ntrdma_cq_dev(__cq), __fmt, ## __args)
+
+#define ntrdma_cq_info_ratelimited(__cq, __fmt, __args...)		\
+	ntrdma_info_ratelimited(ntrdma_cq_dev(__cq), __fmt, ## __args)
 
 void ntrdma_cq_init(struct ntrdma_cq *cq,
 		struct ntrdma_dev *dev, int vbell_idx);

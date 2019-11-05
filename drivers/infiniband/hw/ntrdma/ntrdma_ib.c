@@ -30,6 +30,8 @@
  * SOFTWARE.
  */
 
+#include "ntrdma_ioctl.h"
+
 #include <linux/module.h>
 #include <linux/in6.h>
 #include <linux/slab.h>
@@ -52,10 +54,6 @@
 #include "ntrdma_wr.h"
 #include "ntrdma_eth.h"
 
-#define NTRDMA_IOCTL_BASE 'N'
-
-#define NTRDMA_IOCTL_SEND		_IOWR(NTRDMA_IOCTL_BASE, 0x30, u32)
-
 #define NTRDMA_PKEY_DEFAULT 0xffff
 #define NTRDMA_GIB_TBL_LEN 1
 #define NTRDMA_PKEY_TBL_LEN 2
@@ -63,13 +61,12 @@
 #define DELL_VENDOR_ID 0x1028
 #define NOT_SUPPORTED 0
 
-struct ntrdma_snd_hdr {
-	u32				wqe_counter;
-	u32				first_wqe_size;
-};
-
 static int ntrdma_qp_file_release(struct inode *inode, struct file *filp);
 static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
+				unsigned long arg);
+
+static int ntrdma_cq_file_release(struct inode *inode, struct file *filp);
+static long ntrdma_cq_file_ioctl(struct file *filp, unsigned int cmd,
 				unsigned long arg);
 
 static struct kmem_cache *ah_slab;
@@ -83,6 +80,13 @@ static struct file_operations ntrdma_qp_fops = {
 	.release	= ntrdma_qp_file_release,
 	.unlocked_ioctl	= ntrdma_qp_file_ioctl,
 	.compat_ioctl	= ntrdma_qp_file_ioctl,
+};
+
+static struct file_operations ntrdma_cq_fops = {
+	.owner		= THIS_MODULE,
+	.release	= ntrdma_cq_file_release,
+	.unlocked_ioctl	= ntrdma_cq_file_ioctl,
+	.compat_ioctl	= ntrdma_cq_file_ioctl,
 };
 
 void ntrdma_free_qp(struct ntrdma_qp *qp)
@@ -345,8 +349,12 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		struct ib_udata *ibudata)
 {
 	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
+	struct ntrdma_create_cq_ext inbuf;
+	struct ntrdma_create_cq_resp_ext outbuf;
 	struct ntrdma_cq *cq;
 	u32 vbell_idx;
+	struct file *file;
+	int flags;
 	int rc;
 
 	if (atomic_inc_return(&dev->cq_num) >= NTRDMA_DEV_MAX_CQ) {
@@ -359,6 +367,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		rc = -ENOMEM;
 		goto err_cq;
 	}
+
+	memset(cq, 0, sizeof(*cq));
 
 	if (ibattr->comp_vector)
 		vbell_idx = ibattr->comp_vector;
@@ -376,6 +386,72 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 			cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
 			&cq->ibcq, vbell_idx);
 
+	if (ibudata && ibudata->inlen >= sizeof(inbuf)) {
+		if (copy_from_user(&inbuf, ibudata->inbuf, sizeof(inbuf))) {
+			ntrdma_cq_err(cq, "copy_from_user failed");
+			ntrdma_cq_put(cq); /* The initial ref */
+			return ERR_PTR(-EFAULT);
+		}
+
+		if (!ntrdma_ioctl_if_check_desc(&inbuf.desc)) {
+			ntrdma_cq_err(cq, "BAD inbuf.desc:\n%s", inbuf.desc);
+			goto bad_ntrdma_ioctl_if;
+		}
+
+		if (!inbuf.poll_page_ptr) {
+			ntrdma_cq_err(cq, "inbuf.poll_page_ptr is NULL");
+			ntrdma_cq_put(cq); /* The initial ref */
+			return ERR_PTR(-EINVAL);
+		}
+
+		rc = get_user_pages_fast(inbuf.poll_page_ptr, 1, 1,
+					&cq->poll_page);
+		if (rc < 0) {
+			ntrdma_cq_err(cq, "get_user_pages_fast failed: %d", rc);
+			ntrdma_cq_put(cq); /* The initial ref */
+			return ERR_PTR(rc);
+		}
+	}
+
+	if (ibudata && ibudata->outlen >= sizeof(outbuf)) {
+		flags = O_RDWR | O_CLOEXEC;
+
+		outbuf.cqfd = get_unused_fd_flags(flags);
+		if (outbuf.cqfd < 0) {
+			ntrdma_cq_err(cq, "get_unused_fd_flags failed: %d",
+				outbuf.cqfd);
+			ntrdma_cq_put(cq); /* The initial ref */
+			return ERR_PTR(outbuf.cqfd);
+		}
+
+		file = anon_inode_getfile("ntrdma_cq", &ntrdma_cq_fops, cq,
+					flags);
+		if (IS_ERR(file)) {
+			ntrdma_cq_err(cq, "anon_inode_getfile failed: %ld",
+				PTR_ERR(file));
+			ntrdma_cq_put(cq); /* The initial ref */
+			put_unused_fd(outbuf.cqfd);
+			return (void *)file;
+		}
+		/*
+		 * Ref taken below will be released in ntrdma_cq_file_release().
+		 */
+		ntrdma_cq_get(cq);
+
+		if (copy_to_user(ibudata->outbuf, &outbuf, sizeof(outbuf))) {
+			ntrdma_cq_err(cq, "copy_to_user failed");
+			fput(file); /* Close the file. */
+			ntrdma_cq_put(cq); /* The initial ref */
+			put_unused_fd(outbuf.cqfd);
+			return ERR_PTR(-EFAULT);
+		}
+
+		fd_install(outbuf.cqfd, file);
+		/* outbuf.cqfd now points to file */
+	}
+
+ bad_ntrdma_ioctl_if:
+
 	return &cq->ibcq;
 
 err_add:
@@ -391,6 +467,11 @@ static void ntrdma_cq_release(struct kref *kref)
 	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
 	struct ntrdma_cq *cq = container_of(obj, struct ntrdma_cq, obj);
 	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
+
+	if (cq->poll_page) {
+		put_page(cq->poll_page);
+		cq->poll_page = NULL;
+	}
 
 	ntrdma_debugfs_cq_del(cq);
 	kmem_cache_free(cq_slab, cq);
@@ -578,6 +659,127 @@ static int ntrdma_req_notify_cq(struct ib_cq *ibcq,
 	return 0;
 }
 
+static void ntrdma_wc_from_cqe(struct ntrdma_ibv_wc *wc,
+			struct ntrdma_qp *qp,
+			const struct ntrdma_cqe *cqe)
+{
+	u16 op_code = cqe->op_code;
+	u16 op_status = cqe->op_status;
+
+	wc->wr_id = cqe->ulp_handle;
+
+	wc->status = ntrdma_ib_wc_status_from_cqe(op_status);
+	wc->opcode = ntrdma_ib_wc_opcode_from_cqe(op_code);
+
+	wc->qp_num = qp->ibqp.qp_num;
+	wc->vendor_err = op_status;
+	wc->byte_len = cqe->rdma_len;
+	wc->imm_data = cqe->imm_data;
+	wc->src_qp = qp->rqp_key;
+	wc->wc_flags = ntrdma_ib_wc_flags_from_cqe(op_code);
+	wc->pkey_index = 0;
+	wc->slid = 0;
+	wc->sl = 0;
+	wc->dlid_path_bits = 0;
+}
+
+static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
+{
+	struct ntrdma_qp *qp;
+	struct ntrdma_cqe cqe;
+	u32 pos, end, base;
+	int count = 0, rc = 0;
+	struct ntrdma_poll_hdr *hdr;
+	struct ntrdma_ibv_wc *wc;
+	u32 howmany;
+
+	if (!cq->poll_page)
+		return -EINVAL;
+
+	hdr = page_address(cq->poll_page);
+	howmany = READ_ONCE(hdr->wc_counter);
+
+	if (howmany > (PAGE_SIZE - sizeof(*hdr)) / sizeof(*wc))
+		return -EINVAL;
+
+	wc = (void *)(hdr + 1);
+
+	/* lock for completions */
+	ntrdma_cq_cmpl_start(cq);
+
+	while (count < howmany) {
+		/* get the next completing range in the next qp ring */
+		rc = ntrdma_cq_cmpl_get(cq, &qp, &pos, &end, &base);
+		if (rc < 0)
+			break;
+
+		for (;;) {
+			/* current entry in the ring, or aborted */
+			ntrdma_cq_cmpl_cqe(cq, &cqe, pos);
+
+			/*
+			 * completions should be generated for post send
+			 * with IB_SEND_SIGNALED flag
+			 */
+			if (!ntrdma_wr_code_push_data(cqe.op_code) ||
+					(cqe.flags & IB_SEND_SIGNALED)) {
+				/* transform the entry into work completion */
+				ntrdma_wc_from_cqe(&wc[count], qp, &cqe);
+				++count;
+			}
+
+			++pos;
+
+			/* quit after the last completion */
+			if (count == howmany || pos == end)
+				break;
+		}
+
+		/* update the next completing range */
+		ntrdma_cq_cmpl_put(cq, pos, base);
+	}
+
+	/* release lock for later completions */
+	ntrdma_cq_cmpl_done(cq);
+
+	hdr->wc_counter = count;
+
+	if (count) {
+		this_cpu_add(dev_cnt.cqes_polled, count);
+		return 0;
+	}
+	if (rc == -EAGAIN)
+		return 0;
+	return rc;
+}
+
+static long ntrdma_cq_file_ioctl(struct file *filp, unsigned int cmd,
+			unsigned long arg)
+{
+	struct ntrdma_cq *cq = filp->private_data;
+
+	switch (cmd) {
+	case NTRDMA_IOCTL_POLL:
+		return ntrdma_cq_process_poll_ioctl(cq);
+	default:
+		return -EINVAL;
+	}
+}
+
+static int ntrdma_cq_file_release(struct inode *inode, struct file *filp)
+{
+	struct ntrdma_cq *cq = filp->private_data;
+
+	if (cq->poll_page) {
+		put_page(cq->poll_page);
+		cq->poll_page = NULL;
+	}
+
+	ntrdma_cq_put(cq);
+
+	return 0;
+}
+
 static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 				     struct ib_ucontext *ibuctx,
 				     struct ib_udata *ibudata)
@@ -659,11 +861,11 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
 	struct ntrdma_cq *recv_cq = ntrdma_ib_cq(ibqp_attr->recv_cq);
 	struct ntrdma_cq *send_cq = ntrdma_ib_cq(ibqp_attr->send_cq);
+	struct ntrdma_create_qp_ext inbuf;
+	struct ntrdma_create_qp_resp_ext outbuf;
 	struct ntrdma_qp *qp;
 	struct ntrdma_qp_init_attr qp_attr;
-	u64 uptr;
 	struct file *file;
-	int fd;
 	int flags;
 	int rc;
 
@@ -724,20 +926,26 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	qp->ibqp.qp_num = qp->res.key;
 	atomic_set(&qp->state, IB_QPS_RESET);
 
-	if (ibudata && ibudata->inlen >= sizeof(u64)) {
-		if (copy_from_user(&uptr, ibudata->inbuf, sizeof(u64))) {
+	if (ibudata && ibudata->inlen >= sizeof(inbuf)) {
+		if (copy_from_user(&inbuf, ibudata->inbuf, sizeof(inbuf))) {
 			ntrdma_qp_err(qp, "copy_from_user failed");
 			ntrdma_qp_put(qp); /* The initial ref */
 			return ERR_PTR(-EFAULT);
 		}
 
-		if (!uptr) {
-			ntrdma_qp_err(qp, "uptr is NULL");
+		if (!ntrdma_ioctl_if_check_desc(&inbuf.desc)) {
+			ntrdma_qp_err(qp, "BAD inbuf.desc:\n%s", inbuf.desc);
+			goto bad_ntrdma_ioctl_if;
+		}
+
+		if (!inbuf.send_page_ptr) {
+			ntrdma_qp_err(qp, "inbuf.send_page_ptr is NULL");
 			ntrdma_qp_put(qp); /* The initial ref */
 			return ERR_PTR(-EINVAL);
 		}
 
-		rc = get_user_pages_fast(uptr, 1, 1, &qp->send_page);
+		rc = get_user_pages_fast(inbuf.send_page_ptr, 1, 1,
+					&qp->send_page);
 		if (rc < 0) {
 			ntrdma_qp_err(qp, "get_user_pages_fast failed: %d", rc);
 			ntrdma_qp_put(qp); /* The initial ref */
@@ -745,14 +953,15 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		}
 	}
 
-	if (ibudata && ibudata->outlen >= sizeof(fd)) {
+	if (ibudata && ibudata->outlen >= sizeof(outbuf)) {
 		flags = O_RDWR | O_CLOEXEC;
 
-		fd = get_unused_fd_flags(flags);
-		if (fd < 0) {
-			ntrdma_qp_err(qp, "get_unused_fd_flags failed: %d", fd);
+		outbuf.qpfd = get_unused_fd_flags(flags);
+		if (outbuf.qpfd < 0) {
+			ntrdma_qp_err(qp, "get_unused_fd_flags failed: %d",
+				outbuf.qpfd);
 			ntrdma_qp_put(qp); /* The initial ref */
-			return ERR_PTR(fd);
+			return ERR_PTR(outbuf.qpfd);
 		}
 
 		file = anon_inode_getfile("ntrdma_qp", &ntrdma_qp_fops, qp,
@@ -761,7 +970,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			ntrdma_qp_err(qp, "anon_inode_getfile failed: %ld",
 				PTR_ERR(file));
 			ntrdma_qp_put(qp); /* The initial ref */
-			put_unused_fd(fd);
+			put_unused_fd(outbuf.qpfd);
 			return (void *)file;
 		}
 		/*
@@ -769,17 +978,19 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		 */
 		ntrdma_qp_get(qp);
 
-		if (copy_to_user(ibudata->outbuf, &fd, sizeof(fd))) {
+		if (copy_to_user(ibudata->outbuf, &outbuf, sizeof(outbuf))) {
 			ntrdma_qp_err(qp, "copy_to_user failed");
 			fput(file); /* Close the file. */
 			ntrdma_qp_put(qp); /* The initial ref */
-			put_unused_fd(fd);
+			put_unused_fd(outbuf.qpfd);
 			return ERR_PTR(-EFAULT);
 		}
 
-		fd_install(fd, file); /* fd now points to file */
+		fd_install(outbuf.qpfd, file);
+		/* outbuf.qpfd now points to file */
 	}
 
+ bad_ntrdma_ioctl_if:
 	ntrdma_qp_dbg(qp, "added qp%d type %d",
 			qp->res.key, ibqp_attr->qp_type);
 
