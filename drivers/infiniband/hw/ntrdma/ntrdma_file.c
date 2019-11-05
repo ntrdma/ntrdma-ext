@@ -13,11 +13,18 @@
 
 #include "ntrdma_file.h"
 
+#include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/device.h>
 #include <linux/module.h>
 
 #define NTRDMA_MINORS		(1U << MINORBITS)
+
+#define NTRDMA_FILE_IOCTL_BASE 'F'
+
+#define NTRDMA_FILEIOCTL_REG		_IOWR(NTRDMA_FILE_IOCTL_BASE, 0x30, u32)
+#define NTRDMA_FILEIOCTL_SEND		_IOWR(NTRDMA_FILE_IOCTL_BASE, 0x31, u32)
 
 static int ntrdma_file_open(struct inode *inode, struct file *filp);
 static int ntrdma_file_release(struct inode *inode, struct file *filp);
@@ -73,19 +80,68 @@ static const struct attribute_group *ntrdma_file_attrs_groups[] = {
 	NULL,
 };
 
+struct ntrdma_common_data {
+	struct page *common_page;
+	void volatile *common_ptr;
+};
+
 static int ntrdma_file_open(struct inode *inode, struct file *filp)
 {
+	struct ntrdma_common_data *common_data;
+
+	common_data = kmalloc(sizeof(*common_data), GFP_KERNEL);
+	if (!common_data)
+		return -ENOMEM;
+
+	common_data->common_page = NULL;
+	common_data->common_ptr = NULL;
+
+	filp->private_data = common_data;
+
 	return 0;
 }
 
 static int ntrdma_file_release(struct inode *inode, struct file *filp)
 {
+	struct ntrdma_common_data *common_data = filp->private_data;
+
+	if (common_data->common_page)
+		put_page(common_data->common_page);
+
+	kfree(common_data);
+
 	return 0;
 }
 
 static long ntrdma_file_ioctl(struct file *filp, unsigned int cmd,
 			unsigned long arg)
 {
+	struct ntrdma_common_data *common_data = filp->private_data;
+	u8 data[64];
+	int i;
+	int rc;
+
+	switch (cmd) {
+	case NTRDMA_FILEIOCTL_REG:
+		if (common_data->common_page)
+			return -EINVAL;
+		rc = get_user_pages_fast(arg, 1, 1, &common_data->common_page);
+		if (rc >= 0)
+			common_data->common_ptr =
+				page_address(common_data->common_page);
+		return rc;
+	case NTRDMA_FILEIOCTL_SEND:
+		if (!common_data->common_page)
+			return -EINVAL;
+		memcpy(data, (void *)common_data->common_ptr, sizeof(data));
+		for (i = 0; i < sizeof(data); i++)
+			data[i]++;
+		memcpy((void *)common_data->common_ptr + 1024,
+			data, sizeof(data));
+		return 0;
+	default:
+		return -EINVAL;
+	}
 	return 0;
 }
 
