@@ -33,6 +33,7 @@
 #ifndef NTRDMA_WR_H
 #define NTRDMA_WR_H
 
+#include "ntrdma_ioctl.h"
 #include "ntrdma_sg.h"
 
 /* work and completion queue entry op_code values */
@@ -61,21 +62,6 @@
 #define NTRDMA_WC_ERR_RDMA_ACCESS	9
 #define NTRDMA_WC_ERR_LOC_PORT		10
 
-
-/* MUST BE THE SAME AS IN USERSPACE */
-struct ntrdma_send_wqe {
-	u64				ulp_handle;
-	u16				op_code;
-	u16				op_status;
-	u32				recv_key;
-	struct ib_sge			rdma_sge;
-	u32				imm_data;
-	u32				flags;
-	union {
-		u32			sg_count;
-		u32			inline_len;
-	};
-};
 
 struct ntrdma_recv_wqe {
 	u64				ulp_handle;
