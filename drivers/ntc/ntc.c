@@ -165,7 +165,8 @@ struct bus_type *ntc_bus_ptr(void)
 EXPORT_SYMBOL(ntc_bus_ptr);
 
 static
-struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type)
+struct ntc_dma_chan *ntc_req_rr(struct ntc_dev *ntc,
+				enum ntc_dma_chan_type type)
 {
 	int old_index;
 	int i;
@@ -174,7 +175,7 @@ struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type)
 		old_index = atomic_read(&ntc->dma_chan_rr_index[type]);
 		i = old_index + 1;
 
-		if ((i >= ARRAY_SIZE(ntc->dma_chan)) || !ntc->dma_chan[i])
+		if ((i >= ARRAY_SIZE(ntc->dma_chan)) || !ntc->dma_chan[i].chan)
 			i = 0;
 
 	} while (atomic_cmpxchg(&ntc->dma_chan_rr_index[type], old_index, i) !=
@@ -182,17 +183,13 @@ struct dma_chan *ntc_req_rr(struct ntc_dev *ntc, enum ntc_dma_chan_type type)
 
 	pr_info("ntc_req_rr for type %d returns dma_chan #%d", type, i);
 
-	return ntc->dma_chan[i];
+	return &ntc->dma_chan[i];
 }
 
-void ntc_init_dma_chan(struct ntc_dma_chan *dma_chan,
+void ntc_init_dma_chan(struct ntc_dma_chan **dma_chan,
 		struct ntc_dev *ntc, enum ntc_dma_chan_type type)
 {
-	dma_chan->ntc = ntc;
-	dma_chan->chan = ntc_req_rr(ntc, type);
-	dma_chan->last_cookie = 0;
-	dma_chan->submit_cookie = 0;
-	dma_chan->submit_counter = 0;
+	*dma_chan = ntc_req_rr(ntc, type);
 }
 EXPORT_SYMBOL(ntc_init_dma_chan);
 

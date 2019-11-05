@@ -222,7 +222,7 @@ struct ntc_driver {
 struct ntc_dev {
 	struct device			dev;
 	struct device			*ntb_dev;
-	struct dma_chan			*dma_chan[NTC_MAX_DMA_CHANS];
+	struct ntc_dma_chan		dma_chan[NTC_MAX_DMA_CHANS];
 	atomic_t		dma_chan_rr_index[NTC_NUM_DMA_CHAN_TYPES];
 	struct device			*dma_engine_dev;
 	const struct ntc_ctx_ops	*ctx_ops;
@@ -474,12 +474,23 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 	return peer_mw->base + offset;
 }
 
-void ntc_init_dma_chan(struct ntc_dma_chan *dma_chan,
+void ntc_init_dma_chan(struct ntc_dma_chan **dma_chan,
 		struct ntc_dev *ntc, enum ntc_dma_chan_type type);
 
 static inline struct device *ntc_dma_chan_dev(struct ntc_dma_chan *dma_chan)
 {
 	return dma_chan->chan->device->dev;
+}
+
+static inline void ntc_dma_chan_tx_status(struct ntc_dma_chan *chan)
+{
+	struct dma_tx_state txstate;
+
+	chan->submit_counter = 0;
+	txstate.used = 0;
+	dmaengine_tx_status(chan->chan, chan->submit_cookie,
+			&txstate);
+	chan->submit_cookie = txstate.used;
 }
 
 /**
@@ -500,7 +511,15 @@ static inline struct device *ntc_dma_chan_dev(struct ntc_dma_chan *dma_chan)
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_submit(struct ntc_dev *ntc, struct ntc_dma_chan *chan);
+static inline int ntc_req_submit(struct ntc_dev *ntc, struct ntc_dma_chan *chan)
+{
+	dma_async_issue_pending(chan->chan);
+
+	if (++chan->submit_counter >= 0xff)
+		ntc_dma_chan_tx_status(chan);
+
+	return 0;
+}
 
 /**
  * ntc_req_memcpy() - append a buffer to buffer memory copy operation
@@ -534,9 +553,53 @@ int ntc_req_submit(struct ntc_dev *ntc, struct ntc_dma_chan *chan);
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_req_memcpy(struct ntc_dma_chan *chan,
-		dma_addr_t dst, dma_addr_t src, u64 len,
-		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx);
+static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
+				dma_addr_t dst, dma_addr_t src, u64 len,
+				bool fence, void (*cb)(void *cb_ctx),
+				void *cb_ctx)
+{
+	struct dma_async_tx_descriptor *tx;
+	int flags = fence ? DMA_PREP_FENCE : 0;
+
+	if (unlikely(!len))
+		return -EINVAL;
+
+	do { /* not a loop */
+
+		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
+					flags);
+		if (tx)
+			break;
+
+		pr_warn("DMA ring is full for len %#llx. taking status.", len);
+		ntc_dma_chan_tx_status(chan);
+
+		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
+					flags);
+		if (tx)
+			break;
+
+		pr_warn("DMA ring still full. len %#llx. waiting", len);
+		/* Busy waiting */
+		dma_sync_wait(chan->chan, chan->last_cookie);
+
+		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
+					flags);
+		if (tx)
+			break;
+
+		pr_err("DMA ring still full. len %#llx. Give up.", len);
+		return -ENOMEM;
+	} while (false);
+
+	tx->callback = cb;
+	tx->callback_param = cb_ctx;
+
+	if (dma_submit_error(chan->last_cookie = dmaengine_submit(tx)))
+		return -EIO;
+
+	return 0;
+}
 
 static inline bool ntc_segment_valid(u64 buf_size, u64 buf_offset, u64 len)
 {

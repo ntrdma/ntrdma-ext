@@ -118,8 +118,6 @@ static struct dentry *ntc_dbgfs;
 #define NTC_NTB_LINK_COMMITTED		6
 #define NTC_NTB_LINK_HELLO		7
 
-#define NTC_NTB_DMA_PREP_FLAGS		0
-
 #define NTC_NTB_PING_PONG_SPAD		BIT(1)
 #define NTC_NTB_PING_PONG_MEM		BIT(2)
 #define NTC_NTB_PING_POLL_MEM		BIT(3)
@@ -966,79 +964,6 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
 }
 EXPORT_SYMBOL(_ntc_link_reset);
 
-int ntc_req_submit(struct ntc_dev *ntc, struct ntc_dma_chan *chan)
-{
-	struct dma_tx_state txstate;
-
-	dev_vdbg(&ntc->dev, "submit request\n");
-
-	dma_async_issue_pending(chan->chan);
-
-	if (++chan->submit_counter >= 0xff)
-	{
-		chan->submit_counter = 0;
-		txstate.used = 0;
-		dmaengine_tx_status(chan->chan, chan->submit_cookie,
-				&txstate);
-		chan->submit_cookie = txstate.used;
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL(ntc_req_submit);
-
-static inline int ntc_ntb_req_prep_flags(bool fence)
-{
-	int flags = NTC_NTB_DMA_PREP_FLAGS;
-
-	if (fence)
-		flags |= DMA_PREP_FENCE;
-
-	return flags;
-}
-
-int ntc_req_memcpy(struct ntc_dma_chan *chan,
-		dma_addr_t dst, dma_addr_t src, u64 len,
-		bool fence, void (*cb)(void *cb_ctx), void *cb_ctx)
-{
-	struct dma_async_tx_descriptor *tx;
-	int flags;
-
-	dev_vdbg(ntc_dma_chan_dev(chan),
-		"request memcpy dst %#llx src %#llx len %#llx\n",
-		 dst, src, len);
-
-	if (!len)
-		return -EINVAL;
-
-	flags = ntc_ntb_req_prep_flags(fence);
-
-	tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len, flags);
-	if (!tx) {
-
-		pr_warn("DMA ring is full for len %#llx waiting ...", len);
-		dma_sync_wait(chan->chan, chan->last_cookie); /* Busy waiting */
-		pr_warn("DMA ring full for len %#llx retrying...", len);
-
-		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
-					flags);
-		if (!tx) {
-			pr_err("DMA ring still full (len %#llx) after retrying",
-				len);
-			return -ENOMEM;
-		}
-	}
-
-	tx->callback = cb;
-	tx->callback_param = cb_ctx;
-
-	if (dma_submit_error(chan->last_cookie = dmaengine_submit(tx)))
-		return -EIO;
-
-	return 0;
-}
-EXPORT_SYMBOL(ntc_req_memcpy);
-
 static void ntc_req_imm_cb(void *ctx)
 {
 	struct ntc_ntb_imm *imm = ctx;
@@ -1501,7 +1426,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	ntc->dev.parent = &dev->ntb->dev;
 
 	ntc->ntb_dev = ntc_ntb_dma_dev(dev);
-	ntc->dma_engine_dev = ntc->dma_chan[0]->device->dev;
+	ntc->dma_engine_dev = ntc->dma_chan[0].chan->device->dev;
 
 	/* make sure link is disabled and warnings are cleared */
 	ntb_link_disable(dev->ntb);
@@ -1634,8 +1559,8 @@ static void ntc_ntb_release(struct device *device)
 	put_device(&dev->ntb->dev);
 
 	for (i = 0; i < ARRAY_SIZE(dev->ntc.dma_chan); i++) {
-		dma = dev->ntc.dma_chan[i];
-		dev->ntc.dma_chan[i] = NULL;
+		dma = dev->ntc.dma_chan[i].chan;
+		dev->ntc.dma_chan[i].chan = NULL;
 		if (!dma)
 			break;
 		dma_release_channel(dma);
@@ -1770,6 +1695,7 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	struct dma_chan *dma;
 	dma_cap_mask_t mask;
 	enum ntc_dma_chan_type type;
+	struct ntc_dma_chan *dma_chan;
 	int node, rc;
 	int i, j;
 
@@ -1789,14 +1715,19 @@ static int ntc_ntb_probe(struct ntb_client *self,
 
 	for (i = 0, j = 0; i < num_dma_chan; i++) {
 		dma = dma_request_channel(mask, ntc_ntb_filter_bus, &node);
-		dev->ntc.dma_chan[j] = dma;
+		dma_chan = &dev->ntc.dma_chan[j];
+		dma_chan->ntc = &dev->ntc;
+		dma_chan->chan = dma;
+		dma_chan->last_cookie = 0;
+		dma_chan->submit_cookie = 0;
+		dma_chan->submit_counter = 0;
 		if (dma)
 			j++;
 	}
 	for (; j < ARRAY_SIZE(dev->ntc.dma_chan); j++)
-		dev->ntc.dma_chan[j] = NULL;
+		dev->ntc.dma_chan[j].chan = NULL;
 
-	if (!dev->ntc.dma_chan[0]) {
+	if (!dev->ntc.dma_chan[0].chan) {
 		pr_debug("no dma for new device %s\n", dev_name(&ntb->dev));
 		rc = -ENODEV;
 		goto err_dma;
@@ -1823,8 +1754,8 @@ static int ntc_ntb_probe(struct ntb_client *self,
 err_init:
 	put_device(&ntb->dev);
 	for (i = 0; i < ARRAY_SIZE(dev->ntc.dma_chan); i++) {
-		dma = dev->ntc.dma_chan[i];
-		dev->ntc.dma_chan[i] = NULL;
+		dma = dev->ntc.dma_chan[i].chan;
+		dev->ntc.dma_chan[i].chan = NULL;
 		if (!dma)
 			break;
 		dma_release_channel(dma);

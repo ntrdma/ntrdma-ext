@@ -504,7 +504,7 @@ more:
 
 		off = start * sizeof(*rx_wqe_buf);
 		len = (pos - start) * sizeof(*rx_wqe_buf);
-		rc = ntc_request_memcpy_fenced(&eth->dma_chan,
+		rc = ntc_request_memcpy_fenced(eth->dma_chan,
 					&eth->peer_tx_wqe_buf, off,
 					&eth->rx_wqe_buf, off,
 					len);
@@ -520,17 +520,17 @@ more:
 		if (start != end)
 			goto more;
 
-		rc = ntc_request_imm32(&eth->dma_chan,
+		rc = ntc_request_imm32(eth->dma_chan,
 				&eth->peer_tx_prod_buf, 0,
 				eth->rx_prod, true, NULL, NULL);
 		if (rc < 0)
 			ntrdma_err(dev,
 				"ntc_request_imm32 failed. rc=%d\n", rc);
 
-		ntrdma_dev_vbell_peer(dev, &eth->dma_chan, eth->peer_vbell_idx);
-		ntc_req_signal(dev->ntc, &eth->dma_chan, NULL, NULL,
+		ntrdma_dev_vbell_peer(dev, eth->dma_chan, eth->peer_vbell_idx);
+		ntc_req_signal(dev->ntc, eth->dma_chan, NULL, NULL,
 			NTB_DEFAULT_VEC(dev->ntc));
-		ntc_req_submit(dev->ntc, &eth->dma_chan);
+		ntc_req_submit(dev->ntc, eth->dma_chan);
 	}
 	spin_unlock_bh(&eth->rx_prod_lock);
 }
@@ -739,7 +739,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 		if (rc < 0)
 			goto err_buf_map;
 
-		rc = ntc_request_memcpy_with_cb(&eth->dma_chan,
+		rc = ntc_request_memcpy_with_cb(eth->dma_chan,
 						&skb_ctx->dst, 0,
 						&skb_ctx->src, off - tx_off,
 						len + tx_off,
@@ -772,7 +772,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 			off = pos * sizeof(struct ntc_remote_buf_desc);
 			len = (end - pos) * sizeof(struct ntc_remote_buf_desc);
-			rc = ntc_request_memcpy_fenced(&eth->dma_chan,
+			rc = ntc_request_memcpy_fenced(eth->dma_chan,
 						&eth->peer_rx_cqe_buf, off,
 						&eth->tx_cqe_buf, off,
 						len);
@@ -785,17 +785,17 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 							  eth->tx_cap);
 		}
 
-		rc = ntc_request_imm32(&eth->dma_chan,
+		rc = ntc_request_imm32(eth->dma_chan,
 				&eth->peer_rx_cons_buf, 0,
 				eth->tx_cmpl, true, NULL, NULL);
 		if (rc < 0)
 			ntrdma_err(dev,
 				"ntc_request_imm32 failed. rc=%d\n", rc);
 
-		ntrdma_dev_vbell_peer(dev, &eth->dma_chan, eth->peer_vbell_idx);
-		ntc_req_signal(dev->ntc, &eth->dma_chan, NULL, NULL,
+		ntrdma_dev_vbell_peer(dev, eth->dma_chan, eth->peer_vbell_idx);
+		ntc_req_signal(dev->ntc, eth->dma_chan, NULL, NULL,
 			NTB_DEFAULT_VEC(dev->ntc));
-		ntc_req_submit(dev->ntc, &eth->dma_chan);
+		ntc_req_submit(dev->ntc, eth->dma_chan);
 	}
 	goto done;
 

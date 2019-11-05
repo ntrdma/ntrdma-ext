@@ -592,7 +592,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			off = start * sizeof(union ntrdma_cmd);
 			len = (pos - start) * sizeof(union ntrdma_cmd);
-			rc = ntc_request_memcpy_fenced(&dev->dma_chan,
+			rc = ntc_request_memcpy_fenced(dev->dma_chan,
 						&dev->peer_cmd_recv_buf, off,
 						&dev->cmd_send_buf, off,
 						len);
@@ -602,7 +602,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 					len, -rc);
 
 			/* update the producer index on the peer */
-			rc = ntc_request_imm32(&dev->dma_chan,
+			rc = ntc_request_imm32(dev->dma_chan,
 					&dev->peer_cmd_recv_buf,
 					dev->peer_recv_prod_shift,
 					dev->cmd_send_prod, true, NULL, NULL);
@@ -612,12 +612,12 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 					rc);
 
 			/* update the vbell and signal the peer */
-			ntrdma_dev_vbell_peer(dev, &dev->dma_chan,
+			ntrdma_dev_vbell_peer(dev, dev->dma_chan,
 					dev->peer_cmd_recv_vbell_idx);
 
-			ntc_req_signal(dev->ntc, &dev->dma_chan, NULL, NULL,
+			ntc_req_signal(dev->ntc, dev->dma_chan, NULL, NULL,
 				NTB_DEFAULT_VEC(dev->ntc));
-			ntc_req_submit(dev->ntc, &dev->dma_chan);
+			ntc_req_submit(dev->ntc, dev->dma_chan);
 
 			TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
 				(pos - start), start,
@@ -1247,7 +1247,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 			off = start * sizeof(union ntrdma_rsp);
 			len = (pos - start) * sizeof(union ntrdma_rsp);
-			rc = ntc_request_memcpy_fenced(&dev->dma_chan,
+			rc = ntc_request_memcpy_fenced(dev->dma_chan,
 						&dev->peer_cmd_send_rsp_buf,
 						off,
 						&dev->cmd_recv_rsp_buf, off,
@@ -1258,7 +1258,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 					len, -rc);
 
 			/* update the producer index on the peer */
-			rc = ntc_request_imm32(&dev->dma_chan,
+			rc = ntc_request_imm32(dev->dma_chan,
 					&dev->peer_cmd_send_rsp_buf,
 					dev->peer_send_cons_shift,
 					dev->cmd_recv_cons, true, NULL, NULL);
@@ -1269,12 +1269,12 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 			/* update the vbell and signal the peer */
 
-			ntrdma_dev_vbell_peer(dev, &dev->dma_chan,
+			ntrdma_dev_vbell_peer(dev, dev->dma_chan,
 					      dev->peer_cmd_send_vbell_idx);
-			ntc_req_signal(dev->ntc, &dev->dma_chan, NULL, NULL,
+			ntc_req_signal(dev->ntc, dev->dma_chan, NULL, NULL,
 				NTB_DEFAULT_VEC(dev->ntc));
 
-			ntc_req_submit(dev->ntc, &dev->dma_chan);
+			ntc_req_submit(dev->ntc, dev->dma_chan);
 			schedule_work(&dev->cmd_recv_work);
 		} else {
 			if (ntrdma_cmd_recv_vbell_add(dev) == -EAGAIN)
