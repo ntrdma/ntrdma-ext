@@ -297,6 +297,8 @@ int ntrdma_res_add(struct ntrdma_res *res)
 			ntrdma_vdbg(dev, "resource commands initiated\n");
 			rc = res->enable(res);
 			WARN(rc, "%ps failed and unhandled", res->enable);
+			if (rc)
+				list_del(&res->obj.dev_entry);
 			ntrdma_dev_cmd_submit(dev);
 		} else {
 			ntrdma_vdbg(dev, "no commands\n");
@@ -314,6 +316,7 @@ int ntrdma_res_add(struct ntrdma_res *res)
 			"ntrdma res add(%ps) cmd timeout after %lu msec",
 			res->enable,
 			res->timeout);
+		ntrdma_res_del(res);
 		ntrdma_unrecoverable_err(dev);
 	}
 
