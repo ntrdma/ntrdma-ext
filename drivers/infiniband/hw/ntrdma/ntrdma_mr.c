@@ -65,12 +65,15 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 	int count;
 	int rc;
 
-	count = ntc_umem_sgl(dev->ntc, mr->ib_umem,
-			mr->sg_list, mr->sg_count, mr->access);
-	if (count != mr->sg_count) {
-		rc = -EFAULT;
-		goto err;
-	}
+	if (mr->ib_umem) {
+		count = ntc_umem_sgl(dev->ntc, mr->ib_umem,
+				mr->sg_list, mr->sg_count, mr->access);
+		if (count != mr->sg_count) {
+			rc = -EFAULT;
+			goto err;
+		}
+	} else
+		count = mr->sg_count;
 
 	rc = ntrdma_res_init(&mr->res, dev, &dev->mr_vec,
 			ntrdma_mr_enable, ntrdma_mr_disable, NULL, -1);
