@@ -31,6 +31,7 @@
  */
 
 #include "ntrdma_ioctl.h"
+#include <linux/ntc_pfn.h>
 
 #include <linux/module.h>
 #include <linux/in6.h>
@@ -1798,6 +1799,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
 	struct ntrdma_mr *mr;
 	struct ib_umem *ib_umem;
+	unsigned long dma_addr = 0;
+	unsigned long dma_len;
 	int rc, i, count;
 
 	ntrdma_vdbg(dev, "called user addr %llx len %lld:\n",
@@ -1826,22 +1829,30 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		goto err_umem;
 	}
 
-	ib_umem = ib_umem_get(pd->ibpd.uobject->context, start, length,
-			mr_access_flags, false);
+	rc = ntc_get_io_pfn_segment(current->mm, start, length,
+				mr_access_flags & IB_ACCESS_REMOTE_WRITE,
+				&dma_addr, &dma_len);
+	if ((rc >= 0) && (dma_len >= length)) {
+		ib_umem = NULL;
+		count = 1;
+		pr_info("MAPPED ADDR %#llx TO DMA %#lx LEN %#llx",
+			start, dma_addr, length);
+	} else {
+		ib_umem = ib_umem_get(pd->ibpd.uobject->context, start, length,
+				mr_access_flags, false);
 
-	if (IS_ERR(ib_umem)) {
-		rc = PTR_ERR(ib_umem);
-		ntrdma_err(dev, "reg_user_mr failed on ib_umem %d\n", rc);
-		goto err_umem;
-	}
-
-	count = ntc_umem_count(dev->ntc, ib_umem);
-	if (count < 0) {
-		rc = count;
-		ntrdma_err(dev,
-				"reg_user_mr failed on ntc_umem_count %d\n",
+		if (IS_ERR(ib_umem)) {
+			rc = PTR_ERR(ib_umem);
+			ntrdma_err(dev, "reg_user_mr failed on ib_umem %d\n",
 				rc);
-		goto err_mr;
+			goto err_umem;
+		}
+
+		count = ntc_umem_count(dev->ntc, ib_umem);
+		if (count < 0) {
+			rc = count;
+			goto err_mr;
+		}
 	}
 
 	mr = kmalloc_node(sizeof(*mr) + count * sizeof(mr->sg_list[0]),
@@ -1858,6 +1869,13 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	mr->addr = virt_addr;
 	mr->len = length;
 	mr->sg_count = count;
+
+	if (!ib_umem) {
+		rc = ntc_mr_buf_map_dma(&mr->sg_list[0], dev->ntc, length,
+					dma_addr, mr_access_flags);
+		if (rc < 0)
+			goto err_init;
+	}
 
 	rc = ntrdma_mr_init(mr, dev);
 	if (rc < 0) {
@@ -1893,7 +1911,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 err_init:
 	kfree(mr);
 err_mr:
-	ib_umem_release(ib_umem);
+	if (ib_umem)
+		ib_umem_release(ib_umem);
 err_umem:
 	atomic_dec(&dev->mr_num);
 err_len:
