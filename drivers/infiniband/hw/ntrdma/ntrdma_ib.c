@@ -1280,7 +1280,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
  out:
 	*bad = ibwr;
 
-	NTC_PERF_MEASURE(perf);
+	NTRDMA_PERF_MEASURE(perf);
 
 	return rc;
 }
@@ -1436,7 +1436,7 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 out:
 	*bad = ibwr;
 
-	NTC_PERF_MEASURE(perf);
+	NTRDMA_PERF_MEASURE(perf);
 
 	return rc;
 }

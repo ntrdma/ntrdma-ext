@@ -35,6 +35,12 @@
 
 #include <linux/kernel.h>
 #include <linux/ntc.h>
+#include <linux/ntc_trace.h>
+#include "ntrdma_file.h"
+
+#define NTRDMA_PERF_MEASURE(name) do {					\
+		if (ntrdma_measure_perf) NTC_PERF_MEASURE(name);	\
+	} while (false)
 
 #define NTRDMA_RESERVED_DMA_LEKY 0xFFFF
 
