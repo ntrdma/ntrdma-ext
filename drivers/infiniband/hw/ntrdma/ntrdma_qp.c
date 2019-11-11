@@ -1939,7 +1939,7 @@ err_rqp:
 			qp->send_aborting, qp->res.key, qp, qp->send_cq, end);
 
  out:
-	NTC_PERF_MEASURE(perf);
+	NTRDMA_PERF_MEASURE(perf);
 }
 
 static inline void ntrdma_rqp_send_vbell_clear(struct ntrdma_dev *dev,
