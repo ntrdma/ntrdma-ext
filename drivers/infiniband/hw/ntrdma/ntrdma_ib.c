@@ -1444,6 +1444,9 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	ntrdma_vdbg(dev, "called user addr %llx len %lld:\n",
 			virt_addr, length);
 
+	TRACE("reg mr addr %llx len %lld:\n",
+			virt_addr, length);
+					"
 	if (length > IB_MR_LIMIT_BYTES) {
 		ntrdma_err(dev, "reg_user_mr with not supported length %lld\n",
 				length);
@@ -1452,6 +1455,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	}
 
 	if (atomic_inc_return(&dev->mr_num) >= NTRDMA_DEV_MAX_MR) {
+		ntrdma_err(dev, "reg_user_mr beyond supported number %d\n",
+				NTRDMA_DEV_MAX_MR);
 		rc = -ETOOMANYREFS;
 		goto err_umem;
 	}
@@ -1467,12 +1472,16 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	if (IS_ERR(ib_umem)) {
 		rc = PTR_ERR(ib_umem);
+		ntrdma_err(dev, "reg_user_mr failed on ib_umem %d\n", rc);
 		goto err_umem;
 	}
 
 	count = ntc_umem_count(dev->ntc, ib_umem);
 	if (count < 0) {
 		rc = count;
+		ntrdma_err(dev,
+				"reg_user_mr failed on ntc_umem_count %d\n",
+				rc);
 		goto err_mr;
 	}
 
@@ -1480,6 +1489,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 			GFP_KERNEL, dev->node);
 	if (!mr) {
 		rc = -ENOMEM;
+		ntrdma_err(dev, "reg_user_mr failed on kmalloc_node %d\n", rc);
 		goto err_mr;
 	}
 
@@ -1491,12 +1501,17 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	mr->sg_count = count;
 
 	rc = ntrdma_mr_init(mr, dev);
-	if (rc)
+	if (rc < 0) {
+		ntrdma_err(dev,
+				"reg_user_mr failed on ntrdma_mr_init %d\n",
+				rc);
 		goto err_init;
+	}
 
 	rc = ntrdma_mr_add(mr);
-	if (rc) {
+	if (rc < 0) {
 		ntrdma_mr_put(mr);
+		ntrdma_err(dev, "reg_user_mr failed on ntrdma_mr_add %d\n", rc);
 		return ERR_PTR(rc);
 	}
 
@@ -1523,7 +1538,7 @@ err_mr:
 err_umem:
 	atomic_dec(&dev->mr_num);
 err_len:
-	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
+	ntrdma_err(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
 
