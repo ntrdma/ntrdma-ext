@@ -1446,7 +1446,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	TRACE("reg mr addr %llx len %lld:\n",
 			virt_addr, length);
-					"
+
 	if (length > IB_MR_LIMIT_BYTES) {
 		ntrdma_err(dev, "reg_user_mr with not supported length %lld\n",
 				length);
