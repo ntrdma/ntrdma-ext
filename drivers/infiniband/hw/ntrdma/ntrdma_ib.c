@@ -1808,11 +1808,10 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	unsigned long dma_len;
 	int rc, i, count;
 
-	ntrdma_vdbg(dev, "called user addr %llx len %lld:\n",
-			virt_addr, length);
+	ntrdma_info(dev, "called user addr %llx len %lld: (%d/%d)\n",
+			virt_addr, length, atomic_read(&dev->mr_num),
+			NTRDMA_DEV_MAX_MR);
 
-	TRACE("reg mr addr %llx len %lld:\n",
-			virt_addr, length);
 
 	if (length > IB_MR_LIMIT_BYTES) {
 		ntrdma_err(dev, "reg_user_mr with not supported length %lld\n",
