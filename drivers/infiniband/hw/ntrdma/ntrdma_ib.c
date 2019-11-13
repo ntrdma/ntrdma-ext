@@ -359,6 +359,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	int rc;
 
 	if (atomic_inc_return(&dev->cq_num) >= NTRDMA_DEV_MAX_CQ) {
+		ntrdma_err(dev, "beyond supported number %d\n",
+				NTRDMA_DEV_MAX_CQ);
 		rc = -ETOOMANYREFS;
 		goto err_cq;
 	}
@@ -377,6 +379,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
 	cq = kmem_cache_alloc_node(cq_slab, GFP_KERNEL, dev->node);
 	if (!cq) {
+		ntrdma_err(dev, "kmem_cache_alloc_node failed\n");
 		rc = -ENOMEM;
 		goto err_cq;
 	}
@@ -389,7 +392,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	if (rc)
 		goto err_add;
 
-	ntrdma_dbg(dev,
+	ntrdma_info(dev,
 			"added cq %p (%d/%d) ib cq %p vbell idx %d c\n",
 			cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
 			&cq->ibcq, vbell_idx);
@@ -466,7 +469,7 @@ err_add:
 	ntrdma_cq_put(cq);
 err_cq:
 	atomic_dec(&dev->cq_num);
-	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
+	ntrdma_err(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
 
@@ -799,6 +802,8 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	ntrdma_vdbg(dev, "called\n");
 
 	if (atomic_inc_return(&dev->pd_num) >= NTRDMA_DEV_MAX_PD) {
+		ntrdma_err(dev, "beyond supported number %d\n",
+				NTRDMA_DEV_MAX_PD);
 		rc = -ETOOMANYREFS;
 		goto err_pd;
 	}
@@ -806,6 +811,7 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	pd = kmem_cache_alloc_node(pd_slab, GFP_KERNEL, dev->node);
 	if (!pd) {
 		rc = -ENOMEM;
+		ntrdma_err(dev, "kmem_cache_alloc_node failed\n");
 		goto err_pd;
 	}
 
@@ -816,8 +822,10 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	ntrdma_vdbg(dev, "initialized pd %p\n", pd);
 
 	rc = ntrdma_pd_add(pd);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "ntrdma_pd_add failed %d\n", rc);
 		goto err_add;
+	}
 
 	ntrdma_dbg(dev, "added pd%d\n", pd->key);
 
@@ -828,7 +836,7 @@ err_add:
 	kmem_cache_free(pd_slab, pd);
 err_pd:
 	atomic_dec(&dev->pd_num);
-	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
+	ntrdma_err(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
 static void ntrdma_pd_release(struct kref *kref)
@@ -878,6 +886,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	int rc;
 
 	if (atomic_inc_return(&dev->qp_num) >= NTRDMA_DEV_MAX_QP) {
+		ntrdma_err(dev, "beyond supported number %d\n",
+				NTRDMA_DEV_MAX_QP);
 		rc = -ETOOMANYREFS;
 		goto err_qp;
 	}
@@ -885,6 +895,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	qp = kmem_cache_alloc_node(qp_slab, GFP_KERNEL, dev->node);
 	if (!qp) {
 		rc = -ENOMEM;
+		ntrdma_err(dev, "kmem_cache_alloc_node failed\n");
 		goto err_qp;
 	}
 
@@ -923,16 +934,24 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	}
 
 	rc = ntrdma_qp_init(qp, dev, recv_cq, send_cq, &qp_attr);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "ntrdma_qp_init failed rc %d\n", rc);
 		goto err_init;
+	}
 
 	ntrdma_debugfs_qp_add(qp); /* TODO: status must be checked. */
 	rc = ntrdma_qp_add(qp);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "ntrdma_qp_add failed %d\n", rc);
 		goto err_add;
+	}
 
 	qp->ibqp.qp_num = qp->res.key;
 	atomic_set(&qp->state, IB_QPS_RESET);
+
+	ntrdma_info(dev, "added qp%d type %d (%d/%d)\n",
+		qp->res.key, ibqp_attr->qp_type,
+		atomic_read(&dev->qp_num), NTRDMA_DEV_MAX_QP);
 
 	if (ibudata && ibudata->inlen >= sizeof(inbuf)) {
 		if (copy_from_user(&inbuf, ibudata->inbuf, sizeof(inbuf))) {
@@ -960,6 +979,9 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			return ERR_PTR(rc);
 		}
 	}
+	ntrdma_info(dev, "added qp%d type %d (%d/%d)\n",
+			qp->res.key, ibqp_attr->qp_type,
+			atomic_read(&dev->qp_num), NTRDMA_DEV_MAX_QP);
 
 	if (ibudata && ibudata->outlen >= sizeof(outbuf)) {
 		flags = O_RDWR | O_CLOEXEC;
@@ -1000,7 +1022,6 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
  bad_ntrdma_ioctl_if:
 	ntrdma_qp_dbg(qp, "added qp%d type %d",
-			qp->res.key, ibqp_attr->qp_type);
 
 	return &qp->ibqp;
 
@@ -1014,7 +1035,7 @@ err_init:
 	kmem_cache_free(qp_slab, qp);
 err_qp:
 	atomic_dec(&dev->qp_num);
-	ntrdma_dbg(dev, "failed, returning err %d\n", rc);
+	ntrdma_err(dev, "failed, returning err %d\n", rc);
 	return ERR_PTR(rc);
 }
 
