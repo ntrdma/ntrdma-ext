@@ -198,7 +198,7 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 	u32 vbell_val;
 	int i;
 
-	ntrdma_vdbg(dev, "vbell work\n");
+	TRACE_DATA("vbell work vec=%d", vec);
 
 	spin_lock(&dev->vbell_self_lock);
 
@@ -214,8 +214,10 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 		if (head->seq == vbell_val)
 			continue;
 		head->seq = vbell_val;
+		TRACE_DATA("firing vbell head i=%d", i);
 		ntrdma_vbell_head_fire(head);
 	}
+	TRACE_DATA("vbell work done vec=%d", vec);
 
 out:
 	spin_unlock(&dev->vbell_self_lock);
@@ -280,6 +282,7 @@ int ntrdma_dev_vbell_add(struct ntrdma_dev *dev,
 		rc = -EINVAL;
 		ntrdma_err(dev,
 				"vbell add failed, vbell not enabled\n");
+		TRACE_DATA("vbell disabled");
 		goto err_unlock;
 	}
 
@@ -298,10 +301,12 @@ int ntrdma_dev_vbell_add_clear(struct ntrdma_dev *dev,
 
 	spin_lock_bh(&dev->vbell_self_lock);
 
-	if (!dev->vbell_enable)
+	if (!dev->vbell_enable) {
+		TRACE_DATA("vbell disabled");
 		rc = -EINVAL;
-	else
+	} else {
 		rc = ntrdma_vbell_add_clear(&dev->vbell_vec[idx], vbell);
+	}
 
 	spin_unlock_bh(&dev->vbell_self_lock);
 
