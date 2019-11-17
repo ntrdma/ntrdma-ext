@@ -210,7 +210,7 @@ void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)
 			    dev, &ntrdma_debugfs_dev_cmd_recv_rsp_ops);
 	debugfs_create_file("vbell_buf", 0400, dev->debug,
 			    dev, &ntrdma_debugfs_dev_vbell_ops);
-	debugfs_create_file("vbell_peer_seq", S_IRUSR, dev->debug,
+	debugfs_create_file("peer_vbell.seq", S_IRUSR, dev->debug,
 			    dev, &ntrdma_debugfs_dev_vbell_peer_ops);
 }
 
@@ -680,7 +680,7 @@ static int ntrdma_debugfs_dev_vbell_peer_show(struct seq_file *s, void *v)
 	u32 i, count = dev->peer_vbell_count;
 
 	for (i = 0; i < count; ++i)
-		seq_printf(s, "%u: %u\n", i, dev->vbell_peer_seq[i]);
+		seq_printf(s, "%u: %u\n", i, dev->peer_vbell[i].seq);
 
 	return 0;
 }
