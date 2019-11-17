@@ -107,13 +107,12 @@ struct ntrdma_dev {
 	struct vbell_work_data_s	vbell_work_data[NTB_MAX_IRQS];
 	spinlock_t			vbell_next_lock;
 	spinlock_t			vbell_self_lock;
-	spinlock_t			vbell_peer_lock;
 
 	/* local virtual doorbells */
 
 	u32				vbell_count;
 	u32				vbell_start;
-	u32				vbell_next;
+	u32			vbell_next; /* Protected by vbell_next_lock */
 	struct ntrdma_vbell_head	*vbell_vec;
 	struct ntc_export_buf		vbell_buf;
 
@@ -131,7 +130,6 @@ struct ntrdma_dev {
 	struct mutex			cmd_recv_lock;
 	struct work_struct		cmd_recv_work;
 	struct ntrdma_vbell		cmd_recv_vbell;
-	u32				cmd_recv_vbell_idx;
 
 	/* command recv ring indices */
 	u32				cmd_recv_cap;
@@ -151,7 +149,6 @@ struct ntrdma_dev {
 	struct mutex			cmd_send_lock;
 	struct work_struct		cmd_send_work;
 	struct ntrdma_vbell		cmd_send_vbell;
-	u32				cmd_send_vbell_idx;
 
 	/* command send ring indices */
 	u32				cmd_send_cap;
@@ -240,5 +237,130 @@ inline u32 ntrdma_dev_cmd_recv_prod(struct ntrdma_dev *dev);
 
 #define ntrdma_vdbg(__dev, __args...) \
 	dev_vdbg(&(__dev)->ntc->dev, ## __args)
+
+static inline void ntrdma_vbell_del(struct ntrdma_vbell *vbell)
+{
+	struct ntrdma_dev *dev = vbell->dev;
+
+	spin_lock_bh(&dev->vbell_self_lock);
+
+	if (!vbell->arm)
+		goto unlock;
+	list_del(&vbell->entry);
+	vbell->arm = false;
+
+ unlock:
+	spin_unlock_bh(&dev->vbell_self_lock);
+}
+
+static inline void ntrdma_vbell_clear(struct ntrdma_vbell *vbell)
+{
+	struct ntrdma_dev *dev = vbell->dev;
+	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+
+	spin_lock_bh(&dev->vbell_self_lock);
+	vbell->seq = head->seq;
+	spin_unlock_bh(&dev->vbell_self_lock);
+}
+
+static inline int ntrdma_vbell_add(struct ntrdma_vbell *vbell)
+{
+	struct ntrdma_dev *dev = vbell->dev;
+	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	int rc = 0;
+
+	spin_lock_bh(&dev->vbell_self_lock);
+
+	if (unlikely(!dev->vbell_enable)) {
+		rc = -EINVAL;
+		ntrdma_err(dev, "vbell disabled");
+		TRACE_DATA("vbell disabled");
+		goto unlock;
+	}
+
+	if (vbell->arm)
+		goto unlock;
+
+	if (vbell->seq != head->seq) {
+		vbell->seq = head->seq;
+		rc = -EAGAIN;
+		goto unlock;
+	}
+
+	list_add_tail(&vbell->entry, &head->list);
+	vbell->arm = true;
+
+ unlock:
+	spin_unlock_bh(&dev->vbell_self_lock);
+
+	return rc;
+}
+
+static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
+{
+	struct ntrdma_dev *dev = vbell->dev;
+	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	int rc = 0;
+
+	spin_lock_bh(&dev->vbell_self_lock);
+
+	if (unlikely(!dev->vbell_enable)) {
+		ntrdma_err(dev, "vbell disabled");
+		TRACE_DATA("vbell disabled");
+		rc = -EINVAL;
+		goto unlock;
+	}
+
+	if (vbell->arm)
+		goto unlock;
+
+	if (vbell->seq != head->seq) {
+		vbell->seq = head->seq;
+		vbell->cb_fn(vbell->cb_ctx);
+	} else {
+		list_add_tail(&vbell->entry, &head->list);
+		vbell->arm = true;
+	}
+
+ unlock:
+	spin_unlock_bh(&dev->vbell_self_lock);
+
+	return rc;
+}
+
+static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
+{
+	struct ntrdma_dev *dev = vbell->dev;
+	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	int rc = 0;
+
+	spin_lock_bh(&dev->vbell_self_lock);
+
+	if (unlikely(!dev->vbell_enable)) {
+		ntrdma_err(dev, "vbell disabled");
+		TRACE_DATA("vbell disabled");
+		rc = -EINVAL;
+		goto unlock;
+	}
+
+	if (vbell->arm)
+		goto unlock;
+
+	vbell->seq = head->seq;
+	list_add_tail(&vbell->entry, &head->list);
+	vbell->arm = true;
+
+ unlock:
+	spin_unlock_bh(&dev->vbell_self_lock);
+
+	return rc;
+}
+
+static inline void ntrdma_dev_vbell_event(struct ntrdma_dev *dev, int vec)
+{
+	ntrdma_vdbg(dev, "vbell event on vec %d\n", vec);
+
+	tasklet_schedule(&dev->vbell_work[vec]);
+}
 
 #endif

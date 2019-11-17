@@ -53,8 +53,7 @@ void ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev, int vbell_idx)
 	tasklet_init(&cq->cue_work,
 		     ntrdma_cq_cue_work,
 		     to_ptrhld(cq));
-	ntrdma_vbell_init(&cq->vbell, ntrdma_cq_vbell_cb, cq);
-	cq->vbell_idx = vbell_idx;
+	ntrdma_vbell_init(dev, &cq->vbell, vbell_idx, ntrdma_cq_vbell_cb, cq);
 }
 
 int ntrdma_cq_add(struct ntrdma_cq *cq)
@@ -80,11 +79,10 @@ void ntrdma_cq_arm_resync(struct ntrdma_dev *dev)
 	list_for_each_entry(cq, &dev->cq_list, obj.dev_entry) {
 		spin_lock_bh(&cq->arm_lock);
 		if (cq->arm) {
-			ntrdma_dev_vbell_add_clear(dev, &cq->vbell,
-					cq->vbell_idx);
+			ntrdma_vbell_add_clear(&cq->vbell);
 			ntrdma_info(dev, "re arm cq %p vbell %d\n", cq,
-					cq->vbell_idx);
-			TRACE("re arm cq %p, vbell %d\n", cq, cq->vbell_idx);
+					cq->vbell.idx);
+			TRACE("re arm cq %p, vbell %d\n", cq, cq->vbell.idx);
 		}
 		spin_unlock_bh(&cq->arm_lock);
 	}
@@ -99,7 +97,7 @@ void ntrdma_cq_remove(struct ntrdma_cq *cq)
 	{
 		cq->arm = 0;
 		cq->need_cue = false;
-		ntrdma_dev_vbell_del(dev, &cq->vbell);
+		ntrdma_vbell_del(&cq->vbell);
 	}
 	spin_unlock_bh(&cq->arm_lock);
 
@@ -114,7 +112,6 @@ void ntrdma_cq_remove(struct ntrdma_cq *cq)
 
 void ntrdma_cq_arm(struct ntrdma_cq *cq)
 {
-	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
 	bool need_cue;
 	unsigned int arm;
 
@@ -122,7 +119,7 @@ void ntrdma_cq_arm(struct ntrdma_cq *cq)
 
 	spin_lock_bh(&cq->arm_lock);
 
-	ntrdma_dev_vbell_add_clear(dev, &cq->vbell, cq->vbell_idx);
+	ntrdma_vbell_readd(&cq->vbell);
 	++cq->arm;
 	arm = cq->arm;
 	need_cue = cq->need_cue;
@@ -131,7 +128,7 @@ void ntrdma_cq_arm(struct ntrdma_cq *cq)
 	spin_unlock_bh(&cq->arm_lock);
 
 	TRACE("cq %p arm %d need cue %d vbell idx %d\n",
-			cq, arm, need_cue, cq->vbell_idx);
+		cq, arm, need_cue, cq->vbell.idx);
 
 	if (need_cue)
 		ntrdma_cq_cue(cq);
@@ -139,22 +136,25 @@ void ntrdma_cq_arm(struct ntrdma_cq *cq)
 
 void _ntrdma_cq_cue(struct ntrdma_cq *cq, const char *f)
 {
-	unsigned int arm;
+	unsigned int arm, initial_arm;
 
 	spin_lock_bh(&cq->arm_lock);
 	arm = cq->arm;
 
-	if (!cq->arm)
+	initial_arm = arm = cq->arm;
+	cq->arm = 0;
+
+	if (!arm)
 		cq->need_cue = true;
 
-	for (; cq->arm; --cq->arm) {
+	for (; arm; --arm) {
 		/*TODO: do we realy need to run this in spinlock???*/
 		cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
-		TRACE("cq %p arm %d %s\n", cq, arm, f);
+		TRACE("cq %p arm %d %s\n", cq, initial_arm, f);
 	}
 	spin_unlock_bh(&cq->arm_lock);
 
-	this_cpu_add(dev_cnt.cqes_notified, arm);
+	this_cpu_add(dev_cnt.cqes_notified, initial_arm);
 }
 
 void ntrdma_cq_add_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll)

@@ -93,7 +93,6 @@ struct ntrdma_eth {
 	/* notify napi of rx tx ring availability */
 
 	struct ntrdma_vbell		vbell;
-	u32				vbell_idx;
 	bool	is_hello_done;
 	bool	is_hello_prep;
 };

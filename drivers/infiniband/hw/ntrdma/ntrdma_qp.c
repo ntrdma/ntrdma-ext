@@ -522,7 +522,7 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 				&qp->send_cqe_buf);
 	cmd->qp_create.send_cons_shift =
 		qp->send_cap * sizeof(struct ntrdma_cqe);
-	cmd->qp_create.cmpl_vbell_idx = qp->send_cq->vbell_idx;
+	cmd->qp_create.cmpl_vbell_idx = qp->send_cq->vbell.idx;
 
 	return 0;
 }
@@ -761,6 +761,7 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	u64 send_wqes_total_size;
 	u32 recv_prod;
 	u64 recv_wqes_total_size;
+	u32 send_vbell_idx;
 
 	if (is_deinit)
 		goto deinit;
@@ -834,9 +835,16 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 
 	/* initialize send work processing */
 
-	ntrdma_vbell_init(&rqp->send_vbell,
-			  ntrdma_rqp_vbell_cb, rqp);
-	rqp->send_vbell_idx = ntrdma_dev_vbell_next(dev);
+	send_vbell_idx = ntrdma_dev_vbell_next(dev);
+	if (unlikely(send_vbell_idx >= NTRDMA_DEV_VBELL_COUNT)) {
+		ntrdma_err(dev, "invalid send_vbell_idx. idx %d >= %d",
+			send_vbell_idx, NTRDMA_DEV_VBELL_COUNT);
+		rc = -EINVAL;
+		goto err_vbell_idx;
+	}
+
+	ntrdma_vbell_init(dev, &rqp->send_vbell, send_vbell_idx,
+			ntrdma_rqp_vbell_cb, rqp);
 
 	tasklet_init(&rqp->send_work,
 		     ntrdma_rqp_work_cb,
@@ -845,6 +853,7 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	return 0;
 deinit:
 	tasklet_kill(&rqp->send_work);
+err_vbell_idx:
 	ntc_export_buf_free(&rqp->recv_wqe_buf);
 err_recv_wqe_buf:
 	ntc_local_buf_free(&rqp->send_cqe_buf, dev->ntc);
@@ -869,11 +878,9 @@ void ntrdma_rqp_deinit(struct ntrdma_rqp *rqp)
 
 void ntrdma_rqp_del(struct ntrdma_rqp *rqp)
 {
-	struct ntrdma_dev *dev = ntrdma_rqp_dev(rqp);
-
 	rqp->state = IB_QPS_RESET;
 
-	ntrdma_dev_vbell_del(dev, &rqp->send_vbell);
+	ntrdma_vbell_del(&rqp->send_vbell);
 
 	tasklet_kill(&rqp->send_work);
 
@@ -1801,20 +1808,6 @@ err_rqp:
 	return reschedule;
 }
 
-static inline void ntrdma_rqp_send_vbell_clear(struct ntrdma_dev *dev,
-					       struct ntrdma_rqp *rqp)
-{
-	ntrdma_dev_vbell_clear(dev, &rqp->send_vbell,
-			       rqp->send_vbell_idx);
-}
-
-static inline int ntrdma_rqp_send_vbell_add(struct ntrdma_dev *dev,
-					    struct ntrdma_rqp *rqp)
-{
-	return ntrdma_dev_vbell_add(dev, &rqp->send_vbell,
-				    rqp->send_vbell_idx);
-}
-
 static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 {
 	struct ntrdma_dev *dev = ntrdma_rqp_dev(rqp);
@@ -1842,14 +1835,14 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		return;
 	}
 
-	ntrdma_rqp_send_vbell_clear(dev, rqp);
+	ntrdma_vbell_clear(&rqp->send_vbell);
 
 	/* get the next consuming range in the send ring */
 	ntrdma_rqp_send_cons_get(rqp, &start, &end, &base);
 
 	/* quit if there is no send work to do */
 	if (start == end) {
-		rc = ntrdma_rqp_send_vbell_add(dev, rqp);
+		rc = ntrdma_vbell_add(&rqp->send_vbell);
 		if (rc == -EAGAIN)
 			tasklet_schedule(&rqp->send_work);
 		ntrdma_rqp_send_cons_done(rqp);

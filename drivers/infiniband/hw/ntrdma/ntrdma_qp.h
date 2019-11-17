@@ -343,7 +343,6 @@ struct ntrdma_rqp {
 
 	/* work request processing */
 	struct ntrdma_vbell		send_vbell;
-	u32				send_vbell_idx;
 	struct tasklet_struct		send_work;
 };
 

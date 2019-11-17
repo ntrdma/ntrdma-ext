@@ -70,7 +70,6 @@ struct ntrdma_cq {
 	/* work completion notification */
 	struct tasklet_struct		cue_work;
 	struct ntrdma_vbell		vbell;
-	u32				vbell_idx;
 	bool				need_cue;
 
 	struct page			*poll_page;

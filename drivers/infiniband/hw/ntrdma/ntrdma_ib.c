@@ -363,6 +363,18 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		goto err_cq;
 	}
 
+	if (ibattr->comp_vector)
+		vbell_idx = ibattr->comp_vector;
+	else
+		vbell_idx = ntrdma_dev_vbell_next(dev);
+
+	if (unlikely(vbell_idx >= NTRDMA_DEV_VBELL_COUNT)) {
+		ntrdma_err(dev, "invalid vbell_idx. idx %d >= %d",
+			vbell_idx, NTRDMA_DEV_VBELL_COUNT);
+		rc = -EINVAL;
+		goto err_cq;
+	}
+
 	cq = kmem_cache_alloc_node(cq_slab, GFP_KERNEL, dev->node);
 	if (!cq) {
 		rc = -ENOMEM;
@@ -370,11 +382,6 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	}
 
 	memset(cq, 0, sizeof(*cq));
-
-	if (ibattr->comp_vector)
-		vbell_idx = ibattr->comp_vector;
-	else
-		vbell_idx = ntrdma_dev_vbell_next(dev);
 
 	ntrdma_cq_init(cq, dev, vbell_idx);
 

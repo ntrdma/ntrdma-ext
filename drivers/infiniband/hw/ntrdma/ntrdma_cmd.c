@@ -127,9 +127,8 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	/* recv work */
 	mutex_init(&dev->cmd_recv_lock);
 
-	ntrdma_vbell_init(&dev->cmd_recv_vbell,
-			  ntrdma_cmd_recv_vbell_cb, dev);
-	dev->cmd_recv_vbell_idx = recv_vbell_idx;
+	ntrdma_vbell_init(dev, &dev->cmd_recv_vbell, recv_vbell_idx,
+			ntrdma_cmd_recv_vbell_cb, dev);
 
 	/* allocated in conf phase */
 	dev->cmd_recv_cap = 0;
@@ -149,9 +148,8 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	INIT_LIST_HEAD(&dev->cmd_post_list);
 	init_waitqueue_head(&dev->cmd_send_cond);
 	mutex_init(&dev->cmd_send_lock);
-	ntrdma_vbell_init(&dev->cmd_send_vbell,
-			  ntrdma_cmd_send_vbell_cb, dev);
-	dev->cmd_send_vbell_idx = send_vbell_idx;
+	ntrdma_vbell_init(dev, &dev->cmd_send_vbell, send_vbell_idx,
+			ntrdma_cmd_send_vbell_cb, dev);
 
 	/* allocate send buffers */
 	dev->cmd_send_cap = send_cap;
@@ -197,6 +195,18 @@ int ntrdma_dev_cmd_init(struct ntrdma_dev *dev,
 			u32 send_vbell_idx,
 			u32 send_cap)
 {
+	if (unlikely(recv_vbell_idx >= NTRDMA_DEV_VBELL_COUNT)) {
+		ntrdma_err(dev, "invalid recv_vbell_idx. idx %d >= %d",
+			recv_vbell_idx, NTRDMA_DEV_VBELL_COUNT);
+		return -EINVAL;
+	}
+
+	if (unlikely(send_vbell_idx >= NTRDMA_DEV_VBELL_COUNT)) {
+		ntrdma_err(dev, "invalid send_vbell_idx. idx %d >= %d",
+			send_vbell_idx, NTRDMA_DEV_VBELL_COUNT);
+		return -EINVAL;
+	}
+
 	return ntrdma_dev_cmd_init_deinit(dev, recv_vbell_idx,
 			send_vbell_idx, send_cap, false);
 }
@@ -249,8 +259,8 @@ void ntrdma_dev_cmd_hello_info(struct ntrdma_dev *dev,
 		&info->send_cons_shift);
 	iowrite32(dev->cmd_send_cap, &info->send_cap);
 	iowrite32(ntrdma_dev_cmd_send_cons(dev), &info->send_idx);
-	iowrite32(dev->cmd_send_vbell_idx, &info->send_vbell_idx);
-	iowrite32(dev->cmd_recv_vbell_idx, &info->recv_vbell_idx);
+	iowrite32(dev->cmd_send_vbell.idx, &info->send_vbell_idx);
+	iowrite32(dev->cmd_recv_vbell.idx, &info->recv_vbell_idx);
 }
 
 static inline
@@ -470,18 +480,6 @@ int ntrdma_dev_cmd_finish(struct ntrdma_dev *dev)
 
 }
 
-static inline void ntrdma_cmd_send_vbell_clear(struct ntrdma_dev *dev)
-{
-	ntrdma_dev_vbell_clear(dev, &dev->cmd_send_vbell,
-			       dev->cmd_send_vbell_idx);
-}
-
-static inline int ntrdma_cmd_send_vbell_add(struct ntrdma_dev *dev)
-{
-	return ntrdma_dev_vbell_add(dev, &dev->cmd_send_vbell,
-				    dev->cmd_send_vbell_idx);
-}
-
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 {
 	struct ntrdma_cmd_cb *cb;
@@ -495,7 +493,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 	mutex_lock(&dev->cmd_send_lock);
 	{
-		ntrdma_cmd_send_vbell_clear(dev);
+		ntrdma_vbell_clear(&dev->cmd_send_vbell);
 
 		/* Complete commands that have a response */
 		ntrdma_ring_consume(ntrdma_dev_cmd_send_cons(dev),
@@ -624,10 +622,10 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				dev->peer_cmd_recv_vbell_idx);
 		}
 
-		if (!ntrdma_cmd_done(dev)) {
-			if (more || ntrdma_cmd_send_vbell_add(dev) == -EAGAIN)
+		if (!ntrdma_cmd_done(dev) &&
+			(more || (ntrdma_vbell_add(&dev->cmd_send_vbell)
+				== -EAGAIN)))
 				schedule_work(&dev->cmd_send_work);
-		}
 	}
 	mutex_unlock(&dev->cmd_send_lock);
 
@@ -1002,7 +1000,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 
 	rsp->send_prod_shift = rqp->send_cap * rqp->send_wqe_size;
 
-	rsp->send_vbell_idx = rqp->send_vbell_idx;
+	rsp->send_vbell_idx = rqp->send_vbell.idx;
 
 	rc = ntrdma_rqp_add(rqp);
 	if (rc) {
@@ -1179,20 +1177,6 @@ static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
 	return -EINVAL;
 }
 
-static inline void ntrdma_cmd_recv_vbell_clear(struct ntrdma_dev *dev)
-{
-	ntrdma_vdbg(dev, "called\n");
-	ntrdma_dev_vbell_clear(dev, &dev->cmd_recv_vbell,
-			       dev->cmd_recv_vbell_idx);
-}
-
-static inline int ntrdma_cmd_recv_vbell_add(struct ntrdma_dev *dev)
-{
-	ntrdma_vdbg(dev, "called\n");
-	return ntrdma_dev_vbell_add(dev, &dev->cmd_recv_vbell,
-				    dev->cmd_recv_vbell_idx);
-}
-
 static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 {
 	u32 start, pos, end, base;
@@ -1205,7 +1189,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 	mutex_lock(&dev->cmd_recv_lock);
 	{
-		ntrdma_cmd_recv_vbell_clear(dev);
+		ntrdma_vbell_clear(&dev->cmd_recv_vbell);
 
 		cmd_recv_rsp_buf = ntc_local_buf_deref(&dev->cmd_recv_rsp_buf);
 
@@ -1276,10 +1260,8 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 			ntc_req_submit(dev->ntc, dev->dma_chan);
 			schedule_work(&dev->cmd_recv_work);
-		} else {
-			if (ntrdma_cmd_recv_vbell_add(dev) == -EAGAIN)
-				schedule_work(&dev->cmd_recv_work);
-		}
+		} else if (ntrdma_vbell_add(&dev->cmd_recv_vbell) == -EAGAIN)
+			schedule_work(&dev->cmd_recv_work);
 	}
 	mutex_unlock(&dev->cmd_recv_lock);
 }
