@@ -36,13 +36,12 @@
 #include <linux/list.h>
 #include <linux/types.h>
 
-#include "ntrdma_cb.h"
-
 struct ntrdma_dev;
 
 struct ntrdma_vbell {
 	struct list_head		entry;
-	struct ntrdma_cb		cb;
+	void				(*cb_fn)(void *cb_ctx);
+	void				*cb_ctx;
 	u32				seq;
 	bool				arm;
 };
@@ -90,7 +89,8 @@ static inline void ntrdma_vbell_init(struct ntrdma_vbell *vbell,
 				     void (*cb_fn)(void *cb_ctx),
 				     void *cb_ctx)
 {
-	ntrdma_cb_init(&vbell->cb, cb_fn, cb_ctx);
+	vbell->cb_fn = cb_fn;
+	vbell->cb_ctx = cb_ctx;
 	vbell->seq = ~0;
 	vbell->arm = false;
 }
@@ -143,7 +143,7 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell_head *head,
 static inline void ntrdma_vbell_fire(struct ntrdma_vbell *vbell)
 {
 	vbell->arm = false;
-	ntrdma_cb_call(&vbell->cb);
+	vbell->cb_fn(vbell->cb_ctx);
 }
 
 static inline void ntrdma_vbell_head_init(struct ntrdma_vbell_head *head)
