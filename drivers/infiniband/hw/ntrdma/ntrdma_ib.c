@@ -1360,7 +1360,7 @@ static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
 	this_cpu_add(dev_cnt.post_send_bytes, available_size);
 
 	TRACE_DATA(
-		"OPCODE %d: flags %x, addr %llx QP %d inline len %d wrid %llu",
+		"OPCODE %d: flags %x addr %llx QP %d inline len %lld wrid %llu",
 		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
 		available_size, wqe->ulp_handle);
 
