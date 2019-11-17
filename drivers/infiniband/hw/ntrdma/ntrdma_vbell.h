@@ -33,6 +33,7 @@
 #ifndef NTRDMA_VBELL_H
 #define NTRDMA_VBELL_H
 
+#include <linux/spinlock.h>
 #include <linux/list.h>
 #include <linux/types.h>
 
@@ -41,16 +42,24 @@ struct ntrdma_dev;
 struct ntrdma_vbell {
 	struct ntrdma_dev	*dev;
 	u32			idx;    /* Index in the device. */
-	struct list_head	entry;  /* Protected by dev->vbell_self_lock. */
-	void	(*cb_fn)(void *cb_ctx); /* Called under dev->vbell_self_lock. */
+	struct list_head	entry;  /* Protected by head->lock. */
+	void	(*cb_fn)(void *cb_ctx); /* Called under head->lock. */
 	void			*cb_ctx;
-	u32			seq;    /* Protected by dev->vbell_self_lock. */
-	bool			arm;    /* Protected by dev->vbell_self_lock. */
+	u32			seq;    /* Protected by head->lock. */
+	bool			arm;    /* Protected by head->lock. */
 };
 
 struct ntrdma_vbell_head {
+	spinlock_t			lock;
 	struct list_head		list;
 	u32				seq;
+	bool 				enabled;
+};
+
+struct ntrdma_peer_vbell {
+	spinlock_t			lock;
+	u32				seq;
+	bool 				enabled;
 };
 
 int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
@@ -86,39 +95,29 @@ static inline void ntrdma_vbell_head_init(struct ntrdma_vbell_head *head)
 {
 	INIT_LIST_HEAD(&head->list);
 	head->seq = 0;
+	spin_lock_init(&head->lock);
+	head->enabled = 0;
 }
 
-/*
- * Must run under dev->vbell_self_lock.
- */
-static inline void ntrdma_vbell_head_fire(struct ntrdma_vbell_head *head)
+static inline void ntrdma_peer_vbell_init(struct ntrdma_peer_vbell *peer_vbell)
 {
-	struct ntrdma_vbell *vbell;
-
-	list_for_each_entry(vbell, &head->list, entry) {
-		vbell->arm = false;
-		vbell->cb_fn(vbell->cb_ctx);
-	}
-
-	INIT_LIST_HEAD(&head->list);
+	peer_vbell->seq = 0;
+	spin_lock_init(&peer_vbell->lock);
+	peer_vbell->enabled = 0;
 }
 
-/*
- * Must run under dev->vbell_self_lock.
- */
-static inline void ntrdma_vbell_head_event(struct ntrdma_vbell_head *head)
+static inline void ntrdma_peer_vbell_enable(struct ntrdma_peer_vbell *peer_vbell)
 {
-	++head->seq;
-	ntrdma_vbell_head_fire(head);
+	spin_lock_bh(&peer_vbell->lock);
+	peer_vbell->enabled = 1;
+	spin_unlock_bh(&peer_vbell->lock);
 }
 
-/*
- * Must run under dev->vbell_self_lock.
- */
-static inline void ntrdma_vbell_head_reset(struct ntrdma_vbell_head *head)
+static inline void ntrdma_peer_vbell_disable(struct ntrdma_peer_vbell *peer_vbell)
 {
-	head->seq = 0;
-	ntrdma_vbell_head_fire(head);
+	spin_lock_bh(&peer_vbell->lock);
+	peer_vbell->enabled = 0;
+	spin_unlock_bh(&peer_vbell->lock);
 }
 
 #endif

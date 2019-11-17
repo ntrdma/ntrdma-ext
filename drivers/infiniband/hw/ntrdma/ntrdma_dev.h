@@ -102,7 +102,7 @@ struct ntrdma_dev {
 	u32				latest_version;
 
 	/* virtual doorbells synchronization */
-	int				vbell_enable;
+	int			vbell_enable; /* Protected by vbell_self_lock */
 	struct tasklet_struct		vbell_work[NTB_MAX_IRQS];
 	struct vbell_work_data_s	vbell_work_data[NTB_MAX_IRQS];
 	spinlock_t			vbell_next_lock;
@@ -118,7 +118,7 @@ struct ntrdma_dev {
 
 	/* peer virtual doorbells */
 
-	u32				*vbell_peer_seq;
+	struct ntrdma_peer_vbell	peer_vbell[NTRDMA_DEV_VBELL_COUNT];
 	struct ntc_remote_buf		peer_vbell_buf;
 	int				peer_vbell_count;
 
@@ -241,8 +241,9 @@ inline u32 ntrdma_dev_cmd_recv_prod(struct ntrdma_dev *dev);
 static inline void ntrdma_vbell_del(struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
+	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
 
-	spin_lock_bh(&dev->vbell_self_lock);
+	spin_lock_bh(&head->lock);
 
 	if (!vbell->arm)
 		goto unlock;
@@ -250,7 +251,7 @@ static inline void ntrdma_vbell_del(struct ntrdma_vbell *vbell)
 	vbell->arm = false;
 
  unlock:
-	spin_unlock_bh(&dev->vbell_self_lock);
+	spin_unlock_bh(&head->lock);
 }
 
 static inline void ntrdma_vbell_clear(struct ntrdma_vbell *vbell)
@@ -258,9 +259,9 @@ static inline void ntrdma_vbell_clear(struct ntrdma_vbell *vbell)
 	struct ntrdma_dev *dev = vbell->dev;
 	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
 
-	spin_lock_bh(&dev->vbell_self_lock);
+	spin_lock_bh(&head->lock);
 	vbell->seq = head->seq;
-	spin_unlock_bh(&dev->vbell_self_lock);
+	spin_unlock_bh(&head->lock);
 }
 
 static inline int ntrdma_vbell_add(struct ntrdma_vbell *vbell)
@@ -269,9 +270,9 @@ static inline int ntrdma_vbell_add(struct ntrdma_vbell *vbell)
 	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
 	int rc = 0;
 
-	spin_lock_bh(&dev->vbell_self_lock);
+	spin_lock_bh(&head->lock);
 
-	if (unlikely(!dev->vbell_enable)) {
+	if (unlikely(!head->enabled)) {
 		rc = -EINVAL;
 		ntrdma_err(dev, "vbell disabled");
 		TRACE_DATA("vbell disabled");
@@ -291,7 +292,7 @@ static inline int ntrdma_vbell_add(struct ntrdma_vbell *vbell)
 	vbell->arm = true;
 
  unlock:
-	spin_unlock_bh(&dev->vbell_self_lock);
+	spin_unlock_bh(&head->lock);
 
 	return rc;
 }
@@ -302,9 +303,9 @@ static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
 	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
 	int rc = 0;
 
-	spin_lock_bh(&dev->vbell_self_lock);
+	spin_lock_bh(&head->lock);
 
-	if (unlikely(!dev->vbell_enable)) {
+	if (unlikely(!head->enabled)) {
 		ntrdma_err(dev, "vbell disabled");
 		TRACE_DATA("vbell disabled");
 		rc = -EINVAL;
@@ -323,7 +324,7 @@ static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
 	}
 
  unlock:
-	spin_unlock_bh(&dev->vbell_self_lock);
+	spin_unlock_bh(&head->lock);
 
 	return rc;
 }
@@ -334,9 +335,9 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
 	int rc = 0;
 
-	spin_lock_bh(&dev->vbell_self_lock);
+	spin_lock_bh(&head->lock);
 
-	if (unlikely(!dev->vbell_enable)) {
+	if (unlikely(!head->enabled)) {
 		ntrdma_err(dev, "vbell disabled");
 		TRACE_DATA("vbell disabled");
 		rc = -EINVAL;
@@ -351,9 +352,66 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 	vbell->arm = true;
 
  unlock:
-	spin_unlock_bh(&dev->vbell_self_lock);
+	spin_unlock_bh(&head->lock);
 
 	return rc;
+}
+
+static inline void ntrdma_vbell_head_fire_locked(struct ntrdma_vbell_head *head)
+{
+	struct ntrdma_vbell *vbell;
+
+	list_for_each_entry(vbell, &head->list, entry) {
+		vbell->arm = false;
+		vbell->cb_fn(vbell->cb_ctx);
+	}
+
+	INIT_LIST_HEAD(&head->list);
+}
+
+static inline void ntrdma_vbell_head_fire(struct ntrdma_vbell_head *head,
+					u32 vbell_val)
+{
+	spin_lock_bh(&head->lock);
+
+	if (unlikely(!head->enabled)) {
+		TRACE_DATA("vbell disabled");
+		goto unlock;
+	}
+
+	if (head->seq == vbell_val)
+		goto unlock;
+
+	WRITE_ONCE(head->seq, vbell_val);
+
+	ntrdma_vbell_head_fire_locked(head);
+
+ unlock:
+	spin_unlock_bh(&head->lock);
+}
+
+static inline void ntrdma_vbell_head_enable(struct ntrdma_vbell_head *head)
+{
+	spin_lock_bh(&head->lock);
+
+	head->enabled = 1;
+
+	ntrdma_vbell_head_fire_locked(head);
+
+	spin_unlock_bh(&head->lock);
+}
+
+static inline void ntrdma_vbell_head_disable(struct ntrdma_vbell_head *head)
+{
+	spin_lock_bh(&head->lock);
+
+	head->enabled = 0;
+
+	WRITE_ONCE(head->seq, 0);
+
+	ntrdma_vbell_head_fire_locked(head);
+
+	spin_unlock_bh(&head->lock);
 }
 
 static inline void ntrdma_dev_vbell_event(struct ntrdma_dev *dev, int vec)
