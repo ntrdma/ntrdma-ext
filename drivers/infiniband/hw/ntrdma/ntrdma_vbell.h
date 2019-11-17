@@ -140,12 +140,6 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell_head *head,
 	return 0;
 }
 
-static inline void ntrdma_vbell_fire(struct ntrdma_vbell *vbell)
-{
-	vbell->arm = false;
-	vbell->cb_fn(vbell->cb_ctx);
-}
-
 static inline void ntrdma_vbell_head_init(struct ntrdma_vbell_head *head)
 {
 	INIT_LIST_HEAD(&head->list);
@@ -156,8 +150,10 @@ static inline void ntrdma_vbell_head_fire(struct ntrdma_vbell_head *head)
 {
 	struct ntrdma_vbell *vbell;
 
-	list_for_each_entry(vbell, &head->list, entry)
-		ntrdma_vbell_fire(vbell);
+	list_for_each_entry(vbell, &head->list, entry) {
+		vbell->arm = false;
+		vbell->cb_fn(vbell->cb_ctx);
+	}
 
 	INIT_LIST_HEAD(&head->list);
 }
