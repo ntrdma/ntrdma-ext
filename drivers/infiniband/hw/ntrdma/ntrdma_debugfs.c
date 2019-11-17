@@ -409,7 +409,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "peer_cmd_recv_vbell_idx %u\n",
 		   dev->peer_cmd_recv_vbell_idx);
 
-	seq_printf(s, "cmd_send_vbell_idx %u\n", dev->cmd_send_vbell_idx);
+	seq_printf(s, "cmd_send_vbell_idx %u\n", dev->cmd_send_vbell.idx);
 	seq_printf(s, "cmd_send_vbell_seq %u\n", dev->cmd_send_vbell.seq);
 	seq_printf(s, "cmd_send_vbell_arm %d\n", dev->cmd_send_vbell.arm);
 
@@ -428,7 +428,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "peer_cmd_send_vbell_idx %u\n",
 		   dev->peer_cmd_send_vbell_idx);
 
-	seq_printf(s, "cmd_recv_vbell_idx %u\n", dev->cmd_recv_vbell_idx);
+	seq_printf(s, "cmd_recv_vbell_idx %u\n", dev->cmd_recv_vbell.idx);
 	seq_printf(s, "cmd_recv_vbell_seq %u\n", dev->cmd_recv_vbell.seq);
 	seq_printf(s, "cmd_recv_vbell_arm %d\n", dev->cmd_recv_vbell.arm);
 
@@ -483,7 +483,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 		eth->peer_rx_cons_buf.dma_addr);
 
 	seq_printf(s, "peer_eth_vbell_idx %#x\n", eth->peer_vbell_idx);
-	seq_printf(s, "eth_vbell_idx %u\n", eth->vbell_idx);
+	seq_printf(s, "eth_vbell_idx %u\n", eth->vbell.idx);
 	seq_printf(s, "eth_vbell_seq %u\n", eth->vbell.seq);
 	seq_printf(s, "eth_vbell_arm %d\n", eth->vbell.arm);
 
@@ -686,7 +686,7 @@ static int ntrdma_debugfs_cq_info_show(struct seq_file *s, void *v)
 
 	seq_printf(s, "arm %u\n", cq->arm);
 	seq_printf(s, "vbell_arm %u\n", cq->vbell.arm);
-	seq_printf(s, "vbell_idx %u\n", cq->vbell_idx);
+	seq_printf(s, "vbell_idx %u\n", cq->vbell.idx);
 
 	return 0;
 }
@@ -983,7 +983,7 @@ static int ntrdma_debugfs_rqp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "recv_wqe_buf.size %#llx\n", rqp->recv_wqe_buf.size);
 
 	seq_printf(s, "send_vbell_arm %u\n", rqp->send_vbell.arm);
-	seq_printf(s, "send_vbell_idx %u\n", rqp->send_vbell_idx);
+	seq_printf(s, "send_vbell_idx %u\n", rqp->send_vbell.idx);
 
 	return 0;
 }

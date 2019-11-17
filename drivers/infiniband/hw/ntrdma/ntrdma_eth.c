@@ -179,8 +179,8 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	spin_lock_init(&eth->rx_cmpl_lock);
 	spin_lock_init(&eth->tx_cons_lock);
 
-	ntrdma_vbell_init(&eth->vbell, ntrdma_eth_vbell_cb, eth);
-	eth->vbell_idx = vbell_idx;
+	ntrdma_vbell_init(dev, &eth->vbell, vbell_idx,
+			ntrdma_eth_vbell_cb, eth);
 
 	netif_napi_add(net, &eth->napi, ntrdma_eth_napi_poll,
 		       NAPI_POLL_WEIGHT);
@@ -216,6 +216,12 @@ int ntrdma_dev_eth_init(struct ntrdma_dev *dev,
 			u32 vbell_idx,
 			u32 rx_cap)
 {
+	if (unlikely(vbell_idx >= NTRDMA_DEV_VBELL_COUNT)) {
+		ntrdma_err(dev, "invalid vbell_idx. idx %d >= %d",
+			vbell_idx, NTRDMA_DEV_VBELL_COUNT);
+		return -EINVAL;
+	}
+
 	return ntrdma_dev_eth_init_deinit(dev, vbell_idx, rx_cap, false);
 }
 
@@ -245,7 +251,7 @@ int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 	memcpy_toio(&info->rx_cons_buf_desc, &rx_cons_buf_desc,
 		sizeof(rx_cons_buf_desc));
 
-	iowrite32(eth->vbell_idx, &info->vbell_idx);
+	iowrite32(eth->vbell.idx, &info->vbell_idx);
 
 	return 0;
 }
@@ -554,7 +560,7 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 		return 0;
 	}
 
-	ntrdma_dev_vbell_clear(dev, &eth->vbell, eth->vbell_idx);
+	ntrdma_vbell_clear(&eth->vbell);
 
 	if (eth->tx_cons != ntrdma_eth_tx_prod(eth))
 		netif_wake_queue(eth->napi.dev);
@@ -641,8 +647,7 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 
 	if (count < budget) {
 		napi_complete(&eth->napi);
-		if (ntrdma_dev_vbell_add(dev, &eth->vbell,
-					 eth->vbell_idx) == -EAGAIN)
+		if (ntrdma_vbell_add(&eth->vbell) == -EAGAIN)
 			napi_reschedule(&eth->napi);
 	}
 

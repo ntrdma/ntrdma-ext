@@ -39,11 +39,13 @@
 struct ntrdma_dev;
 
 struct ntrdma_vbell {
-	struct list_head		entry;
-	void				(*cb_fn)(void *cb_ctx);
-	void				*cb_ctx;
-	u32				seq;
-	bool				arm;
+	struct ntrdma_dev	*dev;
+	u32			idx;    /* Index in the device. */
+	struct list_head	entry;  /* Protected by dev->vbell_self_lock. */
+	void	(*cb_fn)(void *cb_ctx); /* Called under dev->vbell_self_lock. */
+	void			*cb_ctx;
+	u32			seq;    /* Protected by dev->vbell_self_lock. */
+	bool			arm;    /* Protected by dev->vbell_self_lock. */
 };
 
 struct ntrdma_vbell_head {
@@ -65,79 +67,19 @@ int ntrdma_dev_vbell_enable(struct ntrdma_dev *dev,
 
 void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev);
 
-void ntrdma_dev_vbell_event(struct ntrdma_dev *dev, int vec);
-
-void ntrdma_dev_vbell_del(struct ntrdma_dev *dev,
-			  struct ntrdma_vbell *vbell);
-
-void ntrdma_dev_vbell_clear(struct ntrdma_dev *dev,
-			    struct ntrdma_vbell *vbell,
-			    u32 idx);
-
-int ntrdma_dev_vbell_add(struct ntrdma_dev *dev,
-			 struct ntrdma_vbell *vbell,
-			 u32 idx);
-
-int ntrdma_dev_vbell_add_clear(struct ntrdma_dev *dev,
-			       struct ntrdma_vbell *vbell,
-			       u32 idx);
-
 void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
 			struct ntc_dma_chan *chan, u32 idx);
 
-static inline void ntrdma_vbell_init(struct ntrdma_vbell *vbell,
-				     void (*cb_fn)(void *cb_ctx),
-				     void *cb_ctx)
+static inline void ntrdma_vbell_init(struct ntrdma_dev *dev,
+				struct ntrdma_vbell *vbell, u32 idx,
+				void (*cb_fn)(void *cb_ctx), void *cb_ctx)
 {
+	vbell->dev = dev;
+	vbell->idx = idx;
 	vbell->cb_fn = cb_fn;
 	vbell->cb_ctx = cb_ctx;
 	vbell->seq = ~0;
 	vbell->arm = false;
-}
-
-static inline void ntrdma_vbell_del(struct ntrdma_vbell *vbell)
-{
-	if (!vbell->arm)
-		return;
-
-	list_del(&vbell->entry);
-	vbell->arm = false;
-}
-
-static inline void ntrdma_vbell_clear(struct ntrdma_vbell_head *head,
-				      struct ntrdma_vbell *vbell)
-{
-	vbell->seq = head->seq;
-}
-
-static inline int ntrdma_vbell_add(struct ntrdma_vbell_head *head,
-				   struct ntrdma_vbell *vbell)
-{
-	if (vbell->arm)
-		return 0;
-
-	if (vbell->seq != head->seq) {
-		ntrdma_vbell_clear(head, vbell);
-		return -EAGAIN;
-	}
-
-	list_add_tail(&vbell->entry, &head->list);
-	vbell->arm = true;
-
-	return 0;
-}
-
-static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell_head *head,
-					 struct ntrdma_vbell *vbell)
-{
-	if (vbell->arm)
-		return 0;
-
-	ntrdma_vbell_clear(head, vbell);
-	list_add_tail(&vbell->entry, &head->list);
-	vbell->arm = true;
-
-	return 0;
 }
 
 static inline void ntrdma_vbell_head_init(struct ntrdma_vbell_head *head)
@@ -146,6 +88,9 @@ static inline void ntrdma_vbell_head_init(struct ntrdma_vbell_head *head)
 	head->seq = 0;
 }
 
+/*
+ * Must run under dev->vbell_self_lock.
+ */
 static inline void ntrdma_vbell_head_fire(struct ntrdma_vbell_head *head)
 {
 	struct ntrdma_vbell *vbell;
@@ -158,12 +103,18 @@ static inline void ntrdma_vbell_head_fire(struct ntrdma_vbell_head *head)
 	INIT_LIST_HEAD(&head->list);
 }
 
+/*
+ * Must run under dev->vbell_self_lock.
+ */
 static inline void ntrdma_vbell_head_event(struct ntrdma_vbell_head *head)
 {
 	++head->seq;
 	ntrdma_vbell_head_fire(head);
 }
 
+/*
+ * Must run under dev->vbell_self_lock.
+ */
 static inline void ntrdma_vbell_head_reset(struct ntrdma_vbell_head *head)
 {
 	head->seq = 0;
