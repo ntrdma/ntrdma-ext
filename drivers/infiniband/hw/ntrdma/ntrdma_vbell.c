@@ -200,7 +200,7 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 
 	ntrdma_vdbg(dev, "vbell work\n");
 
-	spin_lock_bh(&dev->vbell_self_lock);
+	spin_lock(&dev->vbell_self_lock);
 
 	if (!dev->vbell_enable) {
 		TRACE("vbell is not enabled\n");
@@ -218,7 +218,7 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 	}
 
 out:
-	spin_unlock_bh(&dev->vbell_self_lock);
+	spin_unlock(&dev->vbell_self_lock);
 
 	if (ntc_clear_signal(dev->ntc, vec))
 		tasklet_schedule(&dev->vbell_work[vec]);
