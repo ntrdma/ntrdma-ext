@@ -45,7 +45,6 @@
 #include <rdma/ib_verbs.h>
 
 #include "ntrdma.h"
-#include "ntrdma_cb.h"
 #include "ntrdma_util.h"
 #include "ntrdma_vbell.h"
 
