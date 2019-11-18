@@ -1553,8 +1553,9 @@ static void mr_release(struct kref *kref)
 			dev, mr, mr->res.key);
 	ntrdma_debugfs_mr_del(mr);
 	ntrdma_mr_deinit(mr);
+	if (mr->ib_umem)
+		ib_umem_release(mr->ib_umem);
 	kfree(mr);
-	ib_umem_release(mr->ib_umem);
 	atomic_dec(&dev->mr_num);
 }
 
