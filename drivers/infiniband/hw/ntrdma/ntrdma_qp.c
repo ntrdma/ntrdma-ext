@@ -51,11 +51,6 @@ DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
 #define NTRDMA_QP_BATCH_SIZE 0x10
 
-struct ntrdma_qp_cmd_cb {
-	struct ntrdma_cmd_cb cb;
-	struct ntrdma_qp *qp;
-};
-
 static struct kmem_cache *qpcb_slab;
 static struct kmem_cache *rqp_slab;
 static struct kmem_cache *shadow_slab;
@@ -662,7 +657,6 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 	struct ntrdma_qp *qp = ntrdma_res_qp(res);
 	struct ntrdma_rqp *rqp = NULL;
 	struct ntrdma_qp_cmd_cb *qpcb;
-	int rc;
 
 	if (qp && dev)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
@@ -676,11 +670,7 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 
 	ntrdma_res_start_cmds(&qp->res);
 
-	qpcb = kmem_cache_alloc_node(qpcb_slab, GFP_KERNEL, dev->node);
-	if (!qpcb) {
-		rc = -ENOMEM;
-		goto err;
-	}
+	qpcb = &qp->disable_qpcb;
 	WARN(qp->ibqp.qp_type == IB_QPT_GSI, "try to delete qp type IB_QPT_GSI");
 	qpcb->cb.cmd_prep = ntrdma_qp_disable_prep;
 	qpcb->cb.rsp_cmpl = ntrdma_qp_disable_cmpl;
@@ -689,10 +679,6 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 	ntrdma_dev_cmd_add(dev, &qpcb->cb);
 
 	return 0;
-
-err:
-	ntrdma_res_done_cmds(&qp->res);
-	return rc;
 }
 
 static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
@@ -726,7 +712,6 @@ static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 	}
 
 	ntrdma_qp_enable_disable_cmpl_common(qp, dev, NULL, true);
-	kmem_cache_free(qpcb_slab, qpcb);
 
 	return 0;
 

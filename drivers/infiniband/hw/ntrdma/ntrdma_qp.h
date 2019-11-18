@@ -35,7 +35,11 @@
 
 #include <rdma/ib_verbs.h>
 
+#include "ntrdma_cmd.h"
 #include "ntrdma_res.h"
+
+struct ntrdma_dev;
+struct ntrdma_qp;
 
 /* Queue Pair Entry in Completion Queue */
 struct ntrdma_poll {
@@ -52,10 +56,17 @@ struct ntrdma_poll {
 				  u32 pos, u32 base);
 };
 
+struct ntrdma_qp_cmd_cb {
+	struct ntrdma_cmd_cb cb;
+	struct ntrdma_qp *qp;
+};
+
 /* Queue Pair */
 struct ntrdma_qp {
 	/* Ofed qp structure */
 	struct ib_qp			ibqp;
+
+	struct ntrdma_qp_cmd_cb		disable_qpcb;
 
 	/* debugfs */
 	struct dentry			*debug;

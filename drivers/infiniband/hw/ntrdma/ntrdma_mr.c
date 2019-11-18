@@ -39,12 +39,6 @@
 #include "ntrdma_res.h"
 #include <linux/ntc_trace.h>
 
-struct ntrdma_mr_cmd_cb {
-	struct ntrdma_cmd_cb cb;
-	struct ntrdma_mr *mr;
-	u32 sg_pos, sg_count;
-};
-
 static struct kmem_cache *mrcb_slab;
 
 #define ntrdma_cmd_cb_mrcb(__cb) \
@@ -233,15 +227,10 @@ static int ntrdma_mr_disable(struct ntrdma_res *res)
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	struct ntrdma_mr *mr = ntrdma_res_mr(res);
 	struct ntrdma_mr_cmd_cb *mrcb;
-	int rc;
 
 	ntrdma_res_start_cmds(&mr->res);
 
-	mrcb = kmem_cache_alloc_node(mrcb_slab, GFP_KERNEL, dev->node);
-	if (!mrcb) {
-		rc = -ENOMEM;
-		goto err;
-	}
+	mrcb = &mr->disable_mrcb;
 
 	mrcb->cb.cmd_prep = ntrdma_mr_disable_prep;
 	mrcb->cb.rsp_cmpl = ntrdma_mr_disable_cmpl;
@@ -252,10 +241,6 @@ static int ntrdma_mr_disable(struct ntrdma_res *res)
 	ntrdma_dev_cmd_add(dev, &mrcb->cb);
 
 	return 0;
-
-err:
-	ntrdma_res_done_cmds(&mr->res);
-	return rc;
 }
 
 static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
@@ -275,20 +260,13 @@ static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
-	int rc;
+	int rc = 0;
 
-	if (!rsp || READ_ONCE(rsp->hdr.status)) {
+	if (!rsp || READ_ONCE(rsp->hdr.status))
 		rc = -EIO;
-		goto err;
-	}
 
 	ntrdma_res_done_cmds(&mr->res);
-	kmem_cache_free(mrcb_slab, mrcb);
 
-	return 0;
-
-err:
-	ntrdma_res_done_cmds(&mr->res);
 	return rc;
 }
 
