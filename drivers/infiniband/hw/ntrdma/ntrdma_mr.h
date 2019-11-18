@@ -37,8 +37,18 @@
 
 #include <rdma/ib_verbs.h>
 
+#include "ntrdma_cmd.h"
 #include "ntrdma_res.h"
 #include "ntrdma_sg.h"
+
+struct ntrdma_dev;
+struct ntrdma_mr;
+
+struct ntrdma_mr_cmd_cb {
+	struct ntrdma_cmd_cb cb;
+	struct ntrdma_mr *mr;
+	u32 sg_pos, sg_count;
+};
 
 /* Memory Region */
 struct ntrdma_mr {
@@ -52,6 +62,7 @@ struct ntrdma_mr {
 	struct ntrdma_res		res;
 
 	struct ib_umem			*ib_umem;
+	struct ntrdma_mr_cmd_cb		disable_mrcb;
 
 	u32				pd_key;
 	u32				access;
