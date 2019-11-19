@@ -143,9 +143,8 @@ struct ntrdma_dev {
 	u32				peer_cmd_send_vbell_idx;
 
 	/* command recv work */
-	struct list_head		cmd_pend_list;
-	struct list_head		cmd_post_list;
-	wait_queue_head_t		cmd_send_cond;
+	struct list_head	cmd_pend_list; /* Protected by cmd_send_lock */
+	struct list_head	cmd_post_list; /* Protected by cmd_send_lock */
 	struct mutex			cmd_send_lock;
 	struct work_struct		cmd_send_work;
 	struct ntrdma_vbell		cmd_send_vbell;
@@ -182,7 +181,8 @@ struct ntrdma_dev {
 
 	/* rdma local resources */
 
-	struct list_head		res_list;
+	struct list_head		mr_list; /* Protected by res_lock. */
+	struct list_head		qp_list; /* Protected by res_lock. */
 	struct ntrdma_kvec		mr_vec;
 	struct ntrdma_kvec		qp_vec;
 

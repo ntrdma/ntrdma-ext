@@ -170,7 +170,6 @@ static void ntrdma_deinit(void)
 {
 	ntrdma_debugfs_deinit();
 	ntrdma_eth_module_deinit();
-	ntrdma_mr_module_deinit();
 	ntrdma_ib_module_deinit();
 	ntrdma_qp_module_deinit();
 }
@@ -186,10 +185,6 @@ static int __init ntrdma_init(void)
 		goto err;
 
 	rc = ntrdma_ib_module_init();
-	if (rc < 0)
-		goto err;
-
-	rc = ntrdma_mr_module_init();
 	if (rc < 0)
 		goto err;
 

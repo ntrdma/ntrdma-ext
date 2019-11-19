@@ -67,7 +67,7 @@ struct ntrdma_qp {
 	/* Ofed qp structure */
 	struct ib_qp			ibqp;
 
-	struct ntrdma_qp_cmd_cb		disable_qpcb;
+	struct ntrdma_qp_cmd_cb		enable_qpcb;
 
 	/* debugfs */
 	struct dentry			*debug;
@@ -203,16 +203,6 @@ void ntrdma_qp_deinit(struct ntrdma_qp *qp);
 
 int ntrdma_qp_modify(struct ntrdma_qp *qp);
 
-static inline int ntrdma_qp_add(struct ntrdma_qp *qp)
-{
-	return ntrdma_res_add(&qp->res);
-}
-
-static inline void ntrdma_qp_remove(struct ntrdma_qp *qp)
-{
-	ntrdma_res_del(&qp->res);
-}
-
 static inline void ntrdma_qp_get(struct ntrdma_qp *qp)
 {
 	ntrdma_res_get(&qp->res);
@@ -292,6 +282,8 @@ static inline void ntrdma_qp_recv_prod_put(struct ntrdma_qp *qp,
 	qp->recv_prod = ntrdma_ring_update(pos, base, qp->recv_cap);
 }
 
+void ntrdma_qp_enable(struct ntrdma_qp *qp);
+void ntrdma_qp_reset(struct ntrdma_qp *qp);
 
 /* Remote Queue Pair */
 struct ntrdma_rqp {

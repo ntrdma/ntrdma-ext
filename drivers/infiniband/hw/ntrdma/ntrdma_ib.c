@@ -882,6 +882,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	struct ntrdma_qp *qp;
 	struct ntrdma_qp_init_attr qp_attr;
 	struct file *file;
+	struct ntrdma_qp_cmd_cb qpcb;
 	int flags;
 	int rc;
 
@@ -900,6 +901,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	}
 
 	memset(qp, 0, sizeof(*qp));
+
+	init_completion(&qp->enable_qpcb.cb.cmds_done);
 
 	qp_attr.pd_key = pd->key;
 
@@ -939,8 +942,9 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		goto err_init;
 	}
 
-	ntrdma_debugfs_qp_add(qp); /* TODO: status must be checked. */
-	rc = ntrdma_qp_add(qp);
+	memset(&qpcb, 0, sizeof(qpcb));
+	init_completion(&qpcb.cb.cmds_done);
+	rc = ntrdma_res_add(&qp->res, &qpcb.cb, &dev->qp_list);
 	if (rc) {
 		ntrdma_err(dev, "ntrdma_qp_add failed %d\n", rc);
 		goto err_add;
@@ -1021,15 +1025,13 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	}
 
  bad_ntrdma_ioctl_if:
+	ntrdma_debugfs_qp_add(qp);
+
 	ntrdma_qp_dbg(qp, "added qp%d type %d",
 			qp->res.key, ibqp_attr->qp_type);
 
 	return &qp->ibqp;
 
-	/*
-	ntrdma_qp_remove(qp);
-	ntrdma_debugfs_qp_del(qp);
-	*/
 err_add:
 	ntrdma_qp_deinit(qp);
 err_init:
@@ -1313,28 +1315,8 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	if (ibqp->qp_type == IB_QPT_GSI || ibqp->qp_type == IB_QPT_SMI)
 		qp->rqp_key = ibqp->qp_type;
 
-	rc = 0;
-
-	mutex_lock(&dev->res_lock);
-
-	if (dev->res_enable) {
-		rc = ntrdma_qp_modify(qp);
-		if (!WARN(rc, "ntrdma_qp_modify: failed rc = %d", rc))
-			ntrdma_dev_cmd_submit(dev);
-
-		mutex_unlock(&dev->res_lock);
-
-		rc = ntrdma_res_wait_cmds(&qp->res);
-
-		if (rc) {
-			ntrdma_err(dev,
-					"ntrdma qp modify cmd timeout after %lu msec",
-					qp->res.timeout);
-			ntrdma_unrecoverable_err(dev);
-		}
-	} else {
-		mutex_unlock(&dev->res_lock);
-	}
+	rc = ntrdma_qp_modify(qp);
+	WARN(rc, "ntrdma_qp_modify: failed rc = %d", rc);
 
 unlock_exit:
 	ntrdma_res_unlock(&qp->res);
@@ -1344,6 +1326,7 @@ unlock_exit:
 static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 {
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
+	struct ntrdma_qp_cmd_cb qpcb;
 
 	TRACE("qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
 	if (!qp) {
@@ -1357,9 +1340,14 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 				qp, qp->res.key, qp->send_cmpl,
 				qp->send_post, qp->send_prod, qp->send_cap);
 	}
-	ntrdma_qp_remove(qp);
+
+	ntrdma_debugfs_qp_del(qp);
+
+	memset(&qpcb, 0, sizeof(qpcb));
+	init_completion(&qpcb.cb.cmds_done);
+	ntrdma_res_del(&qp->res, &qpcb.cb);
+
 	ntrdma_qp_put(qp);
-	/* SYNC ref == 0 ?*/
 
 	return 0;
 }
@@ -1834,6 +1822,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	struct ib_umem *ib_umem;
 	unsigned long dma_addr = 0;
 	unsigned long dma_len;
+	struct ntrdma_mr_cmd_cb mrcb;
 	int rc, i, count;
 
 	ntrdma_info(dev, "called user addr %llx len %lld: (%d/%d)\n",
@@ -1895,6 +1884,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		goto err_mr;
 	}
 
+	init_completion(&mr->enable_mrcb.cb.cmds_done);
+
 	mr->ib_umem = ib_umem;
 	mr->pd_key = pd->key;
 	mr->access = mr_access_flags;
@@ -1917,10 +1908,12 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		goto err_init;
 	}
 
-	rc = ntrdma_mr_add(mr);
+	memset(&mrcb, 0, sizeof(mrcb));
+	init_completion(&mrcb.cb.cmds_done);
+	rc = ntrdma_res_add(&mr->res, &mrcb.cb, &dev->mr_list);
 	if (rc < 0) {
 		ntrdma_mr_put(mr);
-		ntrdma_err(dev, "reg_user_mr failed on ntrdma_mr_add %d\n", rc);
+		ntrdma_err(dev, "reg_user_mr failed on ntrdma_res_add %d", rc);
 		return ERR_PTR(rc);
 	}
 
@@ -1936,6 +1929,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 			mr->sg_list[i].dma_addr,
 			mr->sg_list[i].size);
 	}
+
+	ntrdma_debugfs_mr_add(mr);
 
 	return &mr->ibmr;
 
@@ -1961,7 +1956,6 @@ static void mr_release(struct kref *kref)
 
 	TRACE("dev %p, mr %p (res key %d)\n",
 			dev, mr, mr->res.key);
-	ntrdma_debugfs_mr_del(mr);
 	ntrdma_mr_deinit(mr);
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);
@@ -1981,10 +1975,15 @@ void ntrdma_mr_put(struct ntrdma_mr *mr)
 static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 {
 	struct ntrdma_mr *mr = ntrdma_ib_mr(ibmr);
+	struct ntrdma_mr_cmd_cb mrcb;
 
-	ntrdma_mr_remove(mr);
+	ntrdma_debugfs_mr_del(mr);
+
+	memset(&mrcb, 0, sizeof(mrcb));
+	init_completion(&mrcb.cb.cmds_done);
+	ntrdma_res_del(&mr->res, &mrcb.cb);
+
 	ntrdma_mr_put(mr);
-	/* SYNC ref == 0 ?*/
 
 	return 0;
 }

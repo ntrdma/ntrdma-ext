@@ -82,9 +82,6 @@ void ntrdma_qp_module_deinit(void);
 int __init ntrdma_ib_module_init(void);
 void ntrdma_ib_module_deinit(void);
 
-int __init ntrdma_mr_module_init(void);
-void ntrdma_mr_module_deinit(void);
-
 int __init ntrdma_eth_module_init(void);
 void ntrdma_eth_module_deinit(void);
 

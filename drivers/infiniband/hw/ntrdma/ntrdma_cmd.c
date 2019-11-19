@@ -146,7 +146,6 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	/* send work */
 	INIT_LIST_HEAD(&dev->cmd_pend_list);
 	INIT_LIST_HEAD(&dev->cmd_post_list);
-	init_waitqueue_head(&dev->cmd_send_cond);
 	mutex_init(&dev->cmd_send_lock);
 	ntrdma_vbell_init(dev, &dev->cmd_send_vbell, send_vbell_idx,
 			ntrdma_cmd_send_vbell_cb, dev);
@@ -390,9 +389,10 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 			&dev->cmd_post_list, dev_entry) {
 
 		list_del(&cb->dev_entry);
+		cb->in_list = false;
 		pr_info("cmd quiesce: aborting post %ps\n",
 				cb->rsp_cmpl);
-		cb->rsp_cmpl(cb, NULL);
+		complete_all(&cb->cmds_done);
 	}
 
 	/* now lets cancel all pending cmds
@@ -403,9 +403,10 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 			&dev->cmd_pend_list, dev_entry) {
 
 		list_del(&cb->dev_entry);
+		cb->in_list = false;
 		pr_info("cmd quiesce: aborting pend %ps\n",
 				cb->rsp_cmpl);
-		cb->rsp_cmpl(cb, NULL);
+		complete_all(&cb->cmds_done);
 	}
 
 	pr_info("cmd quiesce done\n");
@@ -448,6 +449,7 @@ void ntrdma_dev_cmd_add_unsafe(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
 			"Entered %s, without locking cmd_send_lock\n",
 			__func__);
 
+	cb->in_list = true;
 	list_add_tail(&cb->dev_entry, &dev->cmd_pend_list);
 }
 
@@ -461,23 +463,6 @@ void ntrdma_dev_cmd_add(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
 void ntrdma_dev_cmd_submit(struct ntrdma_dev *dev)
 {
 	schedule_work(&dev->cmd_send_work);
-}
-
-int ntrdma_dev_cmd_finish(struct ntrdma_dev *dev)
-{
-	int ret;
-
-	ret = wait_event_timeout(dev->cmd_send_cond,
-			ntrdma_cmd_done(dev), CMD_TIMEOUT_MSEC);
-
-	if (!ret) {
-		ntrdma_err(dev,
-				"TIMEOUT: waiting for all pending commands to complete, after %d msec\n",
-				CMD_TIMEOUT_MSEC);
-		return -ETIME;
-	}
-	return 0;
-
 }
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
@@ -514,13 +499,6 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 		for (pos = start; pos < end; ++pos) {
 
-			if (WARN(list_empty(&dev->cmd_post_list),
-					"Corruption pos %d end %d but list is empty cons %u cmpl %u",
-					pos, end, ntrdma_dev_cmd_send_cons(dev),
-					dev->cmd_send_cmpl)) {
-				break;
-			}
-
 			cmd_id = READ_ONCE(cmd_send_rsp_buf[pos].hdr.cmd_id);
 
 			if (unlikely(pos != cmd_id)) {
@@ -530,11 +508,22 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				ntc_link_disable(dev->ntc);
 			}
 
+			if (unlikely(list_empty(&dev->cmd_post_list))) {
+				ntrdma_info(dev, "Skipping timeouted command");
+				continue;
+			}
+
 			cb = list_first_entry(&dev->cmd_post_list,
 					struct ntrdma_cmd_cb,
 					dev_entry);
 
+			if (unlikely(cb->cmd_id != pos)) {
+				ntrdma_info(dev, "Skipping timeouted command");
+				continue;
+			}
+
 			list_del(&cb->dev_entry);
+			cb->in_list = false;
 
 			ntrdma_vdbg(dev, "rsp cmpl pos %d cmd_id %d", pos,
 				cmd_id);
@@ -565,6 +554,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			cb = list_first_entry(&dev->cmd_pend_list,
 					struct ntrdma_cmd_cb,
 					dev_entry);
+			cb->cmd_id = pos;
 
 			list_move_tail(&cb->dev_entry, &dev->cmd_post_list);
 
@@ -628,8 +618,6 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				schedule_work(&dev->cmd_send_work);
 	}
 	mutex_unlock(&dev->cmd_send_lock);
-
-	wake_up(&dev->cmd_send_cond);
 }
 
 static void ntrdma_cmd_send_work_cb(struct work_struct *ws)
