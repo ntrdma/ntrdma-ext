@@ -124,7 +124,7 @@ static struct dentry *ntc_dbgfs;
 
 #define NTC_NTB_PING_PONG_PERIOD	msecs_to_jiffies(100)
 #define NTC_NTB_PING_POLL_PERIOD	msecs_to_jiffies(257)
-#define NTC_NTB_PING_MISS_THRESHOLD	10
+#define NTC_NTB_PING_MISS_THRESHOLD	1000
 
 #define NTC_CTX_BUF_SIZE 1024
 
@@ -367,10 +367,19 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev)
 {
 	struct ntc_ntb_info __iomem *self_info;
 	int ping_flags, poison_flags;
-	u32 ping_val;
+	u32 ping_val, tmp_jiffies;
+	static u32 last_ping;
 
 	if (!dev->ping_run)
 		return;
+	tmp_jiffies = jiffies;
+	if (unlikely(tmp_jiffies > last_ping +
+			(5 * NTC_NTB_PING_PONG_PERIOD))) {
+		dev_warn(&dev->ntc.dev, "****PINGPONG delayed by %u******\n",
+			jiffies_to_msecs(tmp_jiffies - last_ping));
+	}
+	last_ping = tmp_jiffies;
+
 	mod_timer(&dev->ping_pong, jiffies + NTC_NTB_PING_PONG_PERIOD);
 
 	ping_flags = ntc_ntb_ping_flags(dev->ping_msg);
