@@ -51,7 +51,6 @@ DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
 #define NTRDMA_QP_BATCH_SIZE 0x10
 
-static struct kmem_cache *qpcb_slab;
 static struct kmem_cache *rqp_slab;
 static struct kmem_cache *shadow_slab;
 
@@ -71,9 +70,10 @@ static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
 static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 
-static int ntrdma_qp_enable(struct ntrdma_res *res);
-static int ntrdma_qp_disable(struct ntrdma_res *res);
-static void ntrdma_qp_reset(struct ntrdma_res *res);
+static void ntrdma_qp_enable_cb(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb);
+static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb);
 
 static void ntrdma_rqp_free(struct ntrdma_rres *rres);
 
@@ -185,9 +185,8 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 
 
 	rc = ntrdma_res_init(&qp->res, dev, &dev->qp_vec,
-			ntrdma_qp_enable,
-			ntrdma_qp_disable,
-			ntrdma_qp_reset,
+			ntrdma_qp_enable_cb,
+			ntrdma_qp_disable_cb,
 			reserved_key);
 	if (rc)
 		goto err_res;
@@ -344,15 +343,12 @@ static void ntrdma_qp_release(struct kref *kref)
 	struct ntrdma_qp *qp = container_of(res, struct ntrdma_qp, res);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	ntrdma_debugfs_qp_del(qp);
 	ntrdma_qp_deinit(qp);
 	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
 		"Free list element while in the list, obj %p, res %p, qp %p (key %d)\n",
 		obj, res, qp, qp->res.key);
 	ntrdma_free_qp(qp);
-
-	if (dev)
-		atomic_dec(&dev->qp_num);
+	atomic_dec(&dev->qp_num);
 }
 
 void ntrdma_qp_put(struct ntrdma_qp *qp)
@@ -389,28 +385,28 @@ inline struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,
 int ntrdma_qp_modify(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	struct ntrdma_qp_cmd_cb *qpcb;
-	int rc;
+	struct ntrdma_qp_cmd_cb qpcb = {
+		.cb = {
+			.cmd_prep = ntrdma_qp_modify_prep,
+			.rsp_cmpl = ntrdma_qp_modify_cmpl,
+		},
+		.qp = qp,
+	};
 
-	ntrdma_res_start_cmds(&qp->res);
+	if (!dev->res_enable)
+		return 0;
 
-	qpcb = kmem_cache_alloc_node(qpcb_slab, GFP_KERNEL, dev->node);
-	if (!qpcb) {
-		rc = -ENOMEM;
-		goto err;
-	}
+	init_completion(&qpcb.cb.cmds_done);
 
-	qpcb->cb.cmd_prep = ntrdma_qp_modify_prep;
-	qpcb->cb.rsp_cmpl = ntrdma_qp_modify_cmpl;
-	qpcb->qp = qp;
+	mutex_lock(&dev->res_lock);
 
-	ntrdma_dev_cmd_add(dev, &qpcb->cb);
+	ntrdma_dev_cmd_add(dev, &qpcb.cb);
 
-	return 0;
+	mutex_unlock(&dev->res_lock);
 
-err:
-	ntrdma_res_done_cmds(&qp->res);
-	return rc;
+	ntrdma_dev_cmd_submit(dev);
+
+	return ntrdma_res_wait_cmds(dev, &qpcb.cb, qp->res.timeout);
 }
 
 static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
@@ -443,38 +439,31 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 	int rc;
 
 	ntrdma_vdbg(dev, "called\n");
-	if (!rsp) {
-		ntrdma_err(dev, "qp %d modify aborted\n",
-				qp->res.key);
-		ntrdma_res_done_cmds(&qp->res);
-		return -EIO;
-	}
 
 	status = READ_ONCE(rsp->hdr.status);
-	if (status) {
+	if (unlikely(status)) {
 		ntrdma_err(dev, "rsp %p status %d", rsp, status);
 		rc = -EIO;
-		goto err;
+
+		ntrdma_qp_recv_work(qp);
+
+		goto out;
 	}
 
-	ntrdma_res_done_cmds(&qp->res);
-	kmem_cache_free(qpcb_slab, qpcb);
+	rc = 0;
 
-	return 0;
+ out:
+	complete_all(&cb->cmds_done);
 
-err:
-	ntrdma_res_done_cmds(&qp->res);
-
-	ntrdma_qp_recv_work(qp);
 	return rc;
 }
 
-static int ntrdma_qp_enable(struct ntrdma_res *res)
+static void ntrdma_qp_enable_cb(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	struct ntrdma_qp *qp = ntrdma_res_qp(res);
 	struct ntrdma_qp_cmd_cb *qpcb;
-	int rc;
 
 	if (qp->ibqp.qp_type == IB_QPT_GSI) {
 		qp->recv_prod = qp->recv_cons = qp->recv_cmpl;
@@ -483,25 +472,19 @@ static int ntrdma_qp_enable(struct ntrdma_res *res)
 				qp->recv_cons, qp->recv_cmpl);
 	}
 
-	ntrdma_res_start_cmds(&qp->res);
-
-	qpcb = kmem_cache_alloc_node(qpcb_slab, GFP_KERNEL, dev->node);
-	if (!qpcb) {
-		rc = -ENOMEM;
-		goto err;
-	}
+	qpcb = container_of(cb, struct ntrdma_qp_cmd_cb, cb);
 
 	qpcb->cb.cmd_prep = ntrdma_qp_enable_prep;
 	qpcb->cb.rsp_cmpl = ntrdma_qp_enable_cmpl;
 	qpcb->qp = qp;
 
 	ntrdma_dev_cmd_add(dev, &qpcb->cb);
+}
 
-	return 0;
-
-err:
-	ntrdma_res_done_cmds(&qp->res);
-	return rc;
+void ntrdma_qp_enable(struct ntrdma_qp *qp)
+{
+	reinit_completion(&qp->enable_qpcb.cb.cmds_done);
+	ntrdma_qp_enable_cb(&qp->res, &qp->enable_qpcb.cb);
 }
 
 static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
@@ -541,8 +524,10 @@ static int ntrdma_qp_enable_disable_cmpl_common(struct ntrdma_qp *qp,
 {
 	int rc;
 
-	if (is_disable)
+	if (is_disable) {
+		rc = 0;
 		goto disable;
+	}
 
 	rc = ntc_remote_buf_map(&qp->peer_recv_wqe_buf, dev->ntc,
 				&rsp->qp_create.recv_wqe_buf_desc);
@@ -567,7 +552,6 @@ disable:
 err_peer_send_wqe_buf:
 	ntc_remote_buf_unmap(&qp->peer_recv_wqe_buf, dev->ntc);
 err_peer_recv_wqe_buf:
-	ntrdma_res_done_cmds(&qp->res);
 	return rc;
 }
 
@@ -584,33 +568,34 @@ static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 
 	TRACE("qp_enable cmpl: %d\n", qp->res.key);
 
-	if (!_rsp)
-		return -EIO;
-
 	rsp = READ_ONCE(*_rsp);
-	if (rsp.hdr.status)
-		return -EIO;
+	if (unlikely(rsp.hdr.status)) {
+		rc = -EIO;
+		goto out;
+	}
 
 	rc = ntrdma_qp_enable_disable_cmpl_common(qp, dev, &rsp, false);
-	if (rc)
-		return rc;
+	if (unlikely(rc))
+		goto out;
 
 	if (is_state_out_of_reset(atomic_read(&qp->state))) {
 		qpcb->cb.cmd_prep = ntrdma_qp_modify_prep;
 		qpcb->cb.rsp_cmpl = ntrdma_qp_modify_cmpl;
 		ntrdma_dev_cmd_add_unsafe(dev, &qpcb->cb);
-	} else {
-		ntrdma_res_done_cmds(&qp->res);
-		kmem_cache_free(qpcb_slab, qpcb);
-		ntrdma_qp_recv_work(qp);
+		return 0;
 	}
 
+	ntrdma_qp_recv_work(qp);
+	rc = 0;
 
+ out:
+	complete_all(&cb->cmds_done);
 
-	return 0;
+	return rc;
 }
 
-static int ntrdma_qp_disable(struct ntrdma_res *res)
+static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	struct ntrdma_qp *qp = ntrdma_res_qp(res);
@@ -627,17 +612,14 @@ static int ntrdma_qp_disable(struct ntrdma_res *res)
 		ntrdma_rqp_put(rqp);
 	}
 
-	ntrdma_res_start_cmds(&qp->res);
+	qpcb = container_of(cb, struct ntrdma_qp_cmd_cb, cb);
 
-	qpcb = &qp->disable_qpcb;
 	WARN(qp->ibqp.qp_type == IB_QPT_GSI, "try to delete qp type IB_QPT_GSI");
 	qpcb->cb.cmd_prep = ntrdma_qp_disable_prep;
 	qpcb->cb.rsp_cmpl = ntrdma_qp_disable_cmpl;
 	qpcb->qp = qp;
 
 	ntrdma_dev_cmd_add(dev, &qpcb->cb);
-
-	return 0;
 }
 
 static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
@@ -661,34 +643,27 @@ static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	int rc;
 
 	ntrdma_vdbg(dev, "called\n");
 
-	if (!rsp || READ_ONCE(rsp->hdr.status)) {
-		rc = -EIO;
-		goto err;
-	}
-
 	ntrdma_qp_enable_disable_cmpl_common(qp, dev, NULL, true);
 
-	return 0;
+	complete_all(&cb->cmds_done);
 
-err:
-	ntrdma_res_done_cmds(&qp->res);
-	return rc;
+	if (READ_ONCE(rsp->hdr.status))
+		return -EIO;
+
+	return 0;
 }
 
-static void ntrdma_qp_reset(struct ntrdma_res *res)
+void ntrdma_qp_reset(struct ntrdma_qp *qp)
 {
-	struct ntrdma_qp *qp;
 	struct ntrdma_dev *dev;
 	struct ntrdma_rqp *rqp = NULL;
 	int start_cmpl, start_cons, end, base;
 	bool need_cue = false;
 	unsigned long irqflags = 0;
 
-	qp = ntrdma_res_qp(res);
 	dev = ntrdma_qp_dev(qp);
 	if (dev) {
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
@@ -2172,8 +2147,7 @@ void ntrdma_free_rqp(struct ntrdma_rqp *rqp)
 
 int __init ntrdma_qp_module_init(void)
 {
-	if (!((qpcb_slab = KMEM_CACHE(ntrdma_qp_cmd_cb, 0)) &&
-			(rqp_slab = KMEM_CACHE(ntrdma_rqp, 0)) &&
+	if (!((rqp_slab = KMEM_CACHE(ntrdma_rqp, 0)) &&
 			(shadow_slab = KMEM_CACHE(ntrdma_wr_rcv_sge_shadow,
 						0)))) {
 		ntrdma_qp_module_deinit();
@@ -2185,7 +2159,6 @@ int __init ntrdma_qp_module_init(void)
 
 void ntrdma_qp_module_deinit(void)
 {
-	ntrdma_deinit_slab(&qpcb_slab);
 	ntrdma_deinit_slab(&rqp_slab);
 	ntrdma_deinit_slab(&shadow_slab);
 }

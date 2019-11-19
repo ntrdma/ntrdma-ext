@@ -44,6 +44,7 @@
 #define NTRDMA_RES_VEC_INIT_CAP		0x10
 
 struct ntrdma_dev;
+struct ntrdma_cmd_cb;
 struct ntrdma_vec;
 struct ntrdma_kvec;
 
@@ -64,19 +65,17 @@ struct ntrdma_res {
 	struct ntrdma_kvec		*vec;
 
 	/* Initiate commands to create the remote resource */
-	int (*enable)(struct ntrdma_res *res);
+	void (*enable)(struct ntrdma_res *res,
+		struct ntrdma_cmd_cb *cb);
 	/* Initiate commands to delete the remote resource */
-	int (*disable)(struct ntrdma_res *res);
-	/* Invalidate any remote resource information */
-	void (*reset)(struct ntrdma_res *res);
+	void (*disable)(struct ntrdma_res *res,
+			struct ntrdma_cmd_cb *cb);
 
 	/* The key identifies this resource */
 	u32				key;
 
 	/* Synchronize operations affecting the local resource */
 	struct mutex			lock;
-	/* Wait on commands affecting the remote resource */
-	struct completion		cmds_done;
 	unsigned long			timeout;
 };
 
@@ -85,15 +84,17 @@ struct ntrdma_res {
 int ntrdma_res_init(struct ntrdma_res *res,
 		struct ntrdma_dev *dev,
 		struct ntrdma_kvec *vec,
-		int (*enable)(struct ntrdma_res *res),
-		int (*disable)(struct ntrdma_res *res),
-		void (*reset)(struct ntrdma_res *res),
+		void (*enable)(struct ntrdma_res *res,
+			struct ntrdma_cmd_cb *cb),
+		void (*disable)(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb),
 		int reserved_key);
 
 void ntrdma_res_deinit(struct ntrdma_res *res);
 
-int ntrdma_res_add(struct ntrdma_res *res);
-void ntrdma_res_del(struct ntrdma_res *res);
+int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
+		struct list_head *res_list);
+void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb);
 
 static inline void ntrdma_res_lock(struct ntrdma_res *res)
 {
@@ -105,26 +106,9 @@ static inline void ntrdma_res_unlock(struct ntrdma_res *res)
 	mutex_unlock(&res->lock);
 }
 
-static inline void ntrdma_res_start_cmds(struct ntrdma_res *res)
-{
-	reinit_completion(&res->cmds_done);
-}
-
-static inline void ntrdma_res_done_cmds(struct ntrdma_res *res)
-{
-	complete_all(&res->cmds_done);
-}
-
-static inline int ntrdma_res_wait_cmds(struct ntrdma_res *res)
-{
-	unsigned long ret =
-			wait_for_completion_timeout(&res->cmds_done,
-					res->timeout);
-
-	if (!ret)
-		return -ETIME;
-	return 0;
-}
+inline int ntrdma_res_wait_cmds(struct ntrdma_dev *dev,
+				struct ntrdma_cmd_cb *cb,
+				unsigned long timeout);
 
 static inline void ntrdma_res_get(struct ntrdma_res *res)
 {

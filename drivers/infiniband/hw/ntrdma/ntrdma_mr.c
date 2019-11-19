@@ -30,8 +30,6 @@
  * SOFTWARE.
  */
 
-#include <linux/slab.h>
-
 #include "ntrdma_dev.h"
 #include "ntrdma_cmd.h"
 #include "ntrdma_pd.h"
@@ -39,13 +37,9 @@
 #include "ntrdma_res.h"
 #include <linux/ntc_trace.h>
 
-static struct kmem_cache *mrcb_slab;
-
 #define ntrdma_cmd_cb_mrcb(__cb) \
 	container_of(__cb, struct ntrdma_mr_cmd_cb, cb)
 
-static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
-				union ntrdma_cmd *cmd);
 static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 				union ntrdma_cmd *cmd);
 static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
@@ -55,8 +49,10 @@ static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 
-static int ntrdma_mr_enable(struct ntrdma_res *res);
-static int ntrdma_mr_disable(struct ntrdma_res *res);
+static void ntrdma_mr_enable_cb(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb);
+static void ntrdma_mr_disable_cb(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb);
 
 static void ntrdma_rmr_free(struct ntrdma_rres *rres);
 
@@ -76,7 +72,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 		count = mr->sg_count;
 
 	rc = ntrdma_res_init(&mr->res, dev, &dev->mr_vec,
-			ntrdma_mr_enable, ntrdma_mr_disable, NULL, -1);
+			ntrdma_mr_enable_cb, ntrdma_mr_disable_cb, -1);
 	if (rc)
 		goto err;
 
@@ -94,84 +90,33 @@ void ntrdma_mr_deinit(struct ntrdma_mr *mr)
 	ntrdma_res_deinit(&mr->res);
 }
 
-static int ntrdma_mr_enable(struct ntrdma_res *res)
+static void ntrdma_mr_enable_cb(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	struct ntrdma_mr *mr = ntrdma_res_mr(res);
 	struct ntrdma_mr_cmd_cb *mrcb;
-	u32 pos = 0, end, count;
-	int rc;
+	u32 count;
 
-	ntrdma_res_start_cmds(&mr->res);
-
-	mrcb = kmem_cache_alloc_node(mrcb_slab, GFP_KERNEL, dev->node);
-	if (!mrcb) {
-		rc = -ENOMEM;
-		goto err_create;
-	}
+	mrcb = container_of(cb, struct ntrdma_mr_cmd_cb, cb);
 
 	count = mr->sg_count;
 	if (count > NTRDMA_CMD_MR_CREATE_SG_CAP)
 		count = NTRDMA_CMD_MR_CREATE_SG_CAP;
-	pos = 0;
-	end = count;
 
 	mrcb->cb.cmd_prep = ntrdma_mr_enable_prep;
 	mrcb->cb.rsp_cmpl = ntrdma_mr_enable_cmpl;
 	mrcb->mr = mr;
-	mrcb->sg_pos = pos;
+	mrcb->sg_pos = 0;
 	mrcb->sg_count = count;
 
 	ntrdma_dev_cmd_add(dev, &mrcb->cb);
-
-	while (end < mr->sg_count) {
-		mrcb = kmem_cache_alloc_node(mrcb_slab, GFP_KERNEL, dev->node);
-		if (!mrcb) {
-			rc = -ENOMEM;
-			goto err_append;
-		}
-
-		count = mr->sg_count - end;
-		if (count > NTRDMA_CMD_MR_APPEND_SG_CAP)
-			count = NTRDMA_CMD_MR_APPEND_SG_CAP;
-		pos = end;
-		end = pos + count;
-
-		mrcb->cb.cmd_prep = ntrdma_mr_append_prep;
-		mrcb->cb.rsp_cmpl = ntrdma_mr_enable_cmpl;
-		mrcb->mr = mr;
-		mrcb->sg_pos = pos;
-		mrcb->sg_count = count;
-
-		ntrdma_dev_cmd_add(dev, &mrcb->cb);
-	}
-
-	return 0;
-
-err_create:
-	ntrdma_res_done_cmds(&mr->res);
-err_append:
-	return rc;
 }
 
-static int ntrdma_mr_append_prep(struct ntrdma_cmd_cb *cb,
-				union ntrdma_cmd *cmd)
+void ntrdma_mr_enable(struct ntrdma_mr *mr)
 {
-	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
-	struct ntrdma_mr *mr = mrcb->mr;
-	int i;
-
-	cmd->mr_append.hdr.op = NTRDMA_CMD_MR_APPEND;
-	cmd->mr_append.mr_key = mr->res.key;
-
-	cmd->mr_append.sg_pos = mrcb->sg_pos;
-	cmd->mr_append.sg_count = mrcb->sg_count;
-
-	for (i = 0; i < mrcb->sg_count; ++i)
-		ntc_mr_buf_make_desc(&cmd->mr_append.sg_desc_list[i],
-				&mr->sg_list[mrcb->sg_pos + i]);
-
-	return 0;
+	reinit_completion(&mr->enable_mrcb.cb.cmds_done);
+	ntrdma_mr_enable_cb(&mr->res, &mr->enable_mrcb.cb);
 }
 
 static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
@@ -181,21 +126,34 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr *mr = mrcb->mr;
 	int i;
 
-	TRACE("mr_enable prep: %d\n", mr->res.key);
+	TRACE("mr_enable prep: key=%d sg_pos=%d sg_count=%d",
+		mr->res.key, mrcb->sg_pos, mrcb->sg_count);
 
-	cmd->mr_create.hdr.op = NTRDMA_CMD_MR_CREATE;
-	cmd->mr_create.mr_key = mr->res.key;
-	cmd->mr_create.pd_key = mr->pd_key;
-	cmd->mr_create.access = mr->access;
-	cmd->mr_create.mr_addr = mr->addr;
-	cmd->mr_create.mr_len = mr->len;
+	if (mrcb->sg_pos == 0) {
+		cmd->mr_create.hdr.op = NTRDMA_CMD_MR_CREATE;
+		cmd->mr_create.mr_key = mr->res.key;
+		cmd->mr_create.pd_key = mr->pd_key;
+		cmd->mr_create.access = mr->access;
+		cmd->mr_create.mr_addr = mr->addr;
+		cmd->mr_create.mr_len = mr->len;
 
-	cmd->mr_create.sg_cap = mr->sg_count;
-	cmd->mr_create.sg_count = mrcb->sg_count;
+		cmd->mr_create.sg_cap = mr->sg_count;
+		cmd->mr_create.sg_count = mrcb->sg_count;
 
-	for (i = 0; i < mrcb->sg_count; ++i)
-		ntc_mr_buf_make_desc(&cmd->mr_create.sg_desc_list[i],
-				&mr->sg_list[i]);
+		for (i = 0; i < mrcb->sg_count; ++i)
+			ntc_mr_buf_make_desc(&cmd->mr_create.sg_desc_list[i],
+					&mr->sg_list[i]);
+	} else {
+		cmd->mr_append.hdr.op = NTRDMA_CMD_MR_APPEND;
+		cmd->mr_append.mr_key = mr->res.key;
+
+		cmd->mr_append.sg_pos = mrcb->sg_pos;
+		cmd->mr_append.sg_count = mrcb->sg_count;
+
+		for (i = 0; i < mrcb->sg_count; ++i)
+			ntc_mr_buf_make_desc(&cmd->mr_append.sg_desc_list[i],
+					&mr->sg_list[mrcb->sg_pos + i]);
+	}
 
 	return 0;
 }
@@ -205,36 +163,48 @@ static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
+	struct ntrdma_dev *dev = ntrdma_res_dev(&mr->res);
+	u32 end, count;
 	int rc;
 
 	TRACE("mr_enable cmpl: %d\n", mr->res.key);
 
-	if (!rsp || READ_ONCE(rsp->hdr.status)) {
+	if (unlikely(READ_ONCE(rsp->hdr.status))) {
 		rc = -EIO;
-		goto err;
+		goto out;
+	} else
+		rc = 0;
+
+	end = mrcb->sg_pos + mrcb->sg_count;
+	if (end != mr->sg_count) {
+		if (unlikely(rc < 0))
+			return rc;
+
+		count = mr->sg_count - end;
+		if (count > NTRDMA_CMD_MR_APPEND_SG_CAP)
+			count = NTRDMA_CMD_MR_APPEND_SG_CAP;
+
+		mrcb->sg_pos = end;
+		mrcb->sg_count = count;
+
+		ntrdma_dev_cmd_add_unsafe(dev, &mrcb->cb);
+		return 0;
 	}
 
-	if (mrcb->sg_pos + mrcb->sg_count == mr->sg_count)
-		ntrdma_res_done_cmds(&mr->res);
-	kmem_cache_free(mrcb_slab, mrcb);
+ out:
+	complete_all(&cb->cmds_done);
 
-	return 0;
-
-err:
-	if (mrcb->sg_pos + mrcb->sg_count == mr->sg_count)
-		ntrdma_res_done_cmds(&mr->res);
 	return rc;
 }
 
-static int ntrdma_mr_disable(struct ntrdma_res *res)
+static void ntrdma_mr_disable_cb(struct ntrdma_res *res,
+				struct ntrdma_cmd_cb *cb)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	struct ntrdma_mr *mr = ntrdma_res_mr(res);
 	struct ntrdma_mr_cmd_cb *mrcb;
 
-	ntrdma_res_start_cmds(&mr->res);
-
-	mrcb = &mr->disable_mrcb;
+	mrcb = container_of(cb, struct ntrdma_mr_cmd_cb, cb);
 
 	mrcb->cb.cmd_prep = ntrdma_mr_disable_prep;
 	mrcb->cb.rsp_cmpl = ntrdma_mr_disable_cmpl;
@@ -243,8 +213,6 @@ static int ntrdma_mr_disable(struct ntrdma_res *res)
 	mrcb->sg_count = 0;
 
 	ntrdma_dev_cmd_add(dev, &mrcb->cb);
-
-	return 0;
 }
 
 static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
@@ -262,16 +230,12 @@ static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp)
 {
-	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
-	struct ntrdma_mr *mr = mrcb->mr;
-	int rc = 0;
+	complete_all(&cb->cmds_done);
 
-	if (!rsp || READ_ONCE(rsp->hdr.status))
-		rc = -EIO;
+	if (unlikely(READ_ONCE(rsp->hdr.status)))
+		return -EIO;
 
-	ntrdma_res_done_cmds(&mr->res);
-
-	return rc;
+	return 0;
 }
 
 void ntrdma_rmr_init(struct ntrdma_rmr *rmr,
@@ -344,19 +308,4 @@ struct ntrdma_rmr *ntrdma_dev_rmr_look(struct ntrdma_dev *dev, int key)
 		return NULL;
 
 	return ntrdma_rres_rmr(rres);
-}
-
-int __init ntrdma_mr_module_init(void)
-{
-	if (!(mrcb_slab = KMEM_CACHE(ntrdma_mr_cmd_cb, 0))) {
-		ntrdma_mr_module_deinit();
-		return -ENOMEM;
-	}
-
-	return 0;
-}
-
-void ntrdma_mr_module_deinit(void)
-{
-	ntrdma_deinit_slab(&mrcb_slab);
 }

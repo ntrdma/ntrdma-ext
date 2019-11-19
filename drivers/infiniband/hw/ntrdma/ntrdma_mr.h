@@ -62,7 +62,7 @@ struct ntrdma_mr {
 	struct ntrdma_res		res;
 
 	struct ib_umem			*ib_umem;
-	struct ntrdma_mr_cmd_cb		disable_mrcb;
+	struct ntrdma_mr_cmd_cb		enable_mrcb;
 
 	u32				pd_key;
 	u32				access;
@@ -79,6 +79,8 @@ struct ntrdma_mr {
 	container_of(__res, struct ntrdma_mr, res)
 #define ntrdma_ib_mr(__ib) \
 	container_of(__ib, struct ntrdma_mr, ibmr)
+
+void ntrdma_mr_enable(struct ntrdma_mr *mr);
 
 /* Remote Memory Region */
 struct ntrdma_rmr {
@@ -104,17 +106,6 @@ struct ntrdma_rmr {
 
 int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev);
 void ntrdma_mr_deinit(struct ntrdma_mr *mr);
-
-static inline int ntrdma_mr_add(struct ntrdma_mr *mr)
-{
-	ntrdma_debugfs_mr_add(mr);
-	return ntrdma_res_add(&mr->res);
-}
-
-static inline void ntrdma_mr_remove(struct ntrdma_mr *mr)
-{
-	ntrdma_res_del(&mr->res);
-}
 
 static inline void ntrdma_mr_get(struct ntrdma_mr *mr)
 {
