@@ -1470,16 +1470,13 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 					&qp->peer_recv_wqe_buf, off,
 					&qp->recv_wqe_buf, off,
 					len);
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev, "ntc_request_memcpy failed. rc=%d", rc);
+			goto out;
+		}
 
 		TRACE("QP %d start %u end %u\n",
 				qp->res.key, start, end);
-
-		if (rc < 0) {
-			ntrdma_err(dev,
-				"ntc_request_memcpy (len=%zu) error %d",
-				len, -rc);
-			break;
-		}
 
 		ntrdma_qp_recv_prod_get(qp, &start, &end, &base);
 		if (start == end)
@@ -1490,13 +1487,18 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	rc = ntc_request_imm32(qp->dma_chan,
 			&qp->peer_recv_wqe_buf, qp->peer_recv_prod_shift,
 			qp->recv_prod, true, NULL, NULL);
-	if (rc < 0)
-		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d\n", rc);
+	if (unlikely(rc < 0)) {
+		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d", rc);
+		goto out;
+	}
 
 	/* submit the request */
 	ntc_req_submit(dev->ntc, qp->dma_chan);
 
 out:
+	if (unlikely(rc < 0))
+		ntrdma_unrecoverable_err(dev);
+
 	/* release lock for state change or producing later recvs */
 	ntrdma_qp_recv_prod_done(qp);
 }
@@ -1723,10 +1725,8 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	rc = ntc_request_memcpy_fenced(qp->dma_chan,
 				&qp->peer_send_wqe_buf, off,
 				&qp->send_wqe_buf, off, len);
-	if (rc < 0) {
-		ntrdma_qp_err(qp,
-			"ntc_request_memcpy (len=%zu) error %d", len, -rc);
-
+	if (unlikely(rc < 0)) {
+		ntrdma_qp_err(qp, "ntc_request_memcpy failed. rc=%d", rc);
 		abort = true;
 		goto err_memcpy;
 	}
@@ -1737,20 +1737,25 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	rc = ntc_request_imm32(qp->dma_chan,
 			&qp->peer_send_wqe_buf, qp->peer_send_prod_shift,
 			qp->send_prod, true, NULL, NULL);
-	if (rc < 0) {
+	if (unlikely(rc < 0)) {
 		ntrdma_qp_err(qp, "ntc_request_imm32 failed. rc=%d", rc);
-
 		abort = true;
 		goto err_memcpy;
 	}
 	/* update the vbell and signal the peer */
 	/* TODO: return value is ignored! */
-	ntrdma_dev_vbell_peer(dev, qp->dma_chan,
-			qp->peer_send_vbell_idx);
+	rc = ntrdma_dev_vbell_peer(dev, qp->dma_chan, qp->peer_send_vbell_idx);
+	if (unlikely(rc < 0)) {
+		ntrdma_err(dev, "ntrdma_dev_vbell_peer failed. rc=%d", rc);
+		goto err_memcpy;
+	}
 
-	/* TODO: return value is ignored! */
-	ntc_req_signal(dev->ntc, qp->dma_chan, NULL, NULL,
-		NTB_DEFAULT_VEC(dev->ntc));
+	rc = ntc_req_signal(dev->ntc, qp->dma_chan, NULL, NULL,
+			NTB_DEFAULT_VEC(dev->ntc));
+	if (unlikely(rc < 0)) {
+		ntrdma_err(dev, "ntc_req_signal failed. rc=%d", rc);
+		goto err_memcpy;
+	}
 
 	TRACE_DATA(
 		"start %u pos %u QP %d RQP %d prod %u peer vbell idx %d (recv_pos %d, recv_base %d)\n",
@@ -2005,11 +2010,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	rc = ntc_request_memcpy_fenced(qp->dma_chan,
 				&rqp->peer_send_cqe_buf, off,
 				&rqp->send_cqe_buf, off, len);
-	if (rc < 0) {
-		ntrdma_err(dev,
-			"ntc_request_memcpy (len=%zu) error %d qp key %d",
-			len, -rc, rqp->qp_key);
-
+	if (unlikely(rc < 0)) {
+		ntrdma_err(dev, "ntc_request_memcpy failed. rc=%d", rc);
 		goto err_memcpy;
 	}
 
@@ -2018,17 +2020,27 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	rc = ntc_request_imm32(qp->dma_chan,
 			&rqp->peer_send_cqe_buf, rqp->peer_send_cons_shift,
 			rqp->send_cons, true, NULL, NULL);
-	if (rc < 0) {
-		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d\n", rc);
+	if (unlikely(rc < 0)) {
+		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d", rc);
 		goto err_memcpy;
 	}
 
 	if (do_signal) {
 		/* update the vbell and signal the peer */
-		ntrdma_dev_vbell_peer(dev, qp->dma_chan,
-				rqp->peer_cmpl_vbell_idx);
-		ntc_req_signal(dev->ntc, qp->dma_chan, NULL, NULL,
+		rc = ntrdma_dev_vbell_peer(dev, qp->dma_chan,
+					rqp->peer_cmpl_vbell_idx);
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev, "ntrdma_dev_vbell_peer failed. rc=%d",
+				rc);
+			goto err_memcpy;
+		}
+
+		rc = ntc_req_signal(dev->ntc, qp->dma_chan, NULL, NULL,
 				NTB_DEFAULT_VEC(dev->ntc));
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev, "ntc_req_signal failed. rc=%d", rc);
+			goto err_memcpy;
+		}
 
 		TRACE_DATA(
 				"Signal QP %d RQP %d cons %u start %u pos %u peer vbell idx %d\n",
