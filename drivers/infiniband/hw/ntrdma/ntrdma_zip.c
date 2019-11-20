@@ -476,10 +476,11 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 	if (!rcv->rmr)
 		ntc_remote_buf_unmap(&remote, ntc);
 
-	if (rc < 0) {
+	if (unlikely(rc < 0)) {
 		ntrdma_err(snd->dev,
 			"ntc_request_memcpy (len=%lu) error %d\n",
 			(long)len, -rc);
+		ntrdma_unrecoverable_err(snd->dev);
 		return rc;
 	} else
 		return len;
@@ -585,9 +586,10 @@ static inline s64 ntrdma_cursor_next_imm_io(struct ntrdma_dev *dev,
 	if (!rcv->rmr)
 		ntc_remote_buf_unmap(&remote, ntc);
 
-	if (rc < 0) {
+	if (unlikely(rc < 0)) {
 		ntrdma_err(dev, "ntc_req_imm (len=%lu) error %d\n",
 			(long)len, -rc);
+		ntrdma_unrecoverable_err(dev);
 		return rc;
 	} else
 		return len;

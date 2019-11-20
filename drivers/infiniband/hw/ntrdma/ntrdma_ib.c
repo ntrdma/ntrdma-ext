@@ -1522,7 +1522,7 @@ static inline int ntrdma_post_send_wqe(struct ntrdma_qp *qp,
 		return 0;
 
 	rc = ntrdma_qp_rdma_write(qp, wqe);
-	if (rc < 0)
+	if (unlikely(rc < 0))
 		return rc;
 
 	return 1;
@@ -2152,7 +2152,7 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 			if (!(wqe->flags & IB_SEND_SIGNALED) &&
 				(wqe->op_code == IB_WR_RDMA_WRITE)) {
 				rc = ntrdma_qp_rdma_write(qp, wqe);
-				if (rc < 0)
+				if (unlikely(rc < 0))
 					break;
 
 				*had_immediate_work = true;

@@ -228,30 +228,32 @@ static void ntrdma_dev_vbell_work_cb(unsigned long ptrhld)
 	ntrdma_dev_vbell_work(vbell_work_data->dev, vbell_work_data->vec);
 }
 
-void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
+int ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
 			struct ntc_dma_chan *chan, u32 idx)
 {
 	struct ntrdma_peer_vbell *peer_vbell = &dev->peer_vbell[idx];
-	int rc;
+	int rc = 0;
 
 	TRACE_DATA("vbell peer idx %d\n", idx);
 
 	spin_lock_bh(&peer_vbell->lock);
-	if (unlikely(!peer_vbell->enabled))
+
+	if (unlikely(!peer_vbell->enabled)) {
+		rc = -EINVAL;
 		goto exit_unlock;
+	}
 
 	rc = ntc_request_imm32(chan,
 			&dev->peer_vbell_buf, idx * sizeof(u32),
 			++peer_vbell->seq,
 			true, NULL, NULL);
 
-	if (unlikely(rc < 0)) {
-		ntrdma_err(dev,
-			"ntc_request_imm32 failed. rc=%d\n",
-			rc);
-	}
+	if (unlikely(rc < 0))
+		ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d", rc);
 
 exit_unlock:
 	spin_unlock_bh(&peer_vbell->lock);
+
+	return rc;
 }
 

@@ -76,7 +76,7 @@ int ntrdma_dev_vbell_enable(struct ntrdma_dev *dev,
 
 void ntrdma_dev_vbell_disable(struct ntrdma_dev *dev);
 
-void ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
+int ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
 			struct ntc_dma_chan *chan, u32 idx);
 
 static inline void ntrdma_vbell_init(struct ntrdma_dev *dev,

@@ -569,6 +569,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			/* FIXME: command failed, now what? */
 		}
 
+		rc = 0;
 		if (pos != start) {
 			ntrdma_vdbg(dev, "cmd copy start %d pos %d\n", start, pos);
 
@@ -584,27 +585,40 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 						&dev->peer_cmd_recv_buf, off,
 						&dev->cmd_send_buf, off,
 						len);
-			if (rc < 0)
+			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_memcpy (len=%zu) error %d",
-					len, -rc);
+					"ntc_request_memcpy failed. rc=%d", rc);
+				goto dma_err;
+			}
 
 			/* update the producer index on the peer */
 			rc = ntc_request_imm32(dev->dma_chan,
 					&dev->peer_cmd_recv_buf,
 					dev->peer_recv_prod_shift,
 					dev->cmd_send_prod, true, NULL, NULL);
-			if (rc < 0)
+			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_imm32 failed. rc=%d\n",
-					rc);
+					"ntc_request_imm32 failed. rc=%d", rc);
+				goto dma_err;
+			}
 
 			/* update the vbell and signal the peer */
-			ntrdma_dev_vbell_peer(dev, dev->dma_chan,
-					dev->peer_cmd_recv_vbell_idx);
+			rc = ntrdma_dev_vbell_peer(dev, dev->dma_chan,
+						dev->peer_cmd_recv_vbell_idx);
+			if (unlikely(rc < 0)) {
+				ntrdma_err(dev,
+					"ntrdma_dev_vbell_peer failed. rc=%d",
+					rc);
+				goto dma_err;
+			}
 
-			ntc_req_signal(dev->ntc, dev->dma_chan, NULL, NULL,
-				NTB_DEFAULT_VEC(dev->ntc));
+			rc = ntc_req_signal(dev->ntc, dev->dma_chan, NULL, NULL,
+					NTB_DEFAULT_VEC(dev->ntc));
+			if (unlikely(rc < 0)) {
+				ntrdma_err(dev, "ntc_req_signal failed. rc=%d",
+					rc);
+				goto dma_err;
+			}
 			ntc_req_submit(dev->ntc, dev->dma_chan);
 
 			TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
@@ -612,10 +626,13 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				dev->peer_cmd_recv_vbell_idx);
 		}
 
-		if (!ntrdma_cmd_done(dev) &&
+	 dma_err:
+		if (unlikely(rc < 0))
+			ntrdma_unrecoverable_err(dev);
+		else if (!ntrdma_cmd_done(dev) &&
 			(more || (ntrdma_vbell_add(&dev->cmd_send_vbell)
 				== -EAGAIN)))
-				schedule_work(&dev->cmd_send_work);
+			schedule_work(&dev->cmd_send_work);
 	}
 	mutex_unlock(&dev->cmd_send_lock);
 }
@@ -1212,6 +1229,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			WARN(rc, "ntrdma_cmd_recv failed and unhandled FIXME\n");
 		}
 
+		rc = 0;
 		if (pos != start) {
 			ntrdma_vdbg(dev, "rsp copy start %d pos %d\n",
 				    start, pos);
@@ -1231,32 +1249,50 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 						off,
 						&dev->cmd_recv_rsp_buf, off,
 						len);
-			if (rc < 0)
+			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_memcpy (len=%zu) error %d",
-					len, -rc);
+					"ntc_request_memcpy failed. rc=%d", rc);
+				goto dma_err;
+			}
 
 			/* update the producer index on the peer */
 			rc = ntc_request_imm32(dev->dma_chan,
 					&dev->peer_cmd_send_rsp_buf,
 					dev->peer_send_cons_shift,
 					dev->cmd_recv_cons, true, NULL, NULL);
-			if (rc < 0)
+			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_imm32 failed. rc=%d\n",
-					rc);
+					"ntc_request_imm32 failed. rc=%d", rc);
+				goto dma_err;
+			}
 
 			/* update the vbell and signal the peer */
 
-			ntrdma_dev_vbell_peer(dev, dev->dma_chan,
-					      dev->peer_cmd_send_vbell_idx);
-			ntc_req_signal(dev->ntc, dev->dma_chan, NULL, NULL,
-				NTB_DEFAULT_VEC(dev->ntc));
+			rc = ntrdma_dev_vbell_peer(dev, dev->dma_chan,
+						dev->peer_cmd_send_vbell_idx);
+			if (unlikely(rc < 0)) {
+				ntrdma_err(dev,
+					"ntrdma_dev_vbell_peer failed. rc=%d",
+					rc);
+				goto dma_err;
+			}
+
+			rc = ntc_req_signal(dev->ntc, dev->dma_chan, NULL, NULL,
+					NTB_DEFAULT_VEC(dev->ntc));
+			if (unlikely(rc < 0)) {
+				ntrdma_err(dev, "ntc_req_signal failed. rc=%d",
+					rc);
+				goto dma_err;
+			}
 
 			ntc_req_submit(dev->ntc, dev->dma_chan);
 			schedule_work(&dev->cmd_recv_work);
 		} else if (ntrdma_vbell_add(&dev->cmd_recv_vbell) == -EAGAIN)
 			schedule_work(&dev->cmd_recv_work);
+
+	 dma_err:
+		if (unlikely(rc < 0))
+			ntrdma_unrecoverable_err(dev);
 	}
 	mutex_unlock(&dev->cmd_recv_lock);
 }
