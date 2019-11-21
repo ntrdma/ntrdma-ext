@@ -835,19 +835,14 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 
 	ntrdma_vdbg(dev, "initialized pd %p\n", pd);
 
-	rc = ntrdma_pd_add(pd);
-	if (rc) {
-		ntrdma_err(dev, "ntrdma_pd_add failed %d\n", rc);
-		goto err_add;
-	}
+	mutex_lock(&dev->res_lock);
+	list_add_tail(&pd->obj.dev_entry, &dev->pd_list);
+	mutex_unlock(&dev->res_lock);
 
-	ntrdma_dbg(dev, "added pd%d\n", pd->key);
+	ntrdma_dbg(dev, "added pd key=%d", pd->key);
 
 	return &pd->ibpd;
 
-	// ntrdma_pd_del(pd);
-err_add:
-	kmem_cache_free(pd_slab, pd);
 err_pd:
 	atomic_dec(&dev->pd_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
@@ -866,15 +861,14 @@ static void ntrdma_pd_release(struct kref *kref)
 static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 {
 	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
+	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
 
-	if (!pd) {
-		pr_err("ntrdma_dealloc_pd failed, dealloc NULL pd\n");
-		return 0;
-	}
+	mutex_lock(&dev->res_lock);
+	list_del(&pd->obj.dev_entry);
+	mutex_unlock(&dev->res_lock);
 
-	ntrdma_pd_remove(pd);
 	ntrdma_pd_put(pd);
-	/* SYNC ref == 0 ?*/
+
 	return 0;
 }
 

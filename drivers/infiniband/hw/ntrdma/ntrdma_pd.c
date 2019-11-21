@@ -43,27 +43,3 @@ void ntrdma_pd_init(struct ntrdma_pd *pd, struct ntrdma_dev *dev, u32 key)
 
 	ntrdma_obj_init(&pd->obj, dev);
 }
-
-int ntrdma_pd_add(struct ntrdma_pd *pd)
-{
-	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
-
-	mutex_lock(&dev->res_lock);
-	{
-		list_add_tail(&pd->obj.dev_entry, &dev->pd_list);
-	}
-	mutex_unlock(&dev->res_lock);
-
-	return 0;
-}
-
-void ntrdma_pd_remove(struct ntrdma_pd *pd)
-{
-	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
-
-	mutex_lock(&dev->res_lock);
-	{
-		list_del(&pd->obj.dev_entry);
-	}
-	mutex_unlock(&dev->res_lock);
-}
