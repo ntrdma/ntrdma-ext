@@ -39,36 +39,26 @@ static void ntrdma_cq_vbell_cb(void *ctx);
 
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
-void ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev, int vbell_idx)
+void ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev)
 {
 	ntrdma_obj_init(&cq->obj, dev);
+
+	INIT_LIST_HEAD(&cq->poll_list);
+	mutex_init(&cq->poll_lock);
+}
+
+void ntrdma_cq_vbell_init(struct ntrdma_cq *cq, int vbell_idx)
+{
+	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
 
 	cq->arm = 0;
 	cq->need_cue = false;
 	spin_lock_init(&cq->arm_lock);
 
-	INIT_LIST_HEAD(&cq->poll_list);
-	mutex_init(&cq->poll_lock);
-
 	tasklet_init(&cq->cue_work,
 		     ntrdma_cq_cue_work,
 		     to_ptrhld(cq));
 	ntrdma_vbell_init(dev, &cq->vbell, vbell_idx, ntrdma_cq_vbell_cb, cq);
-}
-
-int ntrdma_cq_add(struct ntrdma_cq *cq)
-{
-	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
-
-	ntrdma_debugfs_cq_add(cq);
-
-	mutex_lock(&dev->res_lock);
-	{
-		list_add_tail(&cq->obj.dev_entry, &dev->cq_list);
-	}
-	mutex_unlock(&dev->res_lock);
-
-	return 0;
 }
 
 void ntrdma_cq_arm_resync(struct ntrdma_dev *dev)
@@ -89,10 +79,8 @@ void ntrdma_cq_arm_resync(struct ntrdma_dev *dev)
 	mutex_unlock(&dev->res_lock);
 }
 
-void ntrdma_cq_remove(struct ntrdma_cq *cq)
+void ntrdma_cq_vbell_kill(struct ntrdma_cq *cq)
 {
-	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
-
 	spin_lock_bh(&cq->arm_lock);
 	{
 		cq->arm = 0;
@@ -102,12 +90,6 @@ void ntrdma_cq_remove(struct ntrdma_cq *cq)
 	spin_unlock_bh(&cq->arm_lock);
 
 	tasklet_kill(&cq->cue_work);
-
-	mutex_lock(&dev->res_lock);
-	{
-		list_del(&cq->obj.dev_entry);
-	}
-	mutex_unlock(&dev->res_lock);
 }
 
 void ntrdma_cq_arm(struct ntrdma_cq *cq)
