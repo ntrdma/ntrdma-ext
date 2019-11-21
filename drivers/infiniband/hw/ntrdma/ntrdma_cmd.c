@@ -1080,14 +1080,16 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	struct ntrdma_rqp *rqp;
 	struct ntrdma_qp *qp;
 	int rc;
+	u32 qp_according_to_rqp;
 
 	cmd = READ_ONCE(*_cmd);
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
-	ntrdma_vdbg(dev, "enter state %d qp key %d\n", cmd.state, cmd.qp_key);
+	ntrdma_vdbg(dev, "enter state %d qp key %d\n",
+			cmd.state, cmd.src_qp_key);
 
 	rsp->hdr.op = NTRDMA_CMD_QP_MODIFY;
-	rsp->qp_key = cmd.qp_key;
+	rsp->qp_key = cmd.src_qp_key;
 
 	/* sanity check */
 	if (cmd.access > MAX_SUM_ACCESS_FLAGS || !is_state_valid(cmd.state)) {
@@ -1097,10 +1099,10 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 		goto err_sanity;
 	}
 
-	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd.qp_key);
+	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd.src_qp_key);
 	if (!rqp) {
 		ntrdma_err(dev, "ntrdma_dev_rqp_look failed key %d",
-			cmd.qp_key);
+			cmd.src_qp_key);
 		rc = -EINVAL;
 		goto err_rqp;
 	}
@@ -1112,21 +1114,27 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 		TRACE("RQP %d got qp_key %d\n", rqp->rres.key, rqp->qp_key);
 	}
 	tasklet_schedule(&rqp->send_work);
+	qp_according_to_rqp = rqp->qp_key;
 	ntrdma_rqp_put(rqp);
 
-	if (is_state_error(cmd.state)) {
+	if (is_state_error(cmd.state) &&
+			(qp_according_to_rqp == cmd.dest_qp_key)) {
 		qp = ntrdma_dev_qp_look_and_get(dev, cmd.dest_qp_key);
 		TRACE("qp %p (%d) state changed to %d", qp,
 			cmd.dest_qp_key, cmd.state);
 		if (!qp) {
 			ntrdma_info(dev,
 				"ntrdma_dev_qp_look failed key %d (rqp key %d)",
-				cmd.dest_qp_key, cmd.qp_key);
+				cmd.dest_qp_key, cmd.src_qp_key);
 			rc = 0;
 			goto err_qp;
 		}
 		atomic_set(&qp->state, cmd.state);
 		ntrdma_qp_put(qp);
+	} else {
+		TRACE(
+			"According to RQP %d, QP %d is not valid anymore (changed to %d)\n",
+			cmd.src_qp_key, cmd.dest_qp_key, qp_according_to_rqp);
 	}
 
 err_qp:
