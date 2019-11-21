@@ -137,7 +137,7 @@ struct ntrdma_cmd_qp_delete {
 /* Modify queue pair command */
 struct ntrdma_cmd_qp_modify {
 	struct ntrdma_cmd_hdr hdr;
-	u32				qp_key;
+	u32				src_qp_key;
 	u32				access;
 	u32				state;
 	u32				dest_qp_key;

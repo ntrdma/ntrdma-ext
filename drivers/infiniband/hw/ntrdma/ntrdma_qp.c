@@ -425,7 +425,7 @@ static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
 	ntrdma_qp_recv_work(qp);
 
 	cmd->qp_modify.hdr.op = NTRDMA_CMD_QP_MODIFY;
-	cmd->qp_modify.qp_key = qp->res.key;
+	cmd->qp_modify.src_qp_key = qp->res.key;
 	cmd->qp_modify.access = qp->access;
 	cmd->qp_modify.state = atomic_read(&qp->state);
 	cmd->qp_modify.dest_qp_key = qp->rqp_key;
