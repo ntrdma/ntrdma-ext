@@ -176,7 +176,7 @@ struct ntrdma_dev {
 	/* local-only resources */
 
 	struct list_head		cq_list; /* Protected by res_lock. */
-	struct list_head		pd_list;
+	struct list_head		pd_list; /* Protected by res_lock. */
 	u32				pd_next_key;
 
 	/* rdma local resources */

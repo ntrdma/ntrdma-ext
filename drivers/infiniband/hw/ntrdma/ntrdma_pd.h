@@ -41,7 +41,7 @@ struct ntrdma_pd {
 	struct ib_pd			ibpd;
 
 	/* Ntrdma pd is a local-only object */
-	struct ntrdma_obj		obj;
+	struct ntrdma_obj		obj; /* member of dev->pd_list */
 
 	/* Protection domain key */
 	u32				key;
@@ -52,8 +52,6 @@ struct ntrdma_pd {
 	container_of(__ib, struct ntrdma_pd, ibpd)
 
 void ntrdma_pd_init(struct ntrdma_pd *pd, struct ntrdma_dev *dev, u32 key);
-int ntrdma_pd_add(struct ntrdma_pd *cq);
-void ntrdma_pd_remove(struct ntrdma_pd *cq);
 
 static inline void ntrdma_pd_get(struct ntrdma_pd *pd)
 {
