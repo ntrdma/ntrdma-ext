@@ -53,7 +53,7 @@ struct ntrdma_cq {
 	struct dentry			*debug;
 
 	/* Ntrdma cq is a local-only object */
-	struct ntrdma_obj		obj;
+	struct ntrdma_obj		obj; /* member of dev->cq_list */
 
 	/* number of application requests to be notified */
 	unsigned int			arm;
@@ -93,10 +93,9 @@ struct ntrdma_cq {
 #define ntrdma_cq_info_ratelimited(__cq, __fmt, __args...)		\
 	ntrdma_info_ratelimited(ntrdma_cq_dev(__cq), __fmt, ## __args)
 
-void ntrdma_cq_init(struct ntrdma_cq *cq,
-		struct ntrdma_dev *dev, int vbell_idx);
-int ntrdma_cq_add(struct ntrdma_cq *cq);
-void ntrdma_cq_remove(struct ntrdma_cq *cq);
+void ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev);
+void ntrdma_cq_vbell_init(struct ntrdma_cq *cq, int vbell_idx);
+void ntrdma_cq_vbell_kill(struct ntrdma_cq *cq);
 
 static inline void ntrdma_cq_get(struct ntrdma_cq *cq)
 {

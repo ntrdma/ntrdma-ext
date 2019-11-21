@@ -386,22 +386,14 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
 	memset(cq, 0, sizeof(*cq));
 
-	ntrdma_cq_init(cq, dev, vbell_idx);
-
-	rc = ntrdma_cq_add(cq);
-	if (rc)
-		goto err_add;
-
-	ntrdma_info(dev,
-			"added cq %p (%d/%d) ib cq %p vbell idx %d c\n",
-			cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
-			&cq->ibcq, vbell_idx);
+	ntrdma_cq_init(cq, dev);
 
 	if (ibudata && ibudata->inlen >= sizeof(inbuf)) {
 		if (copy_from_user(&inbuf, ibudata->inbuf, sizeof(inbuf))) {
 			ntrdma_cq_err(cq, "copy_from_user failed");
 			ntrdma_cq_put(cq); /* The initial ref */
-			return ERR_PTR(-EFAULT);
+			rc = -EFAULT;
+			goto err_cq;
 		}
 
 		if (!ntrdma_ioctl_if_check_desc(&inbuf.desc)) {
@@ -412,7 +404,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		if (!inbuf.poll_page_ptr) {
 			ntrdma_cq_err(cq, "inbuf.poll_page_ptr is NULL");
 			ntrdma_cq_put(cq); /* The initial ref */
-			return ERR_PTR(-EINVAL);
+			rc = -EINVAL;
+			goto err_cq;
 		}
 
 		rc = get_user_pages_fast(inbuf.poll_page_ptr, 1, 1,
@@ -420,7 +413,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		if (rc < 0) {
 			ntrdma_cq_err(cq, "get_user_pages_fast failed: %d", rc);
 			ntrdma_cq_put(cq); /* The initial ref */
-			return ERR_PTR(rc);
+			goto err_cq;
 		}
 	}
 
@@ -432,7 +425,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 			ntrdma_cq_err(cq, "get_unused_fd_flags failed: %d",
 				outbuf.cqfd);
 			ntrdma_cq_put(cq); /* The initial ref */
-			return ERR_PTR(outbuf.cqfd);
+			rc = outbuf.cqfd;
+			goto err_cq;
 		}
 
 		file = anon_inode_getfile("ntrdma_cq", &ntrdma_cq_fops, cq,
@@ -454,7 +448,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 			fput(file); /* Close the file. */
 			ntrdma_cq_put(cq); /* The initial ref */
 			put_unused_fd(outbuf.cqfd);
-			return ERR_PTR(-EFAULT);
+			rc = -EFAULT;
+			goto err_cq;
 		}
 
 		fd_install(outbuf.cqfd, file);
@@ -463,10 +458,25 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
  bad_ntrdma_ioctl_if:
 
+	/*
+	 * Init vbell before adding to list,
+	 * so that dirty vbell doesn't go off from ntrdma_cq_arm_resync().
+	 */
+	ntrdma_cq_vbell_init(cq, vbell_idx);
+
+	mutex_lock(&dev->res_lock);
+	list_add_tail(&cq->obj.dev_entry, &dev->cq_list);
+	mutex_unlock(&dev->res_lock);
+
+	ntrdma_debugfs_cq_add(cq);
+
+	ntrdma_dbg(dev,
+		"added cq %p (%d/%d) ib cq %p vbell idx %d c\n",
+		cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
+		&cq->ibcq, vbell_idx);
+
 	return &cq->ibcq;
 
-err_add:
-	ntrdma_cq_put(cq);
 err_cq:
 	atomic_dec(&dev->cq_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
@@ -492,15 +502,19 @@ static void ntrdma_cq_release(struct kref *kref)
 static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
+	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
 
-	if (!cq) {
-		pr_err("ntrdma_destroy_cq failed, destroying NULL cq\n");
-		return -EFAULT;
-	}
+	/*
+	 * Remove from list before killing vbell,
+	 * so that killed vbell does not go off from ntrdma_cq_arm_resync().
+	 */
+	mutex_lock(&dev->res_lock);
+	list_del(&cq->obj.dev_entry);
+	mutex_unlock(&dev->res_lock);
 
-	ntrdma_cq_remove(cq);
+	ntrdma_cq_vbell_kill(cq);
+
 	ntrdma_cq_put(cq);
-	/* SYNC ref == 0 ?*/
 
 	return 0;
 }
