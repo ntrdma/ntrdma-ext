@@ -1022,6 +1022,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
  bad_ntrdma_ioctl_if:
 	ntrdma_qp_dbg(qp, "added qp%d type %d",
+			qp->res.key, ibqp_attr->qp_type);
 
 	return &qp->ibqp;
 
@@ -1351,7 +1352,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	}
 
 	if (unlikely(qp->send_cmpl != qp->send_post)) {
-		ntrdma_info(
+		ntrdma_info(ntrdma_qp_dev(qp),
 				"Destroy QP %p (%d) while send cmpl %d send post %d send prod %d send cap %d\n",
 				qp, qp->res.key, qp->send_cmpl,
 				qp->send_post, qp->send_prod, qp->send_cap);
