@@ -216,8 +216,10 @@ void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)
 
 void ntrdma_debugfs_dev_del(struct ntrdma_dev *dev)
 {
-	debugfs_remove_recursive(dev->debug);
-	dev->debug = NULL;
+	if (dev->debug) {
+		debugfs_remove_recursive(dev->debug);
+		dev->debug = NULL;
+	}
 }
 
 void ntrdma_debugfs_cq_add(struct ntrdma_cq *cq)
@@ -246,7 +248,10 @@ void ntrdma_debugfs_cq_add(struct ntrdma_cq *cq)
 
 void ntrdma_debugfs_cq_del(struct ntrdma_cq *cq)
 {
-	debugfs_remove_recursive(cq->debug);
+	if (cq->debug) {
+		debugfs_remove_recursive(cq->debug);
+		cq->debug = NULL;
+	}
 }
 
 void ntrdma_debugfs_mr_add(struct ntrdma_mr *mr)
@@ -275,7 +280,10 @@ void ntrdma_debugfs_mr_add(struct ntrdma_mr *mr)
 
 void ntrdma_debugfs_mr_del(struct ntrdma_mr *mr)
 {
-	debugfs_remove_recursive(mr->debug);
+	if (mr->debug) {
+		debugfs_remove_recursive(mr->debug);
+		mr->debug = NULL;
+	}
 }
 
 void ntrdma_debugfs_rmr_add(struct ntrdma_rmr *rmr)
@@ -304,7 +312,10 @@ void ntrdma_debugfs_rmr_add(struct ntrdma_rmr *rmr)
 
 void ntrdma_debugfs_rmr_del(struct ntrdma_rmr *rmr)
 {
-	debugfs_remove_recursive(rmr->debug);
+	if (rmr->debug) {
+		debugfs_remove_recursive(rmr->debug);
+		rmr->debug = NULL;
+	}
 }
 
 void ntrdma_debugfs_qp_add(struct ntrdma_qp *qp)
@@ -343,7 +354,10 @@ void ntrdma_debugfs_qp_add(struct ntrdma_qp *qp)
 
 void ntrdma_debugfs_qp_del(struct ntrdma_qp *qp)
 {
-	debugfs_remove_recursive(qp->debug);
+	if (qp->debug) {
+		debugfs_remove_recursive(qp->debug);
+		qp->debug = NULL;
+	}
 }
 
 void ntrdma_debugfs_rqp_add(struct ntrdma_rqp *rqp)
@@ -374,7 +388,10 @@ void ntrdma_debugfs_rqp_add(struct ntrdma_rqp *rqp)
 
 void ntrdma_debugfs_rqp_del(struct ntrdma_rqp *rqp)
 {
-	debugfs_remove_recursive(rqp->debug);
+	if (rqp->debug) {
+		debugfs_remove_recursive(rqp->debug);
+		rqp->debug = NULL;
+	}
 }
 
 static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
