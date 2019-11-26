@@ -1549,9 +1549,7 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 	while (ibwr) {
 		/* get the next posting range in the ring */
 		if (!ntrdma_qp_send_post_get(qp, &pos, &end, &base)) {
-			ntrdma_qp_err(qp, "posting too many sends QP %d",
-				qp->res.key);
-			rc = -EINVAL;
+			rc = -EAGAIN;
 			break;
 		}
 
@@ -2101,9 +2099,7 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 	while ((rc >= 0) && (i < hdr.wqe_counter)) {
 		/* get the next posting range in the ring */
 		if (!ntrdma_qp_send_post_get(qp, &pos, &end, &base)) {
-			ntrdma_qp_err(qp, "posting too many sends QP %d",
-				qp->res.key);
-			rc = -EINVAL;
+			rc = -EAGAIN;
 			break;
 		}
 
@@ -2185,7 +2181,7 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 
 	NTRDMA_PERF_MEASURE(perf);
 
-	if (rc < 0)
+	if (unlikely(rc < 0) && (rc != -EAGAIN))
 		ntrdma_qp_err(qp, "%s returning %d", __func__, rc);
 
 	return rc;
