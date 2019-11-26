@@ -846,7 +846,7 @@ int ntc_mr_request_memcpy_unfenced_imm(struct ntc_dma_chan *chan,
 	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, len)))
 		return -EINVAL;
 
-	return ntc_req_imm(chan, dst->dma_addr, src_data, len,
+	return ntc_req_imm(chan, dst->dma_addr + dst_offset, src_data, len,
 			false, NULL, NULL);
 }
 
