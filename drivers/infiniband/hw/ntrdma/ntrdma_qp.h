@@ -34,7 +34,7 @@
 #define NTRDMA_QP_H
 
 #include <rdma/ib_verbs.h>
-
+#include <asm/tsc.h>
 #include "ntrdma_cmd.h"
 #include "ntrdma_ring.h"
 #include "ntrdma_res.h"
@@ -129,6 +129,7 @@ struct ntrdma_qp {
 
 	/* send ring buffers and consumer index */
 	struct ntc_local_buf		send_wqe_buf;
+	cycles_t			*send_wqe_cycles_buf;
 	struct ntc_export_buf		send_cqe_buf;
 	struct ntc_remote_buf		peer_send_wqe_buf;
 	u64				peer_send_prod_shift;
@@ -218,6 +219,10 @@ inline struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,
 					u32 pos);
 inline struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
 						u32 pos);
+
+inline void ntrdma_qp_set_stats(struct ntrdma_qp *qp, u32 pos);
+
+inline cycles_t ntrdma_qp_get_diff_cycles(struct ntrdma_qp *qp, u32 pos);
 inline
 const struct ntrdma_cqe *ntrdma_qp_send_cqe(struct ntrdma_qp *qp, u32 pos);
 

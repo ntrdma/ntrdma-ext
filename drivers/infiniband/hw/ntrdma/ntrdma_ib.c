@@ -584,6 +584,20 @@ static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code)
 	return 0;
 }
 
+static inline void ntrdma_qp_start_measure(struct ntrdma_qp *qp,
+		struct ntrdma_send_wqe *wqe, u32 pos)
+{
+	if (!ntrdma_wr_code_push_data(wqe->op_code) ||
+						(wqe->flags & IB_SEND_SIGNALED))
+		ntrdma_qp_set_stats(qp, pos);
+}
+
+
+static inline cycles_t ntrdma_qp_stop_measure(struct ntrdma_qp *qp, u32 pos)
+{
+	return ntrdma_qp_get_diff_cycles(qp, pos);
+}
+
 static int ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 				struct ntrdma_qp *qp,
 				const struct ntrdma_cqe *cqe)
@@ -631,7 +645,9 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 			/* current entry in the ring, or aborted */
 			ntrdma_cq_cmpl_cqe(cq, &cqe, pos);
 
-			/*complition should be generated for post send with IB_SEND_SIGNALED flag*/
+			/* completion should be generated for post send with
+			 * IB_SEND_SIGNALED flag
+			 */
 			if (!ntrdma_wr_code_push_data(cqe.op_code) ||
 					(cqe.flags & IB_SEND_SIGNALED)) {
 				/* transform the entry into the work completion */
@@ -648,6 +664,8 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 						pos,
 						end);
 
+				this_cpu_add(dev_cnt.accum_latency,
+				(u64)ntrdma_qp_stop_measure(qp, pos) >> 10);
 				++count;
 			}
 
@@ -1595,6 +1613,8 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 			if (rc < 0)
 				break;
 
+			ntrdma_qp_start_measure(qp, wqe, pos);
+
 			rc = ntrdma_post_send_wqe(qp, wqe, sg_list);
 			if (rc < 0)
 				break;
@@ -1607,6 +1627,7 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 				++pos;
 				*has_deferred_work = true;
 			}
+
 
 			ibwr = ibwr->next;
 
