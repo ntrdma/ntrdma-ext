@@ -75,6 +75,8 @@ struct ntrdma_dev_counters {
 	u64 cqes_notified;
 	u64 cqes_polled;
 	u64 cqes_armed;
+
+	u64 accum_latency;
 };
 
 

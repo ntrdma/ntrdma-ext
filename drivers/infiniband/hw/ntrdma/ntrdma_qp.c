@@ -238,6 +238,12 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (rc < 0)
 		goto err_send_wqe_buf;
 
+	/* set up the send work queue buffer for statistics (latency calc) */
+	qp->send_wqe_cycles_buf = kzalloc_node(qp->send_cap * sizeof(cycles_t),
+						GFP_KERNEL, dev->node);
+	if (!qp->send_wqe_cycles_buf)
+		goto err_cycles_buf;
+
 	/* set up the send completion queue buffer */
 	send_cqes_total_size = qp->send_cap * sizeof(struct ntrdma_cqe);
 	rc = ntc_export_buf_zalloc_init(&qp->send_cqe_buf, dev->ntc,
@@ -308,6 +314,8 @@ err_recv_cqe_buf:
 err_recv_wqe_buf:
 	ntc_export_buf_free(&qp->send_cqe_buf);
 err_send_cqe_buf:
+	kfree(qp->send_wqe_cycles_buf);
+err_cycles_buf:
 	ntc_local_buf_free(&qp->send_wqe_buf, dev->ntc);
 err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
@@ -358,6 +366,16 @@ inline struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
 					u32 pos)
 {
 	return ntc_local_buf_deref(&qp->send_wqe_buf) + pos * qp->send_wqe_size;
+}
+
+inline void ntrdma_qp_set_stats(struct ntrdma_qp *qp, u32 pos)
+{
+	*(qp->send_wqe_cycles_buf + pos) = get_cycles();
+}
+
+inline cycles_t ntrdma_qp_get_diff_cycles(struct ntrdma_qp *qp, u32 pos)
+{
+	return get_cycles() - *(qp->send_wqe_cycles_buf + pos);
 }
 
 inline
