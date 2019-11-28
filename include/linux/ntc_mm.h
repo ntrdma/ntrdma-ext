@@ -257,7 +257,8 @@ static inline int ntc_mm_preinit(struct ntc_mm *mm, int size, int num_els)
 	return num_els;
 }
 
-static inline void *ntc_mm_alloc(struct ntc_mm *mm, int size, gfp_t gfp)
+static inline void *ntc_mm_alloc(const char *caller, int line,
+				struct ntc_mm *mm, int size, gfp_t gfp)
 {
 	struct ntc_fixed_mm *fixed;
 	void *ptr;
@@ -282,10 +283,10 @@ static inline void *ntc_mm_alloc(struct ntc_mm *mm, int size, gfp_t gfp)
 	if (gfp & __GFP_ZERO)
 		memset(ptr, 0, size);
 
-	TRACE("mm %p: added buffer of size %d. brk is %ld",
-		mm, size, mm->brk - mm->memory);
-	pr_info("mm %p: added buffer of size %d. brk is %ld",
-		mm, size, mm->brk - mm->memory);
+	TRACE("mm %p called from %s:%d: added buffer of size %d. brk is %ld",
+		mm, caller, line, size, mm->brk - mm->memory);
+	pr_info("mm %p called from %s:%d: added buffer of size %d. brk is %ld",
+		mm, caller, line, size, mm->brk - mm->memory);
 
 	return ptr;
 }
