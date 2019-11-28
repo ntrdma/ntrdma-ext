@@ -105,7 +105,7 @@ struct ntrdma_rmr {
 	container_of(__rres, struct ntrdma_rmr, rres)
 
 int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev);
-void ntrdma_mr_deinit(struct ntrdma_mr *mr);
+void ntrdma_mr_deinit(struct ntrdma_mr *mr, struct ntrdma_dev *dev);
 
 static inline void ntrdma_mr_get(struct ntrdma_mr *mr)
 {
@@ -133,8 +133,8 @@ static inline void ntrdma_rmr_get(struct ntrdma_rmr *rmr)
 
 void ntrdma_rmr_put(struct ntrdma_rmr *rmr);
 
-struct ntrdma_mr *ntrdma_dev_mr_look(struct ntrdma_dev *dev, int key);
-struct ntrdma_rmr *ntrdma_dev_rmr_look(struct ntrdma_dev *dev, int key);
+struct ntrdma_mr *ntrdma_dev_mr_look(struct ntrdma_dev *dev, u32 key);
+struct ntrdma_rmr *ntrdma_dev_rmr_look(struct ntrdma_dev *dev, u32 key);
 
 
 /* from intel spec, canonical address is when bits 48-63 are identical and equal

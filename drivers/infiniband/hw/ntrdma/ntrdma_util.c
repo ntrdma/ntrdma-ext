@@ -37,22 +37,26 @@
 #define BITS_TO_LONGS_SIZE(bits) \
 	(BITS_TO_LONGS(bits) * sizeof(long))
 
-int ntrdma_vec_init(struct ntrdma_vec *vec, int cap, int node)
+#define MAX_VEC_CAP 0x800000U
+#define MAX_KVEC_CAP 0x800000U
+
+int ntrdma_vec_init(struct ntrdma_vec *vec, u32 cap, int node)
 {
-	vec->look = kzalloc_node(cap * sizeof(*vec->look),
-				 GFP_KERNEL, node);
+	if (cap == 0)
+		return -EINVAL;
+
+	if (cap >= MAX_VEC_CAP)
+		return -ENOMEM;
+
+	vec->look = kzalloc_node(cap * sizeof(*vec->look), GFP_KERNEL, node);
 	if (!vec->look)
-		goto err_look;
+		return -ENOMEM;
 
 	vec->cap = cap;
 
-	spin_lock_init(&vec->lock);
+	rwlock_init(&vec->lock);
 
 	return 0;
-
-	//kfree(vec->look);
-err_look:
-	return -ENOMEM;
 }
 
 void ntrdma_vec_deinit(struct ntrdma_vec *vec)
@@ -60,77 +64,68 @@ void ntrdma_vec_deinit(struct ntrdma_vec *vec)
 	kfree(vec->look);
 }
 
-void *ntrdma_vec_look(struct ntrdma_vec *vec, u32 key)
-{
-	if (key < vec->cap)
-		return vec->look[key];
-
-	return NULL;
-}
-
-void ntrdma_vec_set(struct ntrdma_vec *vec, u32 key, void *elem)
-{
-	vec->look[key] = elem;
-}
-
-void ntrdma_vec_lock(struct ntrdma_vec *vec)
-{
-	spin_lock_bh(&vec->lock);
-}
-
-void ntrdma_vec_unlock(struct ntrdma_vec *vec)
-{
-	spin_unlock_bh(&vec->lock);
-}
-
 int ntrdma_vec_resize_larger(struct ntrdma_vec *vec, u32 cap, int node)
 {
-	struct ntrdma_vec vec_dst, vec_src;
-	int rc;
+	void **look;
 
-	if (cap <= vec->cap)
+	if (cap == 0)
 		return -EINVAL;
 
-	vec_src = *vec;
-
-	rc = ntrdma_vec_init(&vec_dst, cap, node);
-	if (rc)
+	if (cap >= MAX_VEC_CAP)
 		return -ENOMEM;
 
-	memcpy(vec_dst.look, vec_src.look,
-	       vec_src.cap * sizeof(*vec_src.look));
+	look = kzalloc_node(cap * sizeof(*look), GFP_KERNEL, node);
+	if (!look)
+		return -ENOMEM;
 
-	*vec = vec_dst;
+	write_lock_bh(&vec->lock);
+	if (cap > vec->cap) {
+		memcpy(look, vec->look, vec->cap * sizeof(*vec->look));
+		kfree(vec->look);
+		vec->look = look;
 
-	ntrdma_vec_deinit(&vec_src);
+		vec->cap = cap;
+	} else
+		kfree(look);
+	write_unlock_bh(&vec->lock);
 
 	return 0;
 }
 
-int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, int node, int first_key)
+int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, u32 num_reserved_keys,
+		int node)
 {
-	vec->keys = kzalloc_node(BITS_TO_LONGS_SIZE(cap),
-				 GFP_KERNEL, node);
-	if (!vec->keys)
-		goto err_keys;
+	u32 i;
 
-	vec->look = kzalloc_node(cap * sizeof(*vec->look),
-				 GFP_KERNEL, node);
-	if (!vec->look)
-		goto err_look;
+	if (cap == 0)
+		return -EINVAL;
+
+	if (cap <= num_reserved_keys)
+		return -EINVAL;
+
+	if (cap >= MAX_KVEC_CAP)
+		return -ENOMEM;
+
+	vec->keys = kzalloc_node(BITS_TO_LONGS_SIZE(cap), GFP_KERNEL, node);
+	if (!vec->keys)
+		return -ENOMEM;
+
+	vec->look = kzalloc_node(cap * sizeof(*vec->look), GFP_KERNEL, node);
+	if (!vec->look) {
+		kfree(vec->keys);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < num_reserved_keys; i++)
+		__set_bit(i, vec->keys);
 
 	vec->cap = cap;
-	vec->next_key = first_key;
+	vec->num_reserved_keys = num_reserved_keys;
+	vec->next_key = num_reserved_keys;
 
 	rwlock_init(&vec->lock);
 
 	return 0;
-
-	//kfree(vec->look);
-err_look:
-	kfree(vec->keys);
-err_keys:
-	return -ENOMEM;
 }
 
 void ntrdma_kvec_deinit(struct ntrdma_kvec *vec)
@@ -139,93 +134,69 @@ void ntrdma_kvec_deinit(struct ntrdma_kvec *vec)
 	kfree(vec->keys);
 }
 
-u32 ntrdma_kvec_reserve_key(struct ntrdma_kvec *vec, int node)
+static int ntrdma_kvec_resize_larger(struct ntrdma_kvec *vec, u32 cap, int node)
+{
+	unsigned long *keys;
+	void **look;
+
+	if (cap == 0)
+		return -EINVAL;
+
+	if (cap >= MAX_KVEC_CAP)
+		return -ENOMEM;
+
+	keys = kzalloc_node(BITS_TO_LONGS_SIZE(cap), GFP_KERNEL, node);
+	if (!keys)
+		return -ENOMEM;
+
+	look = kzalloc_node(cap * sizeof(*look), GFP_KERNEL, node);
+	if (!look) {
+		kfree(keys);
+		return -ENOMEM;
+	}
+
+	write_lock_bh(&vec->lock);
+	if (cap > vec->cap) {
+		memcpy(keys, vec->keys, BITS_TO_LONGS_SIZE(vec->cap));
+		kfree(vec->keys);
+		vec->keys = keys;
+
+		memcpy(look, vec->look, vec->cap * sizeof(*vec->look));
+		kfree(vec->look);
+		vec->look = look;
+
+		vec->cap = cap;
+	} else {
+		kfree(keys);
+		kfree(look);
+	}
+	write_unlock_bh(&vec->lock);
+
+	return 0;
+}
+
+int ntrdma_kvec_reserve_key(struct ntrdma_kvec *vec, int node)
 {
 	u32 key;
+	int rc;
+
+ again:
+	write_lock_bh(&vec->lock);
 
 	key = find_next_zero_bit(vec->keys, vec->cap, vec->next_key);
-	if (key < 0)
-		goto err_key;
-
-	if (key == vec->cap)
-		ntrdma_kvec_resize_double(vec, node);
+	if (key == vec->cap) {
+		write_unlock_bh(&vec->lock);
+		rc = ntrdma_kvec_resize_larger(vec, key << 1, node);
+		if (rc < 0)
+			return rc;
+		goto again;
+	}
 
 	__set_bit(key, vec->keys);
 
 	vec->next_key = key + 1;
 
-err_key:
+	write_unlock_bh(&vec->lock);
+
 	return key;
 }
-
-void ntrdma_kvec_dispose_key(struct ntrdma_kvec *vec, u32 key)
-{
-	__clear_bit(key, vec->keys);
-
-	if (key < vec->next_key)
-		vec->next_key = key;
-}
-
-void *ntrdma_kvec_look(struct ntrdma_kvec *vec, u32 key)
-{
-	if (key < vec->cap)
-		return vec->look[key];
-
-	return NULL;
-}
-
-void ntrdma_kvec_set(struct ntrdma_kvec *vec, u32 key, void *elem)
-{
-	vec->look[key] = elem;
-}
-
-void ntrdma_kvec_write_lock(struct ntrdma_kvec *vec)
-{
-	WARN(in_softirq(), "our assumption it should not happen\n");
-	write_lock_bh(&vec->lock);
-}
-
-void ntrdma_kvec_write_unlock(struct ntrdma_kvec *vec)
-{
-	write_unlock_bh(&vec->lock);
-}
-
-void ntrdma_kvec_read_lock(struct ntrdma_kvec *vec)
-{
-	read_lock(&vec->lock);
-}
-
-void ntrdma_kvec_read_unlock(struct ntrdma_kvec *vec)
-{
-	read_unlock(&vec->lock);
-}
-
-int ntrdma_kvec_resize_larger(struct ntrdma_kvec *vec, u32 cap, int node)
-{
-	struct ntrdma_kvec vec_dst, vec_src;
-	int rc;
-
-	if (cap <= vec->cap)
-		return -EINVAL;
-
-	vec_src = *vec;
-
-	rc = ntrdma_kvec_init(&vec_dst, cap, node, 0);
-	if (rc)
-		goto err_dst;
-
-	memcpy(vec_dst.keys, vec_src.keys,
-	       BITS_TO_LONGS_SIZE(vec_src.cap));
-	memcpy(vec_dst.look, vec_src.look,
-	       vec_src.cap * sizeof(*vec_src.look));
-
-	*vec = vec_dst;
-
-	ntrdma_kvec_deinit(&vec_src);
-
-	return 0;
-
-err_dst:
-	return -ENOMEM;
-}
-

@@ -60,8 +60,8 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 	INIT_LIST_HEAD(&dev->qp_list);
 
 	rc = ntrdma_kvec_init(&dev->mr_vec,
-			NTRDMA_RES_VEC_INIT_CAP,
-			dev->node, 0);
+			NTRDMA_RES_VEC_INIT_CAP, NTRDMA_MR_VEC_PREALLOCATED,
+			dev->node);
 
 	if (rc) {
 		ntrdma_dbg(dev, "mr vec failed\n");
@@ -69,8 +69,8 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 	}
 
 	rc = ntrdma_kvec_init(&dev->qp_vec,
-			NTRDMA_RES_VEC_INIT_CAP,
-			dev->node, 2);
+			NTRDMA_RES_VEC_INIT_CAP, NTRDMA_QP_VEC_PREALLOCATED,
+			dev->node);
 
 	if (rc) {
 		ntrdma_dbg(dev, "qp vec failed\n");
@@ -235,18 +235,20 @@ void ntrdma_dev_res_reset(struct ntrdma_dev *dev)
 	ntrdma_dbg(dev, "not implemented\n");
 }
 
-struct ntrdma_res *ntrdma_dev_res_look(struct ntrdma_dev *dev,
-				       struct ntrdma_kvec *vec, int key)
+struct ntrdma_res *ntrdma_res_look(struct ntrdma_kvec *vec, u32 key)
 {
 	struct ntrdma_res *res;
 
-	ntrdma_kvec_read_lock(vec);
+	read_lock_bh(&vec->lock);
 
-	res = ntrdma_kvec_look(vec, key);
-	if (res)
-		ntrdma_res_get(res);
+	if (key < vec->cap) {
+		res = vec->look[key];
+		if (res)
+			ntrdma_res_get(res);
+	} else
+		res = NULL;
 
-	ntrdma_kvec_read_unlock(vec);
+	read_unlock_bh(&vec->lock);
 
 	return res;
 }
@@ -260,11 +262,10 @@ void ntrdma_dev_rres_reset(struct ntrdma_dev *dev)
 		list_for_each_entry_safe_reverse(rres, rres_next,
 						 &dev->rres_list,
 						 obj.dev_entry) {
-			ntrdma_vec_lock(rres->vec);
-			{
-				ntrdma_vec_set(rres->vec, rres->key, NULL);
-			}
-			ntrdma_vec_unlock(rres->vec);
+			write_lock_bh(&rres->vec->lock);
+			if (rres->key < rres->vec->cap)
+				rres->vec->look[rres->key] = NULL;
+			write_unlock_bh(&rres->vec->lock);
 
 			rres->free(rres);
 		}
@@ -273,35 +274,30 @@ void ntrdma_dev_rres_reset(struct ntrdma_dev *dev)
 	mutex_unlock(&dev->rres_lock);
 }
 
-struct ntrdma_rres *ntrdma_dev_rres_look(struct ntrdma_dev *dev,
-					 struct ntrdma_vec *vec, int key)
+struct ntrdma_rres *ntrdma_rres_look(struct ntrdma_vec *vec, u32 key)
 {
 	struct ntrdma_rres *rres;
 
-	ntrdma_vec_lock(vec);
-	{
-		rres = ntrdma_vec_look(vec, key);
+	read_lock_bh(&vec->lock);
+	if (key < vec->cap) {
+		rres = vec->look[key];
 		if (rres)
 			ntrdma_rres_get(rres);
-	}
-	ntrdma_vec_unlock(vec);
+	} else
+		rres = NULL;
+	read_unlock_bh(&vec->lock);
 
 	return rres;
 }
 
-int ntrdma_res_init(struct ntrdma_res *res,
-		struct ntrdma_dev *dev, struct ntrdma_kvec *vec,
+void ntrdma_res_init(struct ntrdma_res *res,
+		struct ntrdma_dev *dev,
 		void (*enable)(struct ntrdma_res *res,
 			struct ntrdma_cmd_cb *cb),
 		void (*disable)(struct ntrdma_res *res,
-				struct ntrdma_cmd_cb *cb),
-		int reserved_key)
+				struct ntrdma_cmd_cb *cb))
 {
-	int rc;
-
 	ntrdma_obj_init(&res->obj, dev);
-
-	res->vec = vec;
 
 	res->enable = enable;
 	res->disable = disable;
@@ -309,40 +305,10 @@ int ntrdma_res_init(struct ntrdma_res *res,
 	res->timeout = msecs_to_jiffies(CMD_TIMEOUT_MSEC);
 
 	mutex_init(&res->lock);
-
-	if (reserved_key == -1) {
-		mutex_lock(&dev->res_lock);
-		{
-			res->key = ntrdma_kvec_reserve_key(res->vec, dev->node);
-			if (res->key < 0) {
-				rc = -ENOMEM;
-				goto err_key;
-			}
-		}
-		mutex_unlock(&dev->res_lock);
-	} else {
-		res->key = reserved_key;
-	}
-	return 0;
-
-err_key:
-	mutex_unlock(&dev->res_lock);
-	return rc;
-}
-
-void ntrdma_res_deinit(struct ntrdma_res *res)
-{
-	struct ntrdma_dev *dev = ntrdma_res_dev(res);
-
-	mutex_lock(&dev->res_lock);
-	{
-		ntrdma_kvec_dispose_key(res->vec, res->key);
-	}
-	mutex_unlock(&dev->res_lock);
 }
 
 int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
-		struct list_head *res_list)
+		struct list_head *res_list, struct ntrdma_kvec *res_vec)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	int rc;
@@ -352,11 +318,9 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	ntrdma_res_lock(res);
 	mutex_lock(&dev->res_lock);
 	{
-		ntrdma_kvec_write_lock(res->vec);
-		{
-			ntrdma_kvec_set(res->vec, res->key, res);
-		}
-		ntrdma_kvec_write_unlock(res->vec);
+		write_lock_bh(&res_vec->lock);
+		res_vec->look[res->key] = res;
+		write_unlock_bh(&res_vec->lock);
 
 		list_add_tail(&res->obj.dev_entry, res_list);
 
@@ -385,7 +349,8 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	return rc;
 }
 
-void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb)
+void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
+		struct ntrdma_kvec *res_vec)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	int rc;
@@ -402,11 +367,9 @@ void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb)
 
 		list_del(&res->obj.dev_entry);
 
-		ntrdma_kvec_write_lock(res->vec);
-		{
-			ntrdma_kvec_set(res->vec, res->key, NULL);
-		}
-		ntrdma_kvec_write_unlock(res->vec);
+		write_lock_bh(&res_vec->lock);
+		res_vec->look[res->key] = NULL;
+		write_unlock_bh(&res_vec->lock);
 	}
 	mutex_unlock(&dev->res_lock);
 
@@ -440,37 +403,26 @@ int ntrdma_rres_add(struct ntrdma_rres *rres)
 	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
 	int rc;
 
+	rc = ntrdma_vec_set(rres->vec, rres->key, rres, dev->node);
+	if (rc < 0)
+		return rc;
+
 	mutex_lock(&dev->rres_lock);
-	{
-		rc = ntrdma_vec_ensure_key(rres->vec, rres->key, dev->node);
-		if (rc)
-			goto err_key;
-
-		ntrdma_vec_lock(rres->vec);
-		{
-			ntrdma_vec_set(rres->vec, rres->key, rres);
-		}
-		ntrdma_vec_unlock(rres->vec);
-
-		list_add_tail(&rres->obj.dev_entry, &dev->rres_list);
-	}
+	list_add_tail(&rres->obj.dev_entry, &dev->rres_list);
 	mutex_unlock(&dev->rres_lock);
 
 	return 0;
-
-err_key:
-	mutex_unlock(&dev->rres_lock);
-	return rc;
 }
 
 void ntrdma_rres_remove_unsafe(struct ntrdma_rres *rres)
 {
 	list_del(&rres->obj.dev_entry);
 
-	ntrdma_vec_lock(rres->vec);
-	ntrdma_vec_set(rres->vec, rres->key, NULL);
+	write_lock_bh(&rres->vec->lock);
+	if (rres->key < rres->vec->cap)
+		rres->vec->look[rres->key] = NULL;
 	rres->key = ~0;
-	ntrdma_vec_unlock(rres->vec);
+	write_unlock_bh(&rres->vec->lock);
 }
 
 void ntrdma_rres_remove(struct ntrdma_rres *rres)

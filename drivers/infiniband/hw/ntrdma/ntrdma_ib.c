@@ -944,7 +944,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	memset(&qpcb, 0, sizeof(qpcb));
 	init_completion(&qpcb.cb.cmds_done);
-	rc = ntrdma_res_add(&qp->res, &qpcb.cb, &dev->qp_list);
+	rc = ntrdma_res_add(&qp->res, &qpcb.cb, &dev->qp_list, &dev->qp_vec);
 	if (rc) {
 		ntrdma_err(dev, "ntrdma_qp_add failed %d\n", rc);
 		goto err_add;
@@ -1033,7 +1033,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	return &qp->ibqp;
 
 err_add:
-	ntrdma_qp_deinit(qp);
+	ntrdma_qp_deinit(qp, dev);
 err_init:
 	kmem_cache_free(qp_slab, qp);
 err_qp:
@@ -1223,13 +1223,10 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 		int ibqp_mask,
 		struct ib_udata *ibudata)
 {
-	struct ntrdma_dev *dev;
-	struct ntrdma_qp *qp;
+	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	int rc, cur_state, new_state;
 	bool success = true;
-
-	qp = ntrdma_ib_qp(ibqp);
-	dev = ntrdma_qp_dev(qp);
 
 	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask, ibudata);
 	ntrdma_res_lock(&qp->res);
@@ -1326,16 +1323,13 @@ unlock_exit:
 static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 {
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_qp_cmd_cb qpcb;
 
 	TRACE("qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
-	if (!qp) {
-		pr_err("Invalid qp for ibqp %p\n", ibqp);
-		return -EFAULT;
-	}
 
 	if (unlikely(qp->send_cmpl != qp->send_post)) {
-		ntrdma_info(ntrdma_qp_dev(qp),
+		ntrdma_info(dev,
 				"Destroy QP %p (%d) while send cmpl %d send post %d send prod %d send cap %d\n",
 				qp, qp->res.key, qp->send_cmpl,
 				qp->send_post, qp->send_prod, qp->send_cap);
@@ -1345,7 +1339,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 
 	memset(&qpcb, 0, sizeof(qpcb));
 	init_completion(&qpcb.cb.cmds_done);
-	ntrdma_res_del(&qp->res, &qpcb.cb);
+	ntrdma_res_del(&qp->res, &qpcb.cb, &dev->qp_vec);
 
 	ntrdma_qp_put(qp);
 
@@ -1910,7 +1904,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	memset(&mrcb, 0, sizeof(mrcb));
 	init_completion(&mrcb.cb.cmds_done);
-	rc = ntrdma_res_add(&mr->res, &mrcb.cb, &dev->mr_list);
+	rc = ntrdma_res_add(&mr->res, &mrcb.cb, &dev->mr_list, &dev->mr_vec);
 	if (rc < 0) {
 		ntrdma_mr_put(mr);
 		ntrdma_err(dev, "reg_user_mr failed on ntrdma_res_add %d", rc);
@@ -1956,7 +1950,7 @@ static void mr_release(struct kref *kref)
 
 	TRACE("dev %p, mr %p (res key %d)\n",
 			dev, mr, mr->res.key);
-	ntrdma_mr_deinit(mr);
+	ntrdma_mr_deinit(mr, dev);
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);
 	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
@@ -1975,13 +1969,14 @@ void ntrdma_mr_put(struct ntrdma_mr *mr)
 static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 {
 	struct ntrdma_mr *mr = ntrdma_ib_mr(ibmr);
+	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
 	struct ntrdma_mr_cmd_cb mrcb;
 
 	ntrdma_debugfs_mr_del(mr);
 
 	memset(&mrcb, 0, sizeof(mrcb));
 	init_completion(&mrcb.cb.cmds_done);
-	ntrdma_res_del(&mr->res, &mrcb.cb);
+	ntrdma_res_del(&mr->res, &mrcb.cb, &dev->mr_vec);
 
 	ntrdma_mr_put(mr);
 
