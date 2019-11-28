@@ -171,8 +171,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 		struct ntrdma_qp_init_attr *attr,
 		int is_deinit)
 {
-	int rc;
-	int reserved_key = -1;
+	int rc = 0;
 	u32 send_cons = 0;
 	u64 send_cqes_total_size;
 	u32 pos;
@@ -180,16 +179,19 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (is_deinit)
 		goto deinit;
 
-	if (attr->qp_type == IB_QPT_GSI || attr->qp_type == IB_QPT_SMI)
-		reserved_key = attr->qp_type;
+	ntrdma_res_init(&qp->res, dev,
+			ntrdma_qp_enable_cb, ntrdma_qp_disable_cb);
 
-
-	rc = ntrdma_res_init(&qp->res, dev, &dev->qp_vec,
-			ntrdma_qp_enable_cb,
-			ntrdma_qp_disable_cb,
-			reserved_key);
-	if (rc)
-		goto err_res;
+	if (attr->qp_type == IB_QPT_GSI || attr->qp_type == IB_QPT_SMI) {
+		BUILD_BUG_ON(NTRDMA_QP_VEC_PREALLOCATED <= IB_QPT_GSI);
+		BUILD_BUG_ON(NTRDMA_QP_VEC_PREALLOCATED <= IB_QPT_SMI);
+		qp->res.key = attr->qp_type;
+	} else {
+		rc = ntrdma_kvec_reserve_key(&dev->qp_vec, dev->node);
+		if (rc < 0)
+			goto err_res;
+		qp->res.key = rc;
+	}
 
 	ntc_init_dma_chan(&qp->dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
 
@@ -312,8 +314,8 @@ err_send_cqe_buf:
 err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
 	ntrdma_cq_put(qp->recv_cq);
-	ntrdma_res_deinit(&qp->res);
 err_res:
+	ntrdma_kvec_dispose_key(&dev->qp_vec, qp->res.key);
 	if (qp->send_page) {
 		put_page(qp->send_page);
 		qp->send_page = NULL;
@@ -329,10 +331,8 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 	return ntrdma_qp_init_deinit(qp, dev, recv_cq, send_cq, attr, false);
 }
 
-void ntrdma_qp_deinit(struct ntrdma_qp *qp)
+void ntrdma_qp_deinit(struct ntrdma_qp *qp, struct ntrdma_dev *dev)
 {
-	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-
 	ntrdma_qp_init_deinit(qp, dev, NULL, NULL, NULL, true);
 }
 
@@ -343,7 +343,7 @@ static void ntrdma_qp_release(struct kref *kref)
 	struct ntrdma_qp *qp = container_of(res, struct ntrdma_qp, res);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	ntrdma_qp_deinit(qp);
+	ntrdma_qp_deinit(qp, dev);
 	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
 		"Free list element while in the list, obj %p, res %p, qp %p (key %d)\n",
 		obj, res, qp, qp->res.key);
@@ -2074,22 +2074,22 @@ static void ntrdma_rqp_vbell_cb(void *ctx)
 	tasklet_schedule(&rqp->send_work);
 }
 
-struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, int key)
+struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_res *res;
 
-	res = ntrdma_dev_res_look(dev, &dev->qp_vec, key);
+	res = ntrdma_res_look(&dev->qp_vec, key);
 	if (!res)
 		return NULL;
 
 	return ntrdma_res_qp(res);
 }
 
-struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, int key)
+struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_rres *rres;
 
-	rres = ntrdma_dev_rres_look(dev, &dev->rqp_vec, key);
+	rres = ntrdma_rres_look(&dev->rqp_vec, key);
 	if (!rres)
 		return NULL;
 

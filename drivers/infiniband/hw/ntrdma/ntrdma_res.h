@@ -42,27 +42,24 @@
 #include "ntrdma_dev.h"
 
 #define NTRDMA_RES_VEC_INIT_CAP		0x10
+#define NTRDMA_QP_VEC_PREALLOCATED	2
+#define NTRDMA_MR_VEC_PREALLOCATED	0
 
 struct ntrdma_dev;
 struct ntrdma_cmd_cb;
 struct ntrdma_vec;
 struct ntrdma_kvec;
 
-struct ntrdma_res *ntrdma_dev_res_look(struct ntrdma_dev *dev,
-				       struct ntrdma_kvec *vec, int key);
+struct ntrdma_res *ntrdma_res_look(struct ntrdma_kvec *vec, u32 key);
 
 void ntrdma_dev_rres_reset(struct ntrdma_dev *dev);
 
-struct ntrdma_rres *ntrdma_dev_rres_look(struct ntrdma_dev *dev,
-					 struct ntrdma_vec *vec, int key);
+struct ntrdma_rres *ntrdma_rres_look(struct ntrdma_vec *vec, u32 key);
 
 /* Local rdma resource */
 struct ntrdma_res {
 	/* The resource is an ntrdma object */
 	struct ntrdma_obj		obj;
-
-	/* The vector to which this resource is added */
-	struct ntrdma_kvec		*vec;
 
 	/* Initiate commands to create the remote resource */
 	void (*enable)(struct ntrdma_res *res,
@@ -81,20 +78,17 @@ struct ntrdma_res {
 
 #define ntrdma_res_dev(res) ntrdma_obj_dev(&(res)->obj)
 
-int ntrdma_res_init(struct ntrdma_res *res,
+void ntrdma_res_init(struct ntrdma_res *res,
 		struct ntrdma_dev *dev,
-		struct ntrdma_kvec *vec,
 		void (*enable)(struct ntrdma_res *res,
 			struct ntrdma_cmd_cb *cb),
 		void (*disable)(struct ntrdma_res *res,
-				struct ntrdma_cmd_cb *cb),
-		int reserved_key);
-
-void ntrdma_res_deinit(struct ntrdma_res *res);
+				struct ntrdma_cmd_cb *cb));
 
 int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
-		struct list_head *res_list);
-void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb);
+		struct list_head *res_list, struct ntrdma_kvec *res_vec);
+void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
+		struct ntrdma_kvec *res_vec);
 
 static inline void ntrdma_res_lock(struct ntrdma_res *res)
 {

@@ -199,7 +199,7 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 		   struct ntrdma_cq *recv_cq, struct ntrdma_cq *send_cq,
 		   struct ntrdma_qp_init_attr *attr);
 
-void ntrdma_qp_deinit(struct ntrdma_qp *qp);
+void ntrdma_qp_deinit(struct ntrdma_qp *qp, struct ntrdma_dev *dev);
 
 int ntrdma_qp_modify(struct ntrdma_qp *qp);
 
@@ -399,8 +399,8 @@ const struct ntrdma_send_wqe *ntrdma_rqp_send_wqe(struct ntrdma_rqp *rqp,
 inline struct ntrdma_cqe *ntrdma_rqp_send_cqe(struct ntrdma_rqp *rqp,
 					u32 pos);
 
-struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, int key);
-struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, int key);
+struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key);
+struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key);
 
 static inline bool is_state_valid(int state)
 {

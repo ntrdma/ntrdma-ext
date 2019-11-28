@@ -42,37 +42,40 @@
 /* Resizable vector */
 struct ntrdma_vec {
 	/* Capacity of the vec */
-	int				cap;
+	u32				cap;
 	/* Key indexed lookup of elements, cap elements long */
 	void				**look;
-	spinlock_t			lock;
+	rwlock_t			lock;
 };
 
 /* Allocate an empty vector with a capacity */
-int ntrdma_vec_init(struct ntrdma_vec *vec, int cap, int node);
+int ntrdma_vec_init(struct ntrdma_vec *vec, u32 cap, int node);
 /* Destroy a vector */
 void ntrdma_vec_deinit(struct ntrdma_vec *vec);
-/* Look up an element in a vector */
-void *ntrdma_vec_look(struct ntrdma_vec *vec, u32 key);
-/* Look up an element in a vector */
-void ntrdma_vec_set(struct ntrdma_vec *vec, u32 key, void *elem);
-/* Lock vec access */
-void ntrdma_vec_lock(struct ntrdma_vec *vec);
-/* Unlock vec access */
-void ntrdma_vec_unlock(struct ntrdma_vec *vec);
 
-/* TODO: move to static in c file */
 /* Resize a vector if cap is larger than the allocated capacity */
 int ntrdma_vec_resize_larger(struct ntrdma_vec *vec, u32 key, int node);
-/* Resize a vector to ensure that key is within the capacity */
-static inline
-int ntrdma_vec_ensure_key(struct ntrdma_vec *vec, u32 key, int node)
-{
-	if (key >= vec->cap) {
-		u32 size = roundup_pow_of_two(key + 1);
 
-		return ntrdma_vec_resize_larger(vec, size, node);
+static inline int ntrdma_vec_set(struct ntrdma_vec *vec, u32 key, void *value,
+				int node)
+{
+	int rc;
+
+ again:
+	write_lock_bh(&vec->lock);
+
+	if (key >= vec->cap) {
+		write_unlock_bh(&vec->lock);
+		rc = ntrdma_vec_resize_larger(vec, roundup_pow_of_two(key + 1),
+					node);
+		if (rc < 0)
+			return rc;
+		goto again;
 	}
+
+	vec->look[key] = value;
+
+	write_unlock_bh(&vec->lock);
 
 	return 0;
 }
@@ -80,9 +83,11 @@ int ntrdma_vec_ensure_key(struct ntrdma_vec *vec, u32 key, int node)
 /* Resizable vector with key reservation */
 struct ntrdma_kvec {
 	/* Capacity of the vec */
-	int				cap;
+	u32				cap;
+	/* Preallocated and never deallocated */
+	u32				num_reserved_keys;
 	/* Next key to check when reserving */
-	int				next_key;
+	u32				next_key;
 	/* Bitset of available/used keys, cap bits long */
 	unsigned long			*keys;
 	/* Key indexed lookup of elements, cap elements long */
@@ -91,32 +96,28 @@ struct ntrdma_kvec {
 };
 
 /* Allocate an empty vector with a capacity */
-int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, int node, int first_key);
+int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, u32 num_reserved_keys,
+		int node);
 /* Destroy a vector */
 void ntrdma_kvec_deinit(struct ntrdma_kvec *vec);
 /* Reserve the next available key */
-u32 ntrdma_kvec_reserve_key(struct ntrdma_kvec *vec, int node);
-/* Dispose a key that no longer needs to be reserved */
-void ntrdma_kvec_dispose_key(struct ntrdma_kvec *vec, u32 key);
-/* Look up an element in a vector */
-void *ntrdma_kvec_look(struct ntrdma_kvec *vec, u32 key);
-/* Look up an element in a vector */
-void ntrdma_kvec_set(struct ntrdma_kvec *vec, u32 key, void *elem);
-/* Lock kvec access */
-void ntrdma_kvec_write_lock(struct ntrdma_kvec *vec);
-/* Unlock kvec access */
-void ntrdma_kvec_write_unlock(struct ntrdma_kvec *vec);
-void ntrdma_kvec_read_lock(struct ntrdma_kvec *vec);
-void ntrdma_kvec_read_unlock(struct ntrdma_kvec *vec);
+int ntrdma_kvec_reserve_key(struct ntrdma_kvec *vec, int node);
 
-/* TODO: move to static in c file */
-/* Resize a vector if cap is larger than the allocated capacity */
-int ntrdma_kvec_resize_larger(struct ntrdma_kvec *vec, u32 key, int node);
-/* Resize a vector to twice as large */
-static inline
-int ntrdma_kvec_resize_double(struct ntrdma_kvec *vec, int node)
+/* Dispose a key that no longer needs to be reserved */
+static inline void ntrdma_kvec_dispose_key(struct ntrdma_kvec *vec, u32 key)
 {
-	return ntrdma_kvec_resize_larger(vec, vec->cap << 1, node);
+	write_lock_bh(&vec->lock);
+
+	if (key < vec->num_reserved_keys)
+		goto out;
+
+	__clear_bit(key, vec->keys);
+
+	if (key < vec->next_key)
+		vec->next_key = key;
+
+ out:
+	write_unlock_bh(&vec->lock);
 }
 
 static inline void ntrdma_deinit_slab(struct kmem_cache **pslab)
