@@ -1139,9 +1139,10 @@ static inline void ntc_export_buf_clear(struct ntc_export_buf *buf)
  *
  * Return: zero on success, negative error value on failure.
  */
-static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
-				struct ntc_dev *ntc,
-				u64 size, gfp_t gfp)
+static inline int _ntc_export_buf_alloc(const char *caller, int line,
+					struct ntc_export_buf *buf,
+					struct ntc_dev *ntc,
+					u64 size, gfp_t gfp)
 {
 	int rc;
 	dma_addr_t dma_addr;
@@ -1154,7 +1155,8 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 
 	if (!is_flat) {
 		buf->own_mw = &ntc->own_mws[NTC_INFO_MW_IDX];
-		buf->ptr = ntc_mm_alloc(&buf->own_mw->mm, size, gfp);
+		buf->ptr = ntc_mm_alloc(caller, line,
+					&buf->own_mw->mm, size, gfp);
 		if (unlikely(IS_ERR(buf->ptr))) {
 			rc = PTR_ERR(buf->ptr);
 			buf->ptr = NULL;
@@ -1182,6 +1184,9 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
 	return 0;
 }
 
+#define ntc_export_buf_alloc(...) \
+	_ntc_export_buf_alloc(__func__, __LINE__, ##__VA_ARGS__)
+
 /**
  * ntc_export_buf_zalloc() - allocate a memory buffer in an NTB window,
  *                           to which the peer can write,
@@ -1195,12 +1200,17 @@ static inline int ntc_export_buf_alloc(struct ntc_export_buf *buf,
  *
  * Return: zero on success, negative error value on failure.
  */
-static inline int ntc_export_buf_zalloc(struct ntc_export_buf *buf,
+static inline int _ntc_export_buf_zalloc(const char *caller, int line,
+					struct ntc_export_buf *buf,
 					struct ntc_dev *ntc,
 					u64 size, gfp_t gfp)
 {
-	return ntc_export_buf_alloc(buf, ntc, size, gfp | __GFP_ZERO);
+	return _ntc_export_buf_alloc(caller, line,
+				buf, ntc, size, gfp | __GFP_ZERO);
 }
+
+#define ntc_export_buf_zalloc(...) \
+	_ntc_export_buf_zalloc(__func__, __LINE__, ##__VA_ARGS__)
 
 /**
  * ntc_export_buf_alloc_init() - allocate a memory buffer in an NTB window,
@@ -1218,7 +1228,8 @@ static inline int ntc_export_buf_zalloc(struct ntc_export_buf *buf,
  *
  * Return: zero on success, negative error value on failure.
  */
-static inline int ntc_export_buf_alloc_init(struct ntc_export_buf *buf,
+static inline int _ntc_export_buf_alloc_init(const char *caller, int line,
+					struct ntc_export_buf *buf,
 					struct ntc_dev *ntc,
 					u64 size, gfp_t gfp,
 					void *init_buf, u64 init_buf_size,
@@ -1230,7 +1241,7 @@ static inline int ntc_export_buf_alloc_init(struct ntc_export_buf *buf,
 	if (unlikely(!ntc_segment_valid(size, init_buf_offset, init_buf_size)))
 		return -EINVAL;
 
-	rc = ntc_export_buf_alloc(buf, ntc, size, gfp);
+	rc = _ntc_export_buf_alloc(caller, line, buf, ntc, size, gfp);
 	if (unlikely(rc < 0))
 		return rc;
 
@@ -1238,6 +1249,10 @@ static inline int ntc_export_buf_alloc_init(struct ntc_export_buf *buf,
 
 	return rc;
 }
+
+#define ntc_export_buf_alloc_init(...) \
+	_ntc_export_buf_alloc_init(__func__, __LINE__, ##__VA_ARGS__)
+
 
 /**
  * ntc_export_buf_zalloc_init() - allocate a memory buffer in an NTB window,
@@ -1256,7 +1271,8 @@ static inline int ntc_export_buf_alloc_init(struct ntc_export_buf *buf,
  *
  * Return: zero on success, negative error value on failure.
  */
-static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
+static inline int _ntc_export_buf_zalloc_init(const char *caller, int line,
+					struct ntc_export_buf *buf,
 					struct ntc_dev *ntc,
 					u64 size, gfp_t gfp,
 					void *init_buf, u64 init_buf_size,
@@ -1267,7 +1283,7 @@ static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
 	if (unlikely(!ntc_segment_valid(size, init_buf_offset, init_buf_size)))
 		return -EINVAL;
 
-	rc = ntc_export_buf_zalloc(buf, ntc, size, gfp);
+	rc = _ntc_export_buf_zalloc(caller, line, buf, ntc, size, gfp);
 	if (unlikely(rc < 0))
 		return rc;
 
@@ -1275,6 +1291,9 @@ static inline int ntc_export_buf_zalloc_init(struct ntc_export_buf *buf,
 
 	return rc;
 }
+
+#define ntc_export_buf_zalloc_init(...) \
+	_ntc_export_buf_zalloc_init(__func__, __LINE__, ##__VA_ARGS__)
 
 /**
  * ntc_export_buf_free() - unmap and, if necessary, free the buffer
