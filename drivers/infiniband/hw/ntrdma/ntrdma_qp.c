@@ -370,12 +370,12 @@ inline struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
 
 inline void ntrdma_qp_set_stats(struct ntrdma_qp *qp, u32 pos)
 {
-	*(qp->send_wqe_cycles_buf + pos) = get_cycles();
+	qp->send_wqe_cycles_buf[pos] = get_cycles();
 }
 
 inline cycles_t ntrdma_qp_get_diff_cycles(struct ntrdma_qp *qp, u32 pos)
 {
-	return get_cycles() - *(qp->send_wqe_cycles_buf + pos);
+	return get_cycles() - qp->send_wqe_cycles_buf[pos];
 }
 
 inline
