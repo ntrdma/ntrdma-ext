@@ -112,8 +112,6 @@ void _ntrdma_cq_cue(struct ntrdma_cq *cq, const char *f);
 void ntrdma_cq_add_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll);
 void ntrdma_cq_del_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll);
 
-void ntrdma_cq_cmpl_start(struct ntrdma_cq *cq);
-void ntrdma_cq_cmpl_done(struct ntrdma_cq *cq);
 int ntrdma_cq_cmpl_get(struct ntrdma_cq *cq, struct ntrdma_qp **qp,
 		       u32 *pos, u32 *end, u32 *base);
 void ntrdma_cq_cmpl_put(struct ntrdma_cq *cq,

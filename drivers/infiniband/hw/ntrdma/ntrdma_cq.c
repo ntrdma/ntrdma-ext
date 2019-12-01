@@ -157,16 +157,6 @@ void ntrdma_cq_del_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll)
 	mutex_unlock(&cq->poll_lock);
 }
 
-void ntrdma_cq_cmpl_start(struct ntrdma_cq *cq)
-{
-	mutex_lock(&cq->poll_lock);
-}
-
-void ntrdma_cq_cmpl_done(struct ntrdma_cq *cq)
-{
-	mutex_unlock(&cq->poll_lock);
-}
-
 int ntrdma_cq_cmpl_get(struct ntrdma_cq *cq, struct ntrdma_qp **qp,
 		       u32 *pos, u32 *end, u32 *base)
 {

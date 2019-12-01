@@ -619,7 +619,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	int count = 0, rc = 0;
 
 	/* lock for completions */
-	ntrdma_cq_cmpl_start(cq);
+	mutex_lock(&cq->poll_lock);
 
 	while (count < howmany) {
 		/* get the next completing range in the next qp ring */
@@ -663,7 +663,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	}
 
 	/* release lock for later completions */
-	ntrdma_cq_cmpl_done(cq);
+	mutex_unlock(&cq->poll_lock);
 
 	if (count) {
 		this_cpu_add(dev_cnt.cqes_polled, count);
@@ -730,7 +730,7 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 	wc = (void *)(hdr + 1);
 
 	/* lock for completions */
-	ntrdma_cq_cmpl_start(cq);
+	mutex_lock(&cq->poll_lock);
 
 	while (count < howmany) {
 		/* get the next completing range in the next qp ring */
@@ -765,7 +765,7 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 	}
 
 	/* release lock for later completions */
-	ntrdma_cq_cmpl_done(cq);
+	mutex_unlock(&cq->poll_lock);
 
 	hdr->wc_counter = count;
 
@@ -1754,12 +1754,16 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_recv_wqe *wqe;
 	u32 pos, end, base;
-	int rc;
+	int rc = 0;
 
 	/* verify the qp state and lock for posting recvs */
-	rc = ntrdma_qp_recv_post_start(qp);
-	if (rc)
+	mutex_lock(&qp->recv_post_lock);
+	if (!is_state_out_of_reset(atomic_read(&qp->state))) {
+		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
+			atomic_read(&qp->state));
+		rc = -EINVAL;
 		goto out;
+	}
 
 	while (ibwr) {
 		/* get the next posting range in the ring */
@@ -1801,9 +1805,12 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 	}
 
 	/* release lock for state change or posting later recvs */
-	ntrdma_qp_recv_post_done(qp);
+	if (dev->res_enable)
+		ntrdma_qp_recv_work(qp);
 
 out:
+	mutex_unlock(&qp->recv_post_lock);
+
 	*bad = ibwr;
 
 	NTRDMA_PERF_MEASURE(perf);
