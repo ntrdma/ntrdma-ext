@@ -175,6 +175,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	int reserved_key = -1;
 	u32 send_cons = 0;
 	u64 send_cqes_total_size;
+	u32 pos;
 
 	if (is_deinit)
 		goto deinit;
@@ -301,6 +302,9 @@ deinit:
 	kfree(qp->recv_cqe_buf);
 	qp->recv_cqe_buf = 0;
 err_recv_cqe_buf:
+	for (pos = 0; pos < qp->recv_cap; pos++)
+		ntrdma_recv_wqe_cleanup(ntrdma_qp_recv_wqe(qp, pos));
+
 	ntc_local_buf_free(&qp->recv_wqe_buf, dev->ntc);
 err_recv_wqe_buf:
 	ntc_export_buf_free(&qp->send_cqe_buf);
