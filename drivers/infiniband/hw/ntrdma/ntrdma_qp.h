@@ -451,28 +451,6 @@ void ntrdma_free_rqp(struct ntrdma_rqp *rqp);
 inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
 				struct ntrdma_send_wqe *wqe);
 
-static inline int ntrdma_qp_recv_post_start(struct ntrdma_qp *qp)
-{
-	mutex_lock(&qp->recv_post_lock);
-	if (!is_state_out_of_reset(atomic_read(&qp->state))) {
-		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
-				atomic_read(&qp->state));
-		mutex_unlock(&qp->recv_post_lock);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
 void ntrdma_qp_recv_work(struct ntrdma_qp *qp);
-static inline void ntrdma_qp_recv_post_done(struct ntrdma_qp *qp)
-{
-	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-
-	if (dev->res_enable)
-		ntrdma_qp_recv_work(qp);
-
-	mutex_unlock(&qp->recv_post_lock);
-}
 
 #endif
