@@ -504,9 +504,10 @@ static void ntc_ntb_ping_stop(struct ntc_ntb_dev *dev)
 
 	spin_lock_irqsave(&dev->ping_lock, irqflags);
 	dev->ping_run = false;
+	spin_unlock_irqrestore(&dev->ping_lock, irqflags);
+
 	del_timer_sync(&dev->ping_pong);
 	del_timer_sync(&dev->ping_poll);
-	spin_unlock_irqrestore(&dev->ping_lock, irqflags);
 }
 
 static inline void ntc_ntb_link_set_state(struct ntc_ntb_dev *dev, int state)
