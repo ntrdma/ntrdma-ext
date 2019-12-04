@@ -595,6 +595,9 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 	tx->callback = cb;
 	tx->callback_param = cb_ctx;
 
+	this_cpu_add(chan->chan->local->bytes_transferred, len);
+	this_cpu_inc(chan->chan->local->memcpy_count);
+
 	if (dma_submit_error(chan->last_cookie = dmaengine_submit(tx)))
 		return -EIO;
 

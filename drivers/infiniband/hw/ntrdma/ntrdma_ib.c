@@ -621,7 +621,7 @@ static int ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 	ibwc->port_num = 0;
 	return 0;
 }
-
+#define SHIFT_SAVE_BITS 10
 static int ntrdma_poll_cq(struct ib_cq *ibcq,
 			  int howmany,
 			  struct ib_wc *ibwc)
@@ -635,7 +635,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	/* lock for completions */
 	mutex_lock(&cq->poll_lock);
 
-	this_cpu_inc(dev_cnt.poll_cq_cycle);
+	this_cpu_inc(dev_cnt.poll_cq_count);
 
 	while (count < howmany) {
 		/* get the next completing range in the next qp ring */
@@ -668,7 +668,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 
 				/* SHIFT 10 >> for saving bits, postponing wrap-around... */
 				this_cpu_add(dev_cnt.accum_latency,
-				(u64)ntrdma_qp_stop_measure(qp, pos) >> 10);
+				(u64)ntrdma_qp_stop_measure(qp, pos) >> SHIFT_SAVE_BITS);
 				++count;
 			}
 
