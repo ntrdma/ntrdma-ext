@@ -1,13 +1,33 @@
 
 #!/bin/bash
+
+# dma channel stats
+echo "dma channels stats (bytes per channel)"
+cat /sys/class/dma/dma*chan*/bytes_transferred | nl -w2 -s':  ' | awk '$0="dma channel"$0'
+
+echo "======================================================================" 
+echo "dma channels stats (memcpy ops per channel)"
+cat /sys/class/dma/dma*chan*/memcpy_count | nl -w2 -s':  '| awk '$0="dma channel"$0'
+echo "======================================================================"
+
 CPU_CYC_PER_USEC=$(dmesg | grep tsc | grep ca | grep -Eo '[+-]?[0-9]+([.][0-9]+)?' | sed -n '2p')
-echo "cpu freq is: $CPU_CYC_PER_USEC"
+
+if [ $CPU_CYC_PER_USEC == 0 ]; then
+	echo "NOTE: dmesg was probably wrapped around, setting to default freq $CPU_CYC_PER_USEC"
+	CPU_CYC_PER_USEC = 2200
+fi
+
+echo "cpu freq is: $CPU_CYC_PER_USEC
+
 USEC_IN_SEC=1000^2
+
+SHIFT_SAVE_BITS=1024
+
 for (( ; ; ))
 do 
         a=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep post_send_bytes | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
 
-	poll=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep poll_cq_cycle | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
+	poll=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep poll_cq_count | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
 
 	cycles1=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep accum_latency | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
 
@@ -17,7 +37,7 @@ do
 
 	b=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep post_send_bytes | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
 
-	poll_next=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep poll_cq_cycle | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
+	poll_next=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep poll_cq_count | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
 
         cycles2=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep accum_latency | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
  
@@ -29,7 +49,7 @@ do
         cycles=`expr $cycles2 - $cycles1`
         cqes=`expr $cqes2 - $cqes1`
 
-        if [ ${cqes} -ne 0 ]; then lat=$(awk "BEGIN {printf \"%.3f\",${cycles}*1024/($cqes*$CPU_CYC_PER_USEC)}"); echo "latency: $lat usec"; fi
+        if [ ${cqes} -ne 0 ]; then lat=$(awk "BEGIN {printf \"%.3f\",${cycles}*${SHIFT_SAVE_BITS}/($cqes*$CPU_CYC_PER_USEC)}"); echo "latency: $lat usec"; fi
 	
 	diff=`expr $poll_next - $poll`
 	if [[ ${diff} -ne 0 && ${cqes} -ne 0 ]]; then poll_cyc=$(awk 'BEGIN {printf "%.3f\n", '$USEC_IN_SEC/$diff' }'); echo "user polling : $poll_cyc usec"; fi
