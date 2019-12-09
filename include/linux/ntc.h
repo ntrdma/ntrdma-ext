@@ -412,7 +412,8 @@ int _ntc_link_disable(struct ntc_dev *ntc, const char *f);
  *
  * Return: Zero on success, otherwise an error number.
  */
-int ntc_link_enable(struct ntc_dev *ntc);
+int _ntc_link_enable(struct ntc_dev *ntc, const char *f);
+#define ntc_link_enable(_ntc) _ntc_link_enable(_ntc, __func__)
 
 /**
  * ntc_link_reset() - reset the link

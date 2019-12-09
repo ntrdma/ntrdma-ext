@@ -551,15 +551,18 @@ static void ntc_ntb_link_update(struct ntc_ntb_dev *dev, bool link_up)
 	ntc->link_is_up = link_up;
 	if (link_up) {
 		err = ntc_ctx_enable(ntc);
-		if (err)
+		if (err) {
+			dev_err(&dev->ntc.dev, "ntc_ctx_enable failed: rc=%d",
+				err);
 			ntc_ntb_error(dev);
+		}
 	} else
 		ntc_ctx_disable(ntc);
 }
 
 static inline void ntc_ntb_quiesce(struct ntc_ntb_dev *dev)
 {
-	dev_dbg(&dev->ntc.dev, "link quiesce\n");
+	dev_info(&dev->ntc.dev, "link quiesce\n");
 	ntc_ntb_link_update(dev, false);
 	ntc_ctx_quiesce(&dev->ntc);
 
@@ -575,7 +578,7 @@ static inline void reset_peer_irq(struct ntc_ntb_dev *dev)
 
 static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 {
-	dev_dbg(&dev->ntc.dev, "link reset\n");
+	dev_info(&dev->ntc.dev, "link reset\n");
 
 	ntc_ctx_reset(&dev->ntc);
 
@@ -592,7 +595,7 @@ static inline void ntc_ntb_send_version(struct ntc_ntb_dev *dev)
 	int i;
 
 
-	dev_dbg(&dev->ntc.dev, "link send version\n");
+	dev_info(&dev->ntc.dev, "link send version\n");
 
 	ntc_ntb_version(&versions);
 
@@ -613,22 +616,27 @@ static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 	struct multi_version_support versions;
 	struct multi_version_support peer_versions;
 
-	dev_dbg(&ntc->dev, "link choose version\n");
+	dev_info(&ntc->dev, "link choose version\n");
 
 	ntc_ntb_version(&versions);
 	peer_info = ntc_ntb_peer_info(dev);
 	peer_versions = peer_info->versions;
-	if (peer_versions.num > MAX_SUPPORTED_VERSIONS)
+	if (peer_versions.num > MAX_SUPPORTED_VERSIONS) {
+		dev_err(&dev->ntc.dev, "too many peer versions: %d > %d",
+			peer_versions.num, MAX_SUPPORTED_VERSIONS);
 		goto err;
+	}
 
 	if (versions.num > 0)
 		ntc->latest_version = versions.versions[versions.num-1];
 
 	ntc->version = ntc_ntb_version_matching(ntc, &versions, &peer_versions);
-	if (ntc->version == NTC_NTB_VERSION_NONE)
+	if (ntc->version == NTC_NTB_VERSION_NONE) {
+		dev_err(&dev->ntc.dev, "versions did not match");
 		goto err;
+	}
 
-	dev_dbg(&ntc->dev, "Agree on version %d\n", ntc->version);
+	dev_info(&ntc->dev, "Agree on version %d\n", ntc->version);
 
 	self_info = ntc_ntb_self_info(dev);
 	iowrite32(ntc_ntb_version_magic(ntc->version), &self_info->magic);
@@ -701,7 +709,7 @@ static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 	ntb_db_clear(dev->ntb, peer_db_mask);
 	ntb_db_clear_mask(dev->ntb, peer_db_mask);
 
-	dev_dbg(&ntc->dev, "link signaling method configured\n");
+	dev_info(&ntc->dev, "link signaling method configured\n");
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_DB_CONFIGURED);
 	return 0;
 
@@ -713,7 +721,7 @@ err_ntb_db:
 
 static inline void ntc_ntb_link_commit(struct ntc_ntb_dev *dev)
 {
-	dev_dbg(&dev->ntc.dev, "link commit - verifying both sides sync\n");
+	dev_info(&dev->ntc.dev, "link commit - verifying both sides sync\n");
 
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_COMMITTED);
 }
@@ -734,7 +742,7 @@ static inline int ntc_ntb_hello(struct ntc_ntb_dev *dev)
 	int ret = 0;
 	int phase = dev->link_state + 1 - NTC_NTB_LINK_HELLO;
 
-	dev_dbg(&dev->ntc.dev, "link hello phase %d\n", phase);
+	dev_info(&dev->ntc.dev, "link hello phase %d\n", phase);
 
 	if (phase < 0)
 		return -EINVAL;
@@ -750,7 +758,7 @@ static inline int ntc_ntb_hello(struct ntc_ntb_dev *dev)
 		dev->self_info_done = 1;
 	}
 
-	dev_dbg(&dev->ntc.dev, "hello callback phase %d done %d\n", phase, ret);
+	dev_info(&dev->ntc.dev, "hello callback phase %d done %d\n", phase, ret);
 
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_HELLO + phase);
 
@@ -763,8 +771,12 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	bool link_up = false;
 	int err = 0;
 
-	dev_dbg(&dev->ntc.dev, "link work state %d event %d\n",
-		dev->link_state, link_event);
+	if (dev->link_state <= link_event)
+		dev_info(&dev->ntc.dev, "link work state %d event %d\n",
+			dev->link_state, link_event);
+	else
+		dev_dbg(&dev->ntc.dev, "link work state %d event %d\n",
+			dev->link_state, link_event);
 
 	switch (dev->link_state) {
 	case NTC_NTB_LINK_QUIESCE:
@@ -788,6 +800,9 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	case NTC_NTB_LINK_VER_SENT:
 		switch (link_event) {
 		default:
+			dev_err(&dev->ntc.dev,
+				"link work state LINK_VER_SENT(%d) event %d",
+				dev->link_state, link_event);
 			ntc_ntb_error(dev);
 		case NTC_NTB_LINK_START:
 			goto out;
@@ -802,13 +817,19 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	case NTC_NTB_LINK_VER_CHOSEN:
 		switch (link_event) {
 		default:
+			dev_err(&dev->ntc.dev,
+				"link work state LINK_VER_CHOSEN(%d) event %d",
+				dev->link_state, link_event);
 			ntc_ntb_error(dev);
 		case NTC_NTB_LINK_VER_SENT:
 			goto out;
 		case NTC_NTB_LINK_VER_CHOSEN:
 		case NTC_NTB_LINK_DB_CONFIGURED:
-			if (ntc_ntb_db_config(dev))
+			if (ntc_ntb_db_config(dev)) {
+				dev_err(&dev->ntc.dev,
+					"ntc_ntb_db_config failed");
 				ntc_ntb_error(dev);
+			}
 		}
 
 		if (dev->link_state != NTC_NTB_LINK_DB_CONFIGURED)
@@ -817,6 +838,9 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	case NTC_NTB_LINK_DB_CONFIGURED:
 		switch (link_event) {
 		default:
+			dev_err(&dev->ntc.dev,
+				"link work state LINK_DB_CONFIGURED(%d) event %d",
+				dev->link_state, link_event);
 			ntc_ntb_error(dev);
 		case NTC_NTB_LINK_VER_CHOSEN:
 			goto out;
@@ -831,14 +855,20 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	case NTC_NTB_LINK_COMMITTED:
 		switch (link_event) {
 		default:
+			dev_err(&dev->ntc.dev,
+				"link work state LINK_COMMITTED(%d) event %d",
+				dev->link_state, link_event);
 			ntc_ntb_error(dev);
 		case NTC_NTB_LINK_DB_CONFIGURED:
 			goto out;
 		case NTC_NTB_LINK_COMMITTED:
 		case NTC_NTB_LINK_HELLO:
 			err = ntc_ntb_hello(dev);
-			if (err < 0) 
+			if (err < 0) {
+				dev_err(&dev->ntc.dev,
+					"ntc_ntb_hello failed %d", err);
 				ntc_ntb_error(dev);
+			}
 		}
 
 		if (dev->link_state != NTC_NTB_LINK_HELLO)
@@ -852,8 +882,12 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 			dev_dbg(&dev->ntc.dev, "not done hello\n");
 			switch (link_event - dev->link_state) {
 			default:
-				dev_err(&dev->ntc.dev, "peer state is not in sync %d %d\n",
-						link_event, dev->link_state);
+				dev_err(&dev->ntc.dev,
+					"peer state is not in sync %d %d. "
+					"NTB link is %s",
+					link_event, dev->link_state,
+					ntb_link_is_up(dev->ntb, NULL, NULL) ?
+					"up" : "down");
 				ntc_ntb_error(dev);
 				return;
 			case -1:
@@ -864,6 +898,8 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 				dev_dbg(&dev->ntc.dev, "can advance hello\n");
 				err = ntc_ntb_hello(dev);
 				if (err < 0) {
+					dev_err(&dev->ntc.dev,
+						"ntc_ntb_hello failed %d", err);
 					ntc_ntb_error(dev);
 					return;
 				}
@@ -874,12 +910,18 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		switch (link_event - dev->link_state) {
 		default:
+			dev_err(&dev->ntc.dev,
+				"peer state is not in sync %d %d. "
+				"NTB link is %s",
+				link_event, dev->link_state,
+				ntb_link_is_up(dev->ntb, NULL, NULL) ?
+				"up" : "down");
 			ntc_ntb_error(dev);
 		case -1:
 			dev_dbg(&dev->ntc.dev, "peer is not done hello\n");
 			goto out;
 		case 0:
-			dev_dbg(&dev->ntc.dev, "both peers are done hello\n");
+			dev_info(&dev->ntc.dev, "both peers are done hello\n");
 			link_up = true;
 		}
 	}
@@ -902,7 +944,7 @@ int _ntc_link_disable(struct ntc_dev *ntc, const char *caller)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
 
-	dev_dbg(&dev->ntc.dev, "link disable by upper layer (%s)", caller);
+	dev_err(&dev->ntc.dev, "link disable by upper layer (%s)", caller);
 
 	TRACE("NTC link disable by upper layer (%s)\n", caller);
 
@@ -912,12 +954,12 @@ int _ntc_link_disable(struct ntc_dev *ntc, const char *caller)
 }
 EXPORT_SYMBOL(_ntc_link_disable);
 
-int ntc_link_enable(struct ntc_dev *ntc)
+int _ntc_link_enable(struct ntc_dev *ntc, const char *caller)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
 	int rc;
 
-	dev_dbg(&dev->ntc.dev, "link enable\n");
+	dev_info(&dev->ntc.dev, "link enabled by %s", caller);
 
 	rc = ntb_link_enable(dev->ntb, NTB_SPEED_AUTO, NTB_WIDTH_AUTO);
 
@@ -928,7 +970,7 @@ int ntc_link_enable(struct ntc_dev *ntc)
 
 	return rc;
 }
-EXPORT_SYMBOL(ntc_link_enable);
+EXPORT_SYMBOL(_ntc_link_enable);
 
 #define RESET_TIMEOUT (1000) /*1 sec*/
 int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
@@ -937,7 +979,7 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
 	uint tmp_reset_cnt;
 	int ret;
 
-	dev_dbg(&dev->ntc.dev, "link reset requested by upper layer\n");
+	dev_info(&dev->ntc.dev, "link reset requested by %s", caller);
 	mutex_lock(&dev->link_lock);
 
 	if (dev->link_state > NTC_NTB_LINK_START)
@@ -945,7 +987,7 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
 	if (wait) {
 		if (dev->link_state == NTC_NTB_LINK_START) {
 			mutex_unlock(&dev->link_lock);
-			dev_dbg(&dev->ntc.dev,
+			dev_info(&dev->ntc.dev,
 				"link reset requested by upper layer but already reseted\n");
 			return 0;
 		}
@@ -966,7 +1008,7 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
 			return -ETIME;
 		}
 
-		dev_dbg(&dev->ntc.dev,
+		dev_info(&dev->ntc.dev,
 				"link reset done, state %d\n",
 				dev->link_state);
 	}
@@ -1759,6 +1801,8 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	if (rc < 0)
 		pr_debug("set_affinity failed rc %d\n", rc);
 
+	dev_info(&dev->ntc.dev, "%s success", __func__);
+
 	return ntc_register_device(&dev->ntc);
 
 err_init:
@@ -1773,6 +1817,7 @@ err_init:
 err_dma:
 	kfree(dev);
 err_dev:
+	pr_err("%s failure rc=%d", __func__, rc);
 	return rc;
 }
 
@@ -1780,7 +1825,7 @@ static void ntc_ntb_remove(struct ntb_client *self, struct ntb_dev *ntb)
 {
 	struct ntc_ntb_dev *dev = ntb->ctx;
 
-	dev_vdbg(&dev->ntc.dev, "remove\n");
+	dev_info(&dev->ntc.dev, "%s called", __func__);
 
 	debugfs_remove_recursive(dev->dbgfs);
 
