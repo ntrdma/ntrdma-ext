@@ -1919,6 +1919,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	mr->addr = virt_addr;
 	mr->len = length;
 	mr->sg_count = count;
+	mr->done = NULL;
 
 	if (!ib_umem) {
 		rc = ntc_mr_buf_map_dma(&mr->sg_list[0], dev->ntc, length,
@@ -1980,6 +1981,7 @@ static void mr_release(struct kref *kref)
 	struct ntrdma_res *res = container_of(obj, struct ntrdma_res, obj);
 	struct ntrdma_mr *mr = container_of(res, struct ntrdma_mr, res);
 	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
+	struct completion *done = mr->done;
 
 	TRACE("dev %p, mr %p (res key %d)\n",
 			dev, mr, mr->res.key);
@@ -1991,6 +1993,9 @@ static void mr_release(struct kref *kref)
 		obj, res, mr, mr->res.key);
 	kfree(mr);
 	atomic_dec(&dev->mr_num);
+
+	if (done)
+		complete_all(done);
 }
 
 
@@ -2004,6 +2009,7 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	struct ntrdma_mr *mr = ntrdma_ib_mr(ibmr);
 	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
 	struct ntrdma_mr_cmd_cb mrcb;
+	struct completion done;
 
 	ntrdma_debugfs_mr_del(mr);
 
@@ -2011,7 +2017,13 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	init_completion(&mrcb.cb.cmds_done);
 	ntrdma_res_del(&mr->res, &mrcb.cb, &dev->mr_vec);
 
+	init_completion(&done);
+	mr->done = &done;
+
 	ntrdma_mr_put(mr);
+
+	wait_for_completion(&done);
+	ntc_flush_dma_channels(dev->ntc);
 
 	return 0;
 }
