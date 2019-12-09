@@ -53,6 +53,21 @@ MODULE_VERSION(DRIVER_VERSION);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESCRIPTION);
 
+void ntc_flush_dma_channels(struct ntc_dev *ntc)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ntc->dma_chan); i++)
+		if (ntc->dma_chan[i].chan) {
+			pr_info("flushing DMA channel %d", i);
+			ntc_dma_flush(&ntc->dma_chan[i]);
+		} else
+			break;
+
+	pr_info("All DMA channels flushed");
+}
+EXPORT_SYMBOL(ntc_flush_dma_channels);
+
 int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 		struct ntc_mr_buf *sgl, int count, int mr_access_flags)
 {

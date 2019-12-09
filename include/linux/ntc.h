@@ -524,6 +524,23 @@ static inline void ntc_req_submit(struct ntc_dma_chan *chan)
 		WRITE_ONCE(chan->submit_counter, submit_counter);
 }
 
+static inline void ntc_dma_flush(struct ntc_dma_chan *chan)
+{
+	dma_cookie_t last_cookie = READ_ONCE(chan->last_cookie);
+
+	if (!chan->chan)
+		return;
+
+	if (dma_submit_error(last_cookie))
+		return;
+
+	ntc_req_submit(chan);
+	dma_sync_wait(chan->chan, last_cookie);
+	ntc_dma_chan_tx_status(chan);
+}
+
+void ntc_flush_dma_channels(struct ntc_dev *ntc);
+
 /**
  * ntc_req_memcpy() - append a buffer to buffer memory copy operation
  * @chan:	Channel request context.
@@ -590,7 +607,7 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 
 		pr_warn("DMA ring still full. len %#llx. waiting", len);
 		/* Busy waiting */
-		dma_sync_wait(chan->chan, chan->last_cookie);
+		ntc_dma_flush(chan);
 
 		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
 					flags);
