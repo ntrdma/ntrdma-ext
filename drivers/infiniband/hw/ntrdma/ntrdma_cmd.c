@@ -796,6 +796,7 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 {
 	struct ntrdma_cmd_mr_delete cmd;
 	struct ntrdma_rmr *rmr;
+	struct completion done;
 	int rc;
 
 	cmd = READ_ONCE(*_cmd);
@@ -815,9 +816,16 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 	}
 
 	ntrdma_rres_remove(&rmr->rres);
+
+	init_completion(&done);
+	rmr->done = &done;
+
 	ntrdma_rmr_put(rmr);
 	ntrdma_rmr_put(rmr);
-	/* SYNC ref == 0 ?*/
+
+	wait_for_completion(&done);
+	ntc_flush_dma_channels(dev->ntc);
+
 	rsp->hdr.status = 0;
 	return 0;
 

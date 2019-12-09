@@ -63,6 +63,7 @@ struct ntrdma_mr {
 
 	struct ib_umem			*ib_umem;
 	struct ntrdma_mr_cmd_cb		enable_mrcb;
+	struct completion		*done;
 
 	u32				pd_key;
 	u32				access;
@@ -89,6 +90,7 @@ struct ntrdma_rmr {
 
 	/* Ntrdma remote resource bookkeeping structure */
 	struct ntrdma_rres		rres;
+	struct completion		*done;
 
 	u32				pd_key;
 	u32				access;

@@ -247,6 +247,7 @@ void ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 		    u64 addr, u64 len,
 		    u32 sg_count, u32 key)
 {
+	rmr->done = NULL;
 	rmr->pd_key = pd_key;
 	rmr->access = access;
 
@@ -268,6 +269,7 @@ static void ntrdma_rmr_release(struct kref *kref)
 	struct ntrdma_rres *rres = container_of(obj, struct ntrdma_rres, obj);
 	struct ntrdma_rmr *rmr = container_of(rres, struct ntrdma_rmr, rres);
 	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
+	struct completion *done = rmr->done;
 	int i;
 
 	ntrdma_debugfs_rmr_del(rmr);
@@ -276,6 +278,9 @@ static void ntrdma_rmr_release(struct kref *kref)
 		ntc_remote_buf_unmap(&rmr->sg_list[i], dev->ntc);
 
 	kfree(rmr);
+
+	if (done)
+		complete_all(done);
 }
 
 void ntrdma_rmr_put(struct ntrdma_rmr *rmr)
