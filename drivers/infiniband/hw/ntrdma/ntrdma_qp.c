@@ -763,6 +763,7 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	u32 recv_prod;
 	u64 recv_wqes_total_size;
 	u32 send_vbell_idx;
+	struct ntc_dma_chan *dma_chan;
 
 	if (is_deinit)
 		goto deinit;
@@ -775,6 +776,7 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 
 	rqp->state = 0;
 	rqp->qp_key = -1;
+	rqp->dma_chan = NULL;
 
 	rqp->send_wqe_sg_cap = attr->send_wqe_sg_cap;
 	rqp->send_wqe_inline_cap = attr->send_wqe_inline_cap;
@@ -853,7 +855,10 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 
 	return 0;
 deinit:
-	tasklet_kill(&rqp->send_work);
+	dma_chan = READ_ONCE(rqp->dma_chan);
+	if (dma_chan)
+		ntc_dma_flush(dma_chan);
+	ntrdma_tasklet_vbell_kill(&rqp->send_vbell);
 err_vbell_idx:
 	ntc_export_buf_free(&rqp->recv_wqe_buf);
 err_recv_wqe_buf:
@@ -879,11 +884,13 @@ void ntrdma_rqp_deinit(struct ntrdma_rqp *rqp)
 
 void ntrdma_rqp_del(struct ntrdma_rqp *rqp)
 {
+	struct ntc_dma_chan *dma_chan = READ_ONCE(rqp->dma_chan);
+
 	rqp->state = IB_QPS_RESET;
 
-	ntrdma_vbell_del(&rqp->send_vbell);
-
-	tasklet_kill(&rqp->send_work);
+	ntrdma_tasklet_vbell_kill(&rqp->send_vbell);
+	if (dma_chan)
+		ntc_dma_flush(dma_chan);
 
 	ntrdma_debugfs_rqp_del(rqp);
 }
@@ -1760,6 +1767,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		goto err_qp;
 	}
 	/* FIXME: need to complete the send with error??? */
+
+	WRITE_ONCE(rqp->dma_chan, qp->dma_chan);
 
 	/* connected qp must be ready to receive */
 	rc = 0;

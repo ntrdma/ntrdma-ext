@@ -298,3 +298,36 @@ void ntrdma_napi_vbell_init(struct ntrdma_dev *dev,
 {
 	ntrdma_vbell_init(dev, vbell, idx, vbell_napi_cb, napi);
 }
+
+void ntrdma_tasklet_vbell_kill(struct ntrdma_vbell *vbell)
+{
+	struct tasklet_struct *tasklet = vbell->cb_ctx;
+
+	ntrdma_vbell_del(vbell);
+	tasklet_kill(tasklet);
+}
+
+void ntrdma_work_vbell_flush(struct ntrdma_vbell *vbell)
+{
+	struct work_struct *work = vbell->cb_ctx;
+
+	ntrdma_vbell_disable(vbell);
+	flush_work(work);
+	flush_work(work);
+}
+
+void ntrdma_work_vbell_kill(struct ntrdma_vbell *vbell)
+{
+	struct work_struct *work = vbell->cb_ctx;
+
+	ntrdma_vbell_del(vbell);
+	cancel_work_sync(work);
+}
+
+void ntrdma_napi_vbell_kill(struct ntrdma_vbell *vbell)
+{
+	struct napi_struct *napi = vbell->cb_ctx;
+
+	ntrdma_vbell_del(vbell);
+	netif_napi_del(napi);
+}

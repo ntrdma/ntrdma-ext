@@ -1372,6 +1372,8 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	init_completion(&qpcb.cb.cmds_done);
 	ntrdma_res_del(&qp->res, &qpcb.cb, &dev->qp_vec);
 
+	ntc_dma_flush(qp->dma_chan);
+
 	ntrdma_qp_put(qp);
 
 	return 0;
@@ -2102,6 +2104,8 @@ static int ntrdma_qp_file_release(struct inode *inode, struct file *filp)
 		put_page(qp->send_page);
 		qp->send_page = NULL;
 	}
+
+	ntc_dma_flush(qp->dma_chan);
 
 	ntrdma_qp_put(qp);
 
