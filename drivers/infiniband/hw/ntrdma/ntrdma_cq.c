@@ -84,11 +84,10 @@ void ntrdma_cq_vbell_kill(struct ntrdma_cq *cq)
 	{
 		cq->arm = 0;
 		cq->need_cue = false;
-		ntrdma_vbell_del(&cq->vbell);
 	}
 	spin_unlock_bh(&cq->arm_lock);
 
-	tasklet_kill(&cq->cue_work);
+	ntrdma_tasklet_vbell_kill(&cq->vbell);
 }
 
 void ntrdma_cq_arm(struct ntrdma_cq *cq)

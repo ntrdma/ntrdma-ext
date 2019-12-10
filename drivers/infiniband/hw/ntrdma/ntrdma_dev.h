@@ -239,12 +239,35 @@ inline u32 ntrdma_dev_cmd_recv_prod(struct ntrdma_dev *dev);
 			ntrdma_info(__dev, __fmt, ## __args);		\
 	} while (0)
 
+static inline void ntrdma_vbell_enable(struct ntrdma_vbell *vbell)
+{
+	struct ntrdma_dev *dev = vbell->dev;
+	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+
+	spin_lock_bh(&head->lock);
+	vbell->enabled = true;
+	spin_unlock_bh(&head->lock);
+}
+
+static inline void ntrdma_vbell_disable(struct ntrdma_vbell *vbell)
+{
+	struct ntrdma_dev *dev = vbell->dev;
+	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+
+	spin_lock_bh(&head->lock);
+	vbell->enabled = false;
+	spin_unlock_bh(&head->lock);
+}
+
 static inline void ntrdma_vbell_del(struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
 	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
 
 	spin_lock_bh(&head->lock);
+
+	vbell->enabled = false;
+	vbell->alive = false;
 
 	if (!vbell->arm)
 		goto unlock;
@@ -273,16 +296,16 @@ static inline int ntrdma_vbell_add(struct ntrdma_vbell *vbell)
 
 	spin_lock_bh(&head->lock);
 
-	if (unlikely(!head->enabled)) {
+	if (unlikely(!vbell->alive)) {
 		rc = -EINVAL;
-		ntrdma_err(dev, "vbell disabled");
+		ntrdma_err(dev, "this vbell is dead");
 		goto unlock;
 	}
 
 	if (vbell->arm)
 		goto unlock;
 
-	if (vbell->seq != head->seq) {
+	if ((vbell->seq != head->seq) && likely(vbell->enabled)) {
 		vbell->seq = head->seq;
 		rc = -EAGAIN;
 		goto unlock;
@@ -305,8 +328,8 @@ static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
 
 	spin_lock_bh(&head->lock);
 
-	if (unlikely(!head->enabled)) {
-		ntrdma_err(dev, "vbell disabled");
+	if (unlikely(!vbell->alive)) {
+		ntrdma_err(dev, "this vbell is dead");
 		rc = -EINVAL;
 		goto unlock;
 	}
@@ -336,8 +359,8 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 
 	spin_lock_bh(&head->lock);
 
-	if (unlikely(!head->enabled)) {
-		ntrdma_err(dev, "vbell disabled");
+	if (unlikely(!vbell->alive)) {
+		ntrdma_err(dev, "this vbell is dead");
 		rc = -EINVAL;
 		goto unlock;
 	}
@@ -358,13 +381,16 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 static inline void ntrdma_vbell_head_fire_locked(struct ntrdma_vbell_head *head)
 {
 	struct ntrdma_vbell *vbell;
+	struct ntrdma_vbell *vbell_tmp;
 
-	list_for_each_entry(vbell, &head->list, entry) {
+	list_for_each_entry_safe(vbell, vbell_tmp, &head->list, entry) {
+		if (unlikely(!vbell->enabled))
+			continue;
+		list_del(&vbell->entry);
 		vbell->arm = false;
+		vbell->seq = head->seq;
 		vbell->cb_fn(vbell->cb_ctx);
 	}
-
-	INIT_LIST_HEAD(&head->list);
 }
 
 static inline void ntrdma_vbell_head_fire(struct ntrdma_vbell_head *head,
