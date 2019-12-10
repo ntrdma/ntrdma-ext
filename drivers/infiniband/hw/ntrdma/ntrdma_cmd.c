@@ -178,8 +178,9 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 deinit:
 	WARN(dev->is_cmd_hello_done, "Deinit while cmd hello not undone");
 	WARN(dev->is_cmd_prep, "Deinit while cmd prep not unprep");
-	cancel_work_sync(&dev->cmd_send_work);
-	cancel_work_sync(&dev->cmd_recv_work);
+	ntrdma_work_vbell_kill(&dev->cmd_send_vbell);
+	ntrdma_work_vbell_kill(&dev->cmd_recv_vbell);
+	ntc_dma_flush(dev->dma_chan);
 	ntc_export_buf_free(&dev->cmd_send_rsp_buf);
 err_send_rsp_buf:
 	ntc_local_buf_free(&dev->cmd_send_buf, dev->ntc);
@@ -375,8 +376,11 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 
 	ntrdma_info(dev, "cmd quiesce starting ...");
 
-	cancel_work_sync(&dev->cmd_send_work);
-	cancel_work_sync(&dev->cmd_recv_work);
+	ntrdma_work_vbell_flush(&dev->cmd_send_vbell);
+	ntrdma_work_vbell_flush(&dev->cmd_recv_vbell);
+	ntc_dma_flush(dev->dma_chan);
+	ntrdma_vbell_enable(&dev->cmd_recv_vbell);
+	ntrdma_vbell_enable(&dev->cmd_send_vbell);
 
 	/* now lets cancel all posted cmds
 	 * (cmds sent but did not replied)

@@ -50,13 +50,15 @@ struct ntrdma_vbell {
 	void			*cb_ctx;
 	u32			seq;    /* Protected by head->lock. */
 	bool			arm;    /* Protected by head->lock. */
+	bool			enabled;/* Protected by head->lock. */
+	bool 			alive;	/* Protected by head->lock. */
 };
 
 struct ntrdma_vbell_head {
 	spinlock_t			lock;
-	struct list_head		list;
-	u32				seq;
-	bool 				enabled;
+	struct list_head		list;	/* Protected by lock. */
+	u32				seq;	/* Write protected by lock. */
+	bool 				enabled;/* Protected by lock. */
 };
 
 struct ntrdma_peer_vbell {
@@ -92,6 +94,8 @@ static inline void ntrdma_vbell_init(struct ntrdma_dev *dev,
 	vbell->cb_ctx = cb_ctx;
 	vbell->seq = ~0;
 	vbell->arm = false;
+	vbell->enabled = true;
+	vbell->alive = true;
 }
 
 void ntrdma_tasklet_vbell_init(struct ntrdma_dev *dev,
@@ -105,6 +109,11 @@ void ntrdma_work_vbell_init(struct ntrdma_dev *dev,
 void ntrdma_napi_vbell_init(struct ntrdma_dev *dev,
 			struct ntrdma_vbell *vbell, u32 idx,
 			struct napi_struct *napi);
+
+void ntrdma_tasklet_vbell_kill(struct ntrdma_vbell *vbell);
+void ntrdma_work_vbell_flush(struct ntrdma_vbell *vbell);
+void ntrdma_work_vbell_kill(struct ntrdma_vbell *vbell);
+void ntrdma_napi_vbell_kill(struct ntrdma_vbell *vbell);
 
 static inline void ntrdma_vbell_head_init(struct ntrdma_vbell_head *head)
 {

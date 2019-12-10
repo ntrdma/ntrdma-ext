@@ -195,7 +195,8 @@ deinit:
 	WARN(eth->is_hello_prep, "eth deinit without hello unprep");
 	unregister_netdev(net);
 err_register:
-	netif_napi_del(&eth->napi);
+	ntrdma_napi_vbell_kill(&eth->vbell);
+	ntc_dma_flush(eth->dma_chan);
 	ntc_export_buf_free(&eth->rx_cons_buf);
 err_rx_cons_buf:
 	ntc_export_buf_free(&eth->rx_cqe_buf);

@@ -294,6 +294,8 @@ struct ntrdma_rqp {
 	/* Ntrdma remote resource bookkeeping structure */
 	struct ntrdma_rres		rres;
 
+	struct ntc_dma_chan		*dma_chan;
+
 	/* Protectoin domain key */
 	u32				pd_key;
 	/* Queue pair access flags */
