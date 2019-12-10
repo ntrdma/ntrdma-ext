@@ -345,46 +345,7 @@ readiness for inclusion in the Linux kernel, perhaps as a driver in staging.
 
 ### Missing Functionality
 
-- Support for RDMA Connection Manager (rdmacm)
-  - may need to expose more of the Ethernet device to the rest of the driver
-- Support for ibverbs async events
-  - port up/down, qp failed, etc
 - Support for ibverbs memory registration work requests
-
-### Broken Functionality
-
-- Support module unloading and reloading
-  - fix the hang unloading the network device
-  - figure out how to kill the tcp recv kthread (tcp backend)
-  - check accuracy of resource reference counting
-
-### Unstable Functionality
-
-- Use coherent memory for ring index
-  - Store the ring index in a separate, coherent buffer, instead of the
-    dma-mapped ring buffer.  As is, a ring index *may* sneak ahead of ring data
-    in non-coherent memory systems.  The ring data should be synced *after*
-    obtaining the current ring index from the coherent buffer, to ensure that
-    the data in the ring is at least as recent as the ring index.  Please refer
-    to the Ethernet support code for the proper implementation.
-- Quiesce and reset port state transitions
-  - ensure that the port can reinitialize after a peer module reload or reboot.
-  - ensure no outstanding dma exiting the quiesce state
-  - ensure proper resource cleanup in the reset state
-  - auto-reset after timeout if the peer fails to return
-
-### Code Cleanup / Unacceptable Implementation
-
-- Throw away the NTB abstraction
-  - use the new Linux NTB interface directly
-- Throw away the DMA abstraction
-  - use the Linux dmaengine interface directly
-  - Maybe: minimal abstraction to allow swapping the dma or tcp back end
-- Throw away the operating system abstraction
-  - use Linux synchronization, printing, and debug primitives directly
-- The MSI message workaround might not be accepted upstream
-  - what can we do... because a hardware lockup is bad news
-  - NTRDMA only supports MSI, not MSI-X yet, and it's a hack
 
 ### Research Topics
 
@@ -392,7 +353,6 @@ readiness for inclusion in the Linux kernel, perhaps as a driver in staging.
 - NTRDMA as a fully-in-user-space driver
   - instantiate a user space IB device without /sys/class/infiniband entry
   - user space integration with non-kernel APIs
-  - simulation over tcp in user space, using sockets
   - user space NTB and DMA hardware drivers
 
 ## See Also
