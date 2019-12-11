@@ -52,14 +52,12 @@
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev);
 static void ntrdma_cmd_send_work_cb(struct work_struct *ws);
-static void ntrdma_cmd_send_vbell_cb(void *ctx);
 
 static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
 			union ntrdma_rsp *rsp);
 
 static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev);
 static void ntrdma_cmd_recv_work_cb(struct work_struct *ws);
-static void ntrdma_cmd_recv_vbell_cb(void *ctx);
 
 static inline bool ntrdma_cmd_done(struct ntrdma_dev *dev)
 {
@@ -127,8 +125,8 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	/* recv work */
 	mutex_init(&dev->cmd_recv_lock);
 
-	ntrdma_vbell_init(dev, &dev->cmd_recv_vbell, recv_vbell_idx,
-			ntrdma_cmd_recv_vbell_cb, dev);
+	ntrdma_work_vbell_init(dev, &dev->cmd_recv_vbell, recv_vbell_idx,
+			&dev->cmd_recv_work);
 
 	/* allocated in conf phase */
 	dev->cmd_recv_cap = 0;
@@ -147,8 +145,8 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	INIT_LIST_HEAD(&dev->cmd_pend_list);
 	INIT_LIST_HEAD(&dev->cmd_post_list);
 	mutex_init(&dev->cmd_send_lock);
-	ntrdma_vbell_init(dev, &dev->cmd_send_vbell, send_vbell_idx,
-			ntrdma_cmd_send_vbell_cb, dev);
+	ntrdma_work_vbell_init(dev, &dev->cmd_send_vbell, send_vbell_idx,
+			&dev->cmd_send_work);
 
 	/* allocate send buffers */
 	dev->cmd_send_cap = send_cap;
@@ -647,13 +645,6 @@ static void ntrdma_cmd_send_work_cb(struct work_struct *ws)
 	}
 
 	ntrdma_cmd_send_work(dev);
-}
-
-static void ntrdma_cmd_send_vbell_cb(void *ctx)
-{
-	struct ntrdma_dev *dev = ctx;
-
-	schedule_work(&dev->cmd_send_work);
 }
 
 static int ntrdma_cmd_recv_none(struct ntrdma_dev *dev,
@@ -1308,11 +1299,3 @@ static void ntrdma_cmd_recv_work_cb(struct work_struct *ws)
 
 	ntrdma_cmd_recv_work(dev);
 }
-
-static void ntrdma_cmd_recv_vbell_cb(void *ctx)
-{
-	struct ntrdma_dev *dev = ctx;
-
-	schedule_work(&dev->cmd_recv_work);
-}
-

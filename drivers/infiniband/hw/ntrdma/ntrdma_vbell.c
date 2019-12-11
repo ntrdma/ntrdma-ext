@@ -257,3 +257,44 @@ exit_unlock:
 	return rc;
 }
 
+static void vbell_tasklet_cb(void *cb_ctx)
+{
+	struct tasklet_struct *tasklet = cb_ctx;
+
+	tasklet_schedule(tasklet);
+}
+
+void ntrdma_tasklet_vbell_init(struct ntrdma_dev *dev,
+			struct ntrdma_vbell *vbell, u32 idx,
+			struct tasklet_struct *tasklet)
+{
+	ntrdma_vbell_init(dev, vbell, idx, vbell_tasklet_cb, tasklet);
+}
+
+static void vbell_work_cb(void *cb_ctx)
+{
+	struct work_struct *work = cb_ctx;
+
+	schedule_work(work);
+}
+
+void ntrdma_work_vbell_init(struct ntrdma_dev *dev,
+			struct ntrdma_vbell *vbell, u32 idx,
+			struct work_struct *work)
+{
+	ntrdma_vbell_init(dev, vbell, idx, vbell_work_cb, work);
+}
+
+static void vbell_napi_cb(void *cb_ctx)
+{
+	struct napi_struct *napi = cb_ctx;
+
+	napi_schedule(napi);
+}
+
+void ntrdma_napi_vbell_init(struct ntrdma_dev *dev,
+			struct ntrdma_vbell *vbell, u32 idx,
+			struct napi_struct *napi)
+{
+	ntrdma_vbell_init(dev, vbell, idx, vbell_napi_cb, napi);
+}
