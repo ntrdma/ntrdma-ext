@@ -52,6 +52,10 @@ MODULE_AUTHOR("Allen Hubbe");
 MODULE_DESCRIPTION("RDMA Driver for PCIe NTB and DMA");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(DRIVER_VERSION);
+#ifdef NTRDMA_GIT_HASH
+MODULE_INFO(githash, NTRDMA_GIT_HASH);
+#endif
+
 
 static ssize_t link_show(struct device *dev,
 					struct device_attribute *attr,
