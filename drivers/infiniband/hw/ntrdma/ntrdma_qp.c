@@ -99,7 +99,6 @@ static void ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp);
 
 static void ntrdma_rqp_work_cb(unsigned long ptrhld);
-static void ntrdma_rqp_vbell_cb(void *ctx);
 
 void ntrdma_free_qp(struct ntrdma_qp *qp);
 
@@ -843,8 +842,8 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 		goto err_vbell_idx;
 	}
 
-	ntrdma_vbell_init(dev, &rqp->send_vbell, send_vbell_idx,
-			ntrdma_rqp_vbell_cb, rqp);
+	ntrdma_tasklet_vbell_init(dev, &rqp->send_vbell, send_vbell_idx,
+				&rqp->send_work);
 
 	tasklet_init(&rqp->send_work,
 		     ntrdma_rqp_work_cb,
@@ -1992,13 +1991,6 @@ static void ntrdma_rqp_work_cb(unsigned long ptrhld)
 	struct ntrdma_rqp *rqp = of_ptrhld(ptrhld);
 
 	ntrdma_rqp_send_work(rqp);
-}
-
-static void ntrdma_rqp_vbell_cb(void *ctx)
-{
-	struct ntrdma_rqp *rqp = ctx;
-
-	tasklet_schedule(&rqp->send_work);
 }
 
 struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)

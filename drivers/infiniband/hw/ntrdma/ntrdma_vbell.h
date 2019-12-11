@@ -33,6 +33,9 @@
 #ifndef NTRDMA_VBELL_H
 #define NTRDMA_VBELL_H
 
+#include <linux/workqueue.h>
+#include <linux/netdevice.h>
+#include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/list.h>
 #include <linux/types.h>
@@ -90,6 +93,18 @@ static inline void ntrdma_vbell_init(struct ntrdma_dev *dev,
 	vbell->seq = ~0;
 	vbell->arm = false;
 }
+
+void ntrdma_tasklet_vbell_init(struct ntrdma_dev *dev,
+			struct ntrdma_vbell *vbell, u32 idx,
+			struct tasklet_struct *tasklet);
+
+void ntrdma_work_vbell_init(struct ntrdma_dev *dev,
+			struct ntrdma_vbell *vbell, u32 idx,
+			struct work_struct *work);
+
+void ntrdma_napi_vbell_init(struct ntrdma_dev *dev,
+			struct ntrdma_vbell *vbell, u32 idx,
+			struct napi_struct *napi);
 
 static inline void ntrdma_vbell_head_init(struct ntrdma_vbell_head *head)
 {

@@ -35,7 +35,6 @@
 #include "ntrdma_qp.h"
 
 static void ntrdma_cq_cue_work(unsigned long ptrhld);
-static void ntrdma_cq_vbell_cb(void *ctx);
 
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
@@ -58,7 +57,7 @@ void ntrdma_cq_vbell_init(struct ntrdma_cq *cq, int vbell_idx)
 	tasklet_init(&cq->cue_work,
 		     ntrdma_cq_cue_work,
 		     to_ptrhld(cq));
-	ntrdma_vbell_init(dev, &cq->vbell, vbell_idx, ntrdma_cq_vbell_cb, cq);
+	ntrdma_tasklet_vbell_init(dev, &cq->vbell, vbell_idx, &cq->cue_work);
 }
 
 void ntrdma_cq_arm_resync(struct ntrdma_dev *dev)
@@ -203,11 +202,4 @@ static void ntrdma_cq_cue_work(unsigned long ptrhld)
 	struct ntrdma_cq *cq = of_ptrhld(ptrhld);
 
 	ntrdma_cq_cue(cq);
-}
-
-static void ntrdma_cq_vbell_cb(void *ctx)
-{
-	struct ntrdma_cq *cq = ctx;
-
-	tasklet_schedule(&cq->cue_work);
 }
