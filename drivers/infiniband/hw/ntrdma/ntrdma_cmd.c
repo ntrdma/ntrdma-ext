@@ -430,8 +430,8 @@ void ntrdma_dev_cmd_enable(struct ntrdma_dev *dev)
 	mutex_unlock(&dev->cmd_recv_lock);
 	mutex_unlock(&dev->cmd_send_lock);
 
-	ntrdma_cmd_recv_work(dev);
-	ntrdma_cmd_send_work(dev);
+	ntrdma_vbell_trigger(&dev->cmd_recv_vbell);
+	ntrdma_vbell_trigger(&dev->cmd_send_vbell);
 }
 
 void ntrdma_dev_cmd_disable(struct ntrdma_dev *dev)
@@ -464,7 +464,7 @@ void ntrdma_dev_cmd_add(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
 
 void ntrdma_dev_cmd_submit(struct ntrdma_dev *dev)
 {
-	schedule_work(&dev->cmd_send_work);
+	ntrdma_vbell_trigger(&dev->cmd_send_vbell);
 }
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
@@ -633,7 +633,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			ntrdma_unrecoverable_err(dev);
 		else if (!ntrdma_cmd_done(dev)) {
 			if (more)
-				schedule_work(&dev->cmd_send_work);
+				ntrdma_vbell_trigger(&dev->cmd_send_vbell);
 			else
 				ntrdma_vbell_readd(&dev->cmd_send_vbell);
 		}
@@ -1122,7 +1122,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 		rqp->qp_key = cmd.dest_qp_key;
 		TRACE("RQP %d got qp_key %d\n", rqp->rres.key, rqp->qp_key);
 	}
-	tasklet_schedule(&rqp->send_work);
+	ntrdma_vbell_trigger(&rqp->send_vbell);
 	qp_according_to_rqp = rqp->qp_key;
 	ntrdma_rqp_put(rqp);
 
@@ -1290,7 +1290,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			}
 
 			ntc_req_submit(dev->dma_chan);
-			schedule_work(&dev->cmd_recv_work);
+			ntrdma_vbell_trigger(&dev->cmd_recv_vbell);
 		} else
 			ntrdma_vbell_readd(&dev->cmd_recv_vbell);
 
