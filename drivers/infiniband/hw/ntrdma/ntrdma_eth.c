@@ -41,7 +41,6 @@ static struct kmem_cache *skb_cb_slab;
 
 static const struct net_device_ops ntrdma_eth_net_ops;
 static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget);
-static void ntrdma_eth_vbell_cb(void *ctx);
 static void ntrdma_eth_dma_cb(void *ctx);
 static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
 static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
@@ -179,8 +178,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	spin_lock_init(&eth->rx_cmpl_lock);
 	spin_lock_init(&eth->tx_cons_lock);
 
-	ntrdma_vbell_init(dev, &eth->vbell, vbell_idx,
-			ntrdma_eth_vbell_cb, eth);
+	ntrdma_napi_vbell_init(dev, &eth->vbell, vbell_idx, &eth->napi);
 
 	netif_napi_add(net, &eth->napi, ntrdma_eth_napi_poll,
 		       NAPI_POLL_WEIGHT);
@@ -869,13 +867,6 @@ done:
 	}
 
 	return NETDEV_TX_OK;
-}
-
-static void ntrdma_eth_vbell_cb(void *ctx)
-{
-	struct ntrdma_eth *eth = ctx;
-
-	napi_schedule(&eth->napi);
 }
 
 static void ntrdma_eth_dma_cb(void *ctx)
