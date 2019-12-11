@@ -556,6 +556,7 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 {
 	struct dma_async_tx_descriptor *tx;
 	int flags = fence ? DMA_PREP_FENCE : 0;
+	static long warn_counter;
 
 	if (unlikely(!len))
 		return -EINVAL;
@@ -567,7 +568,11 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 		if (tx)
 			break;
 
-		pr_warn("DMA ring is full for len %#llx. taking status.", len);
+		warn_counter++;
+		if ((warn_counter & (warn_counter - 1)) == 0)
+			pr_warn("DMA ring is full (%ld times). taking status.",
+				warn_counter);
+
 		ntc_dma_chan_tx_status(chan);
 
 		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
