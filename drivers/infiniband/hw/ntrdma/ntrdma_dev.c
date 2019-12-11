@@ -92,7 +92,7 @@ static void ntrdma_ntc_signal(void *ctx, int vec)
 {
 	struct ntrdma_dev *dev = ctx;
 
-	ntrdma_dev_vbell_event(dev, vec);
+	tasklet_schedule(&dev->vbell_work[vec]);
 }
 
 static struct ntc_ctx_ops ntrdma_ntc_ctx_ops = {
