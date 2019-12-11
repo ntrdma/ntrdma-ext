@@ -373,8 +373,9 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev)
 	if (!dev->ping_run)
 		return;
 	tmp_jiffies = jiffies;
-	if (unlikely(tmp_jiffies > last_ping +
-			(5 * NTC_NTB_PING_PONG_PERIOD))) {
+	if (unlikely(last_ping &&
+			(tmp_jiffies > last_ping +
+				5 * NTC_NTB_PING_PONG_PERIOD))) {
 		dev_warn(&dev->ntc.dev, "****PINGPONG delayed by %u******\n",
 			jiffies_to_msecs(tmp_jiffies - last_ping));
 	}
