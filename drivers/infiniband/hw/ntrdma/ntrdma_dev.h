@@ -417,11 +417,4 @@ static inline void ntrdma_vbell_head_disable(struct ntrdma_vbell_head *head)
 	spin_unlock_bh(&head->lock);
 }
 
-static inline void ntrdma_dev_vbell_event(struct ntrdma_dev *dev, int vec)
-{
-	ntrdma_vdbg(dev, "vbell event on vec %d\n", vec);
-
-	tasklet_schedule(&dev->vbell_work[vec]);
-}
-
 #endif
