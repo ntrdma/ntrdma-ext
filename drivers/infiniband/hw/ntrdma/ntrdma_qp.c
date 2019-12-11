@@ -1904,7 +1904,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		}
 
 		if (pos == end) {
-			tasklet_schedule(&rqp->send_work);
+			ntrdma_vbell_trigger(&rqp->send_vbell);
 			break;
 		}
 	}
