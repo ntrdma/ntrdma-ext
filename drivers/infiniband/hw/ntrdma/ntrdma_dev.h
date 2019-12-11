@@ -346,6 +346,33 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 	return rc;
 }
 
+static inline int ntrdma_vbell_trigger(struct ntrdma_vbell *vbell)
+{
+	struct ntrdma_dev *dev = vbell->dev;
+	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	int rc = 0;
+
+	spin_lock_bh(&head->lock);
+
+	if (unlikely(!vbell->enabled)) {
+		ntrdma_err(dev, "this vbell disabled");
+		rc = -EINVAL;
+		goto unlock;
+	}
+
+	if (vbell->arm) {
+		list_del(&vbell->entry);
+		vbell->arm = false;
+	}
+	vbell->seq = head->seq;
+	vbell->cb_fn(vbell->cb_ctx);
+
+ unlock:
+	spin_unlock_bh(&head->lock);
+
+	return rc;
+}
+
 static inline void ntrdma_vbell_head_fire_locked(struct ntrdma_vbell_head *head)
 {
 	struct ntrdma_vbell *vbell;
