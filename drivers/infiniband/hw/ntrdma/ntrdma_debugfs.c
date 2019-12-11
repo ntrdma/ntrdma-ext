@@ -734,6 +734,7 @@ static int ntrdma_debugfs_mr_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "len %#llx\n", mr->len);
 	seq_printf(s, "access %#x\n", mr->access);
 	seq_printf(s, "sg_count %u\n", mr->sg_count);
+	seq_printf(s, "res_ref_count %u\n", kref_read(&mr->res.obj.kref));
 
 	for (i = 0; i < mr->sg_count; ++i)
 		seq_printf(s, "sg_list[%u] dma_addr %llx len %#llx\n", i,
@@ -831,6 +832,7 @@ static int ntrdma_debugfs_qp_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "peer_recv_wqe_buf.dma_addr %#llx\n",
 		qp->peer_recv_wqe_buf.dma_addr);
 	seq_printf(s, "peer_recv_prod_shift %#llx\n", qp->peer_recv_prod_shift);
+	seq_printf(s, "res_ref_count %u\n", kref_read(&qp->res.obj.kref));
 
 	return 0;
 }
