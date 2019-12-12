@@ -205,7 +205,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->send_poll.poll_start_and_get = ntrdma_qp_poll_send_start_and_get;
 	qp->send_poll.poll_put_and_done = ntrdma_qp_poll_send_put_and_done;
 
-	atomic_set(&qp->state, 0);
+	atomic_set(&qp->state, IB_QPS_RESET);
 	qp->recv_abort = false;
 	qp->recv_aborting = false;
 	qp->recv_abort_first = false;
