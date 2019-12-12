@@ -1748,11 +1748,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	/* quit if there is no send work to do */
 	if (start == end) {
-		rc = ntrdma_vbell_add(&rqp->send_vbell);
-		if (rc == -EAGAIN)
-			tasklet_schedule(&rqp->send_work);
+		ntrdma_vbell_readd(&rqp->send_vbell);
 		spin_unlock_bh(&rqp->send_cons_lock);
-		/* TODO: if not EAGAIN ??? */
 		return;
 	}
 
