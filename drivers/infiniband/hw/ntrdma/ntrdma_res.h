@@ -115,7 +115,9 @@ void ntrdma_res_put(struct ntrdma_res *res,
 /* Remote rdma resource */
 struct ntrdma_rres {
 	/* The resource is an ntrdma object */
-	struct ntrdma_obj		obj;
+	struct ntrdma_obj	obj; /* Entry protected by dev->rres_lock. */
+
+	bool			in_rres_list; /* Protected by dev->rres_lock. */
 
 	/* The vector to which this remote resource is added */
 	struct ntrdma_vec		*vec;

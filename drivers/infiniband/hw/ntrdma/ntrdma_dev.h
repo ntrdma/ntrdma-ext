@@ -174,7 +174,7 @@ struct ntrdma_dev {
 
 	int				res_enable;
 	struct mutex			res_lock;
-	struct mutex			rres_lock;
+	struct mutex			rres_lock; /* Protects rres_list. */
 
 	/* local-only resources */
 
@@ -191,7 +191,7 @@ struct ntrdma_dev {
 
 	/* rdma remote resources */
 
-	struct list_head		rres_list;
+	struct list_head		rres_list; /* Protected by rres_lock. */
 	struct ntrdma_vec		rmr_vec;
 	struct ntrdma_vec		rqp_vec;
 
