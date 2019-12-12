@@ -486,11 +486,11 @@ static inline void ntc_dma_chan_tx_status(struct ntc_dma_chan *chan)
 {
 	struct dma_tx_state txstate;
 
-	chan->submit_counter = 0;
+	WRITE_ONCE(chan->submit_counter, 0);
 	txstate.used = 0;
-	dmaengine_tx_status(chan->chan, chan->submit_cookie,
+	dmaengine_tx_status(chan->chan, READ_ONCE(chan->submit_cookie),
 			&txstate);
-	chan->submit_cookie = txstate.used;
+	WRITE_ONCE(chan->submit_cookie, txstate.used);
 }
 
 /**
@@ -511,10 +511,16 @@ static inline void ntc_dma_chan_tx_status(struct ntc_dma_chan *chan)
  */
 static inline void ntc_req_submit(struct ntc_dma_chan *chan)
 {
+	u32 submit_counter;
+
 	dma_async_issue_pending(chan->chan);
 
-	if (++chan->submit_counter >= 0xff)
+	submit_counter = READ_ONCE(chan->submit_counter) + 1;
+
+	if (submit_counter >= 0xff)
 		ntc_dma_chan_tx_status(chan);
+	else
+		WRITE_ONCE(chan->submit_counter, submit_counter);
 }
 
 /**
@@ -555,6 +561,7 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 				void *cb_ctx)
 {
 	struct dma_async_tx_descriptor *tx;
+	dma_cookie_t last_cookie;
 	int flags = fence ? DMA_PREP_FENCE : 0;
 	static long warn_counter;
 
@@ -599,8 +606,10 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 	this_cpu_add(chan->chan->local->bytes_transferred, len);
 	this_cpu_inc(chan->chan->local->memcpy_count);
 
-	if (dma_submit_error(chan->last_cookie = dmaengine_submit(tx)))
+	if (dma_submit_error(last_cookie = dmaengine_submit(tx)))
 		return -EIO;
+
+	WRITE_ONCE(chan->last_cookie, last_cookie);
 
 	return 0;
 }
