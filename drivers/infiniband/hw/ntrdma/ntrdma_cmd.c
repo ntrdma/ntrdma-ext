@@ -619,7 +619,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 					rc);
 				goto dma_err;
 			}
-			ntc_req_submit(dev->ntc, dev->dma_chan);
+			ntc_req_submit(dev->dma_chan);
 
 			TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
 				(pos - start), start,
@@ -1285,7 +1285,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 				goto dma_err;
 			}
 
-			ntc_req_submit(dev->ntc, dev->dma_chan);
+			ntc_req_submit(dev->dma_chan);
 			schedule_work(&dev->cmd_recv_work);
 		} else if (ntrdma_vbell_add(&dev->cmd_recv_vbell) == -EAGAIN)
 			schedule_work(&dev->cmd_recv_work);

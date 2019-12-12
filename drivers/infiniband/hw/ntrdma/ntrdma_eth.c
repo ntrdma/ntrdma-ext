@@ -550,7 +550,7 @@ more:
 			ntrdma_err(dev, "ntc_req_signal failed. rc=%d", rc);
 			goto dma_err;
 		}
-		ntc_req_submit(dev->ntc, eth->dma_chan);
+		ntc_req_submit(eth->dma_chan);
 
 	 dma_err:
 		if (unlikely(rc < 0))
@@ -842,7 +842,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 			goto err_memcpy;
 		}
 
-		ntc_req_submit(dev->ntc, eth->dma_chan);
+		ntc_req_submit(eth->dma_chan);
 	}
 	goto done;
 
