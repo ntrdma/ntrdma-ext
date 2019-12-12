@@ -508,17 +508,13 @@ static inline void ntc_dma_chan_tx_status(struct ntc_dma_chan *chan)
  * to submitting the request.  The submit function exists to provide a portable
  * interface to use the varying underlying channel implementations most
  * efficiently.
- *
- * Return: Zero on success, othewise an error number.
  */
-static inline int ntc_req_submit(struct ntc_dev *ntc, struct ntc_dma_chan *chan)
+static inline void ntc_req_submit(struct ntc_dma_chan *chan)
 {
 	dma_async_issue_pending(chan->chan);
 
 	if (++chan->submit_counter >= 0xff)
 		ntc_dma_chan_tx_status(chan);
-
-	return 0;
 }
 
 /**
