@@ -262,11 +262,7 @@ void ntrdma_dev_rres_reset(struct ntrdma_dev *dev)
 		list_for_each_entry_safe_reverse(rres, rres_next,
 						 &dev->rres_list,
 						 obj.dev_entry) {
-			write_lock_bh(&rres->vec->lock);
-			if (rres->key < rres->vec->cap)
-				rres->vec->look[rres->key] = NULL;
-			write_unlock_bh(&rres->vec->lock);
-
+			ntrdma_rres_remove_unsafe(rres);
 			rres->free(rres);
 		}
 		INIT_LIST_HEAD(&dev->rres_list);
@@ -408,6 +404,7 @@ int ntrdma_rres_add(struct ntrdma_rres *rres)
 		return rc;
 
 	mutex_lock(&dev->rres_lock);
+	rres->in_rres_list = true;
 	list_add_tail(&rres->obj.dev_entry, &dev->rres_list);
 	mutex_unlock(&dev->rres_lock);
 
@@ -416,7 +413,10 @@ int ntrdma_rres_add(struct ntrdma_rres *rres)
 
 void ntrdma_rres_remove_unsafe(struct ntrdma_rres *rres)
 {
-	list_del(&rres->obj.dev_entry);
+	if (rres->in_rres_list) {
+		rres->in_rres_list = false;
+		list_del(&rres->obj.dev_entry);
+	}
 
 	write_lock_bh(&rres->vec->lock);
 	if (rres->key < rres->vec->cap)

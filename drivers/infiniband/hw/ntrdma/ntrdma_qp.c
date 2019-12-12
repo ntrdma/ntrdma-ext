@@ -747,7 +747,6 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 	struct ntrdma_rqp *rqp = ntrdma_rres_rqp(rres);
 
 	ntrdma_rqp_del(rqp);
-	ntrdma_rres_remove_unsafe(&rqp->rres);
 	ntrdma_rqp_deinit(rqp);
 	ntrdma_free_rqp(rqp);
 }
