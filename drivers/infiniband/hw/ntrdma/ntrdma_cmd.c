@@ -631,10 +631,12 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 	 dma_err:
 		if (unlikely(rc < 0))
 			ntrdma_unrecoverable_err(dev);
-		else if (!ntrdma_cmd_done(dev) &&
-			(more || (ntrdma_vbell_add(&dev->cmd_send_vbell)
-				== -EAGAIN)))
-			schedule_work(&dev->cmd_send_work);
+		else if (!ntrdma_cmd_done(dev)) {
+			if (more)
+				schedule_work(&dev->cmd_send_work);
+			else
+				ntrdma_vbell_readd(&dev->cmd_send_vbell);
+		}
 	}
 	mutex_unlock(&dev->cmd_send_lock);
 }
@@ -1289,8 +1291,8 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 			ntc_req_submit(dev->dma_chan);
 			schedule_work(&dev->cmd_recv_work);
-		} else if (ntrdma_vbell_add(&dev->cmd_recv_vbell) == -EAGAIN)
-			schedule_work(&dev->cmd_recv_work);
+		} else
+			ntrdma_vbell_readd(&dev->cmd_recv_vbell);
 
 	 dma_err:
 		if (unlikely(rc < 0))
