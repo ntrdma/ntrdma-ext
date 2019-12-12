@@ -257,10 +257,6 @@ static inline void ntrdma_qp_send_post_unlock(struct ntrdma_qp *qp)
 
 bool ntrdma_qp_send_work(struct ntrdma_qp *qp);
 
-static inline int ntrdma_qp_submit_dma(struct ntrdma_qp *qp) {
-	return ntc_req_submit(ntrdma_qp_dev(qp)->ntc, qp->dma_chan);
-}
-
 static inline bool ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
 					u32 *pos, u32 *end, u32 *base)
 {

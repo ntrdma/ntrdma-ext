@@ -1410,7 +1410,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	}
 
 	/* submit the request */
-	ntc_req_submit(dev->ntc, qp->dma_chan);
+	ntc_req_submit(qp->dma_chan);
 
 out:
 	if (unlikely(rc < 0))
@@ -1974,7 +1974,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	}
 	/* submit the request */
 	/* TODO: return cpde? */
-	ntc_req_submit(dev->ntc, qp->dma_chan);
+	ntc_req_submit(qp->dma_chan);
 
 	/* release lock for state change or consuming later sends */
 	spin_unlock_bh(&rqp->send_cons_lock);
