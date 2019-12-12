@@ -1659,17 +1659,17 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 	ntrdma_qp_send_post_lock(qp);
 
-	if (ntrdma_qp_is_send_ready(qp))
+	if (likely(ntrdma_qp_is_send_ready(qp))) {
 		rc = ntrdma_post_send_locked(qp, ibwr, bad,
 					&had_immediate_work,
 					&has_deferred_work);
-	else {
+		ntrdma_qp_additional_work(qp, has_deferred_work,
+					had_immediate_work);
+	} else {
 		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
 			atomic_read(&qp->state));
 		rc = -EINVAL;
 	}
-
-	ntrdma_qp_additional_work(qp, has_deferred_work, had_immediate_work);
 
 	ntrdma_qp_send_post_unlock(qp);
 
@@ -2223,17 +2223,17 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 
 	ntrdma_qp_send_post_lock(qp);
 
-	if (likely(ntrdma_qp_is_send_ready(qp)))
+	if (likely(ntrdma_qp_is_send_ready(qp))) {
 		rc = ntrdma_qp_process_send_ioctl_locked(qp, _uptr,
 							&had_immediate_work,
 							&has_deferred_work);
-	else {
+		ntrdma_qp_additional_work(qp, has_deferred_work,
+					had_immediate_work);
+	} else {
 		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
 			atomic_read(&qp->state));
 		rc = -EINVAL;
 	}
-
-	ntrdma_qp_additional_work(qp, has_deferred_work, had_immediate_work);
 
 	ntrdma_qp_send_post_unlock(qp);
 

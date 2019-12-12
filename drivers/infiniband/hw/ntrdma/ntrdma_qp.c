@@ -1477,12 +1477,6 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* verify the qp state and lock for producing sends */
 	spin_lock_bh(&qp->send_prod_lock);
-	if (atomic_read(&qp->state) != IB_QPS_RTS) {
-		ntrdma_qp_info(qp, "qp %d state %d will retry", qp->res.key,
-			atomic_read(&qp->state));
-		reschedule = true;
-		goto done;
-	}
 
 	/* get the next producing range in the send ring */
 	ntrdma_qp_send_prod_get(qp, &start, &end, &base);
@@ -2039,7 +2033,7 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
 
 		spin_lock_bh(&qp->send_prod_lock);
 
-		if (atomic_read(&qp->state) != IB_QPS_RTS)
+		if (!ntrdma_qp_is_send_ready(qp))
 			ntrdma_qp_info(qp, "qp %d state %d",
 				qp->res.key, atomic_read(&qp->state));
 		else {
