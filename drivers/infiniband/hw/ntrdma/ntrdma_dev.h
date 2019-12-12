@@ -288,38 +288,6 @@ static inline void ntrdma_vbell_clear(struct ntrdma_vbell *vbell)
 	spin_unlock_bh(&head->lock);
 }
 
-static inline int ntrdma_vbell_add(struct ntrdma_vbell *vbell)
-{
-	struct ntrdma_dev *dev = vbell->dev;
-	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
-	int rc = 0;
-
-	spin_lock_bh(&head->lock);
-
-	if (unlikely(!vbell->alive)) {
-		rc = -EINVAL;
-		ntrdma_err(dev, "this vbell is dead");
-		goto unlock;
-	}
-
-	if (vbell->arm)
-		goto unlock;
-
-	if ((vbell->seq != head->seq) && likely(vbell->enabled)) {
-		vbell->seq = head->seq;
-		rc = -EAGAIN;
-		goto unlock;
-	}
-
-	list_add_tail(&vbell->entry, &head->list);
-	vbell->arm = true;
-
- unlock:
-	spin_unlock_bh(&head->lock);
-
-	return rc;
-}
-
 static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;

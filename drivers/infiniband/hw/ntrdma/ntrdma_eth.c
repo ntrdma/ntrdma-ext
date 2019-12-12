@@ -664,8 +664,7 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 
 	if (count < budget) {
 		napi_complete(&eth->napi);
-		if (ntrdma_vbell_add(&eth->vbell) == -EAGAIN)
-			napi_reschedule(&eth->napi);
+		ntrdma_vbell_readd(&eth->vbell);
 	}
 
 	ntrdma_eth_rx_fill(eth);
