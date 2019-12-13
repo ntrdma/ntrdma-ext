@@ -37,6 +37,8 @@
 
 static void ntrdma_dev_vbell_work_cb(unsigned long ptrhld);
 
+static struct workqueue_struct *ntrdma_workq;
+
 int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 			  u32 vbell_count, u32 vbell_start)
 {
@@ -275,7 +277,7 @@ static void vbell_work_cb(void *cb_ctx)
 {
 	struct work_struct *work = cb_ctx;
 
-	schedule_work(work);
+	queue_work(ntrdma_workq, work);
 }
 
 void ntrdma_work_vbell_init(struct ntrdma_dev *dev,
@@ -321,7 +323,8 @@ void ntrdma_work_vbell_kill(struct ntrdma_vbell *vbell)
 	struct work_struct *work = vbell->cb_ctx;
 
 	ntrdma_vbell_del(vbell);
-	cancel_work_sync(work);
+	flush_work(work);
+	flush_work(work);
 }
 
 void ntrdma_napi_vbell_kill(struct ntrdma_vbell *vbell)
@@ -330,4 +333,23 @@ void ntrdma_napi_vbell_kill(struct ntrdma_vbell *vbell)
 
 	ntrdma_vbell_del(vbell);
 	netif_napi_del(napi);
+}
+
+int __init ntrdma_vbell_module_init(void)
+{
+	ntrdma_workq =
+		alloc_workqueue("ntrdma-vbell", WQ_UNBOUND | WQ_MEM_RECLAIM |
+				WQ_SYSFS, 0);
+	if (!ntrdma_workq)
+		return -ENOMEM;
+
+	return 0;
+}
+
+void ntrdma_vbell_module_deinit(void)
+{
+	if (ntrdma_workq) {
+		destroy_workqueue(ntrdma_workq);
+		ntrdma_workq = NULL;
+	}
 }

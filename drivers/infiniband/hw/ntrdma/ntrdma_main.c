@@ -176,6 +176,7 @@ static void ntrdma_deinit(void)
 	ntrdma_eth_module_deinit();
 	ntrdma_ib_module_deinit();
 	ntrdma_qp_module_deinit();
+	ntrdma_vbell_module_deinit();
 }
 
 static int __init ntrdma_init(void)
@@ -183,6 +184,10 @@ static int __init ntrdma_init(void)
 	int rc;
 
 	pr_info("NTRDMA module init\n");
+
+	rc = ntrdma_vbell_module_init();
+	if (rc < 0)
+		goto err;
 
 	rc = ntrdma_qp_module_init();
 	if (rc < 0)

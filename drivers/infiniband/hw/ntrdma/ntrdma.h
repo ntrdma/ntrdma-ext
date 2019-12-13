@@ -76,6 +76,9 @@ struct ntrdma_vbell_head;
 union ntrdma_cmd;
 union ntrdma_rsp;
 
+int __init ntrdma_vbell_module_init(void);
+void ntrdma_vbell_module_deinit(void);
+
 int __init ntrdma_qp_module_init(void);
 void ntrdma_qp_module_deinit(void);
 
