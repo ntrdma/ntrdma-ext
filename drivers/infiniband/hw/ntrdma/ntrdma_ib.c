@@ -1825,7 +1825,7 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 	}
 
 	/* release lock for state change or posting later recvs */
-	if (dev->res_enable)
+	if (dev->res_enable) /* WHY?? */
 		ntrdma_qp_recv_work(qp);
 
 out:

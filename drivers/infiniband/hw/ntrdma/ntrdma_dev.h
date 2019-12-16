@@ -172,7 +172,7 @@ struct ntrdma_dev {
 
 	/* rdma resource synchronization state */
 
-	int				res_enable;
+	int				res_enable; /* Protected by res_lock. */
 	struct mutex			res_lock;
 	struct mutex			rres_lock; /* Protects rres_list. */
 

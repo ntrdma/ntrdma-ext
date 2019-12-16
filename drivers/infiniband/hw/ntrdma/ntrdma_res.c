@@ -120,8 +120,13 @@ void ntrdma_dev_res_deinit(struct ntrdma_dev *dev)
 	ntrdma_kvec_deinit(&dev->mr_vec);
 }
 
-static inline bool ntrdma_cmd_cb_unlink(struct ntrdma_dev *dev,
-					struct ntrdma_cmd_cb *cb)
+inline int ntrdma_dev_cmd_submit(struct ntrdma_dev *dev)
+{
+	return ntrdma_vbell_trigger(&dev->cmd_send_vbell);
+}
+
+inline bool ntrdma_cmd_cb_unlink(struct ntrdma_dev *dev,
+				struct ntrdma_cmd_cb *cb)
 {
 	bool result;
 
@@ -132,6 +137,7 @@ static inline bool ntrdma_cmd_cb_unlink(struct ntrdma_dev *dev,
 		result = true;
 	} else
 		result = false;
+	complete_all(&cb->cmds_done);
 	mutex_unlock(&dev->cmd_send_lock);
 
 	return result;
@@ -174,6 +180,7 @@ int ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 	struct ntrdma_qp *qp;
 	struct ntrdma_mr *mr;
 	unsigned long timeout = CMD_TIMEOUT_MSEC;
+	bool need_unlink;
 	int rc = 0;
 	int r;
 
@@ -192,7 +199,11 @@ int ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 		ntrdma_qp_enable(qp);
 	}
 
-	ntrdma_dev_cmd_submit(dev);
+	if (ntrdma_dev_cmd_submit(dev) < 0) {
+		need_unlink = true;
+		goto unlock;
+	}
+	need_unlink = false;
 
 	list_for_each_entry(mr, &dev->mr_list, res.obj.dev_entry) {
 		r = ntrdma_cmd_cb_wait_out(dev, &mr->enable_mrcb.cb, &timeout);
@@ -208,7 +219,16 @@ int ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 	else
 		ntrdma_err(dev, "ntrdma cmd timeout in %s", __func__);
 
+ unlock:
 	mutex_unlock(&dev->res_lock);
+
+	if (need_unlink) {
+		list_for_each_entry(mr, &dev->mr_list, res.obj.dev_entry)
+			ntrdma_cmd_cb_unlink(dev, &mr->enable_mrcb.cb);
+
+		list_for_each_entry(qp, &dev->qp_list, res.obj.dev_entry)
+			ntrdma_cmd_cb_unlink(dev, &mr->enable_mrcb.cb);
+	}
 
 	return rc;
 }
@@ -307,7 +327,8 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 		struct list_head *res_list, struct ntrdma_kvec *res_vec)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
-	int rc;
+	bool need_unlink;
+	int rc = 0;
 
 	ntrdma_vdbg(dev, "resource obtained\n");
 
@@ -325,22 +346,30 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 		if (dev->res_enable) {
 			ntrdma_vdbg(dev, "resource commands initiated\n");
 			res->enable(res, cb);
-			ntrdma_dev_cmd_submit(dev);
+			need_unlink = true;
 		} else {
 			ntrdma_vdbg(dev, "no commands\n");
-			complete_all(&cb->cmds_done);
+			need_unlink = false;
 		}
 	}
 	mutex_unlock(&dev->res_lock);
 
-	ntrdma_vdbg(dev, "wait for commands\n");
-	rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+	if (need_unlink) {
+		if (ntrdma_dev_cmd_submit(dev) >= 0) {
+			ntrdma_vdbg(dev, "wait for commands\n");
+			rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+			ntrdma_vdbg(dev, "done waiting\n");
+		} else {
+			ntrdma_vdbg(dev, "won't submit commands\n");
+			ntrdma_cmd_cb_unlink(dev, cb);
+		}
+	} else
+		complete_all(&cb->cmds_done);
+
 	ntrdma_res_unlock(res);
 
 	if (rc)
 		ntrdma_unrecoverable_err(dev);
-
-	ntrdma_vdbg(dev, "done waiting\n");
 
 	return rc;
 }
@@ -349,16 +378,19 @@ void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 		struct ntrdma_kvec *res_vec)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
-	int rc;
+	bool need_unlink;
+	int rc = 0;
 
 	ntrdma_res_lock(res);
 	mutex_lock(&dev->res_lock);
 	{
 		if (dev->res_enable) {
+			ntrdma_vdbg(dev, "resource commands initiated\n");
 			res->disable(res, cb);
-			ntrdma_dev_cmd_submit(dev);
+			need_unlink = true;
 		} else {
-			complete_all(&cb->cmds_done);
+			ntrdma_vdbg(dev, "no commands\n");
+			need_unlink = false;
 		}
 
 		list_del(&res->obj.dev_entry);
@@ -369,7 +401,18 @@ void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	}
 	mutex_unlock(&dev->res_lock);
 
-	rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+	if (need_unlink) {
+		if (ntrdma_dev_cmd_submit(dev) >= 0) {
+			ntrdma_vdbg(dev, "wait for commands\n");
+			rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+			ntrdma_vdbg(dev, "done waiting\n");
+		} else {
+			ntrdma_vdbg(dev, "won't submit commands\n");
+			ntrdma_cmd_cb_unlink(dev, cb);
+		}
+	} else
+		complete_all(&cb->cmds_done);
+
 	ntrdma_res_unlock(res);
 
 	if (rc)
