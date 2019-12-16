@@ -629,7 +629,9 @@ static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
 
 	qpcb = container_of(cb, struct ntrdma_qp_cmd_cb, cb);
 
-	WARN(qp->ibqp.qp_type == IB_QPT_GSI, "try to delete qp type IB_QPT_GSI");
+	if (unlikely(qp->ibqp.qp_type == IB_QPT_GSI))
+		ntrdma_info(dev, "deleting QP type IB_QPT_GSI\n");
+
 	qpcb->cb.cmd_prep = ntrdma_qp_disable_prep;
 	qpcb->cb.rsp_cmpl = ntrdma_qp_disable_cmpl;
 	qpcb->qp = qp;

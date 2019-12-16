@@ -1342,7 +1342,9 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 		qp->rqp_key = ibqp->qp_type;
 
 	rc = ntrdma_qp_modify(qp);
-	WARN(rc, "ntrdma_qp_modify: failed rc = %d", rc);
+
+	if (unlikely(rc))
+		ntrdma_err(dev, "ntrdma_qp_modify: failed rc = %d", rc);
 
 unlock_exit:
 	ntrdma_res_unlock(&qp->res);
