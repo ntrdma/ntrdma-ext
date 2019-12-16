@@ -1249,12 +1249,12 @@ static void ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
 	int opt;
 
 	if (qp->recv_abort) {
+		if (qp->recv_abort_first)
+			ntrdma_info(dev, "fail completion QP %d", qp->res.key);
 		opt = qp->recv_abort_first ? NTRDMA_WC_ERR_LOC_PORT :
 				NTRDMA_WC_ERR_ABORTED;
 		ntrdma_recv_fail(outcqe, wqe, opt);
 		qp->recv_abort_first = false;
-		ntrdma_info(dev, "fail completion opt %d QP %d\n",
-				opt, qp->res.key);
 		return;
 	}
 	if (wqe->op_status) {
@@ -1322,12 +1322,12 @@ static void ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 	int opt;
 
 	if (qp->send_abort) {
+		if (qp->send_abort_first)
+			ntrdma_info(dev, "fail completion QP %d", qp->res.key);
 		opt = qp->send_abort_first ? NTRDMA_WC_ERR_LOC_PORT :
 				NTRDMA_WC_ERR_ABORTED;
 		ntrdma_send_fail(outcqe, wqe, opt);
 		qp->send_abort_first = false;
-		ntrdma_info(dev, "fail completion opt %d QP %d\n",
-				opt, qp->res.key);
 		return;
 	}
 
