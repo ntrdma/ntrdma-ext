@@ -220,6 +220,9 @@ void ntrdma_dev_cmd_deinit(struct ntrdma_dev *dev);
 void ntrdma_dev_cmd_add(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb);
 void ntrdma_dev_cmd_add_unsafe(struct ntrdma_dev *dev,
 		struct ntrdma_cmd_cb *cb);
-void ntrdma_dev_cmd_submit(struct ntrdma_dev *dev);
+inline int ntrdma_dev_cmd_submit(struct ntrdma_dev *dev);
+
+inline bool ntrdma_cmd_cb_unlink(struct ntrdma_dev *dev,
+				struct ntrdma_cmd_cb *cb);
 
 #endif

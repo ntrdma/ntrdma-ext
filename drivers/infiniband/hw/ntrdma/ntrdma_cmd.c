@@ -462,11 +462,6 @@ void ntrdma_dev_cmd_add(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
 	mutex_unlock(&dev->cmd_send_lock);
 }
 
-void ntrdma_dev_cmd_submit(struct ntrdma_dev *dev)
-{
-	ntrdma_vbell_trigger(&dev->cmd_send_vbell);
-}
-
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 {
 	struct ntrdma_cmd_cb *cb;

@@ -408,18 +408,23 @@ int ntrdma_qp_modify(struct ntrdma_qp *qp)
 		.qp = qp,
 	};
 
-	if (!dev->res_enable)
-		return 0;
-
 	init_completion(&qpcb.cb.cmds_done);
 
 	mutex_lock(&dev->res_lock);
+
+	if (!dev->res_enable) {
+		mutex_unlock(&dev->res_lock);
+		return 0;
+	}
 
 	ntrdma_dev_cmd_add(dev, &qpcb.cb);
 
 	mutex_unlock(&dev->res_lock);
 
-	ntrdma_dev_cmd_submit(dev);
+	if (ntrdma_dev_cmd_submit(dev) < 0) {
+		ntrdma_cmd_cb_unlink(dev, &qpcb.cb);
+		return 0;
+	}
 
 	return ntrdma_res_wait_cmds(dev, &qpcb.cb, qp->res.timeout);
 }
