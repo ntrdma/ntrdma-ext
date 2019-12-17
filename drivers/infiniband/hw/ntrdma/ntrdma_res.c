@@ -217,7 +217,7 @@ void ntrdma_dev_res_disable(struct ntrdma_dev *dev)
 {
 	struct ntrdma_qp *qp;
 
-	pr_info("res disable starting ...\n");
+	ntrdma_info(dev, "res disable starting ...");
 
 	mutex_lock(&dev->res_lock);
 	dev->res_enable = 0;
@@ -227,7 +227,7 @@ void ntrdma_dev_res_disable(struct ntrdma_dev *dev)
 	}
 	mutex_unlock(&dev->res_lock);
 
-	pr_info("res disable done\n");
+	ntrdma_info(dev, "res disable done");
 }
 
 void ntrdma_dev_res_reset(struct ntrdma_dev *dev)
