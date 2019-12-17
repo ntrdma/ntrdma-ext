@@ -85,7 +85,7 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 		/* dma_len accumulates the length of the contiguous range */
 		dma_len = sg_dma_len(sg);
 
-		pr_info("ntc_umem_sgl: dma_addr %#llx access %d",
+		TRACE("ntc_umem_sgl: dma_addr %#llx access %d",
 			dma_addr, mr_access_flags);
 
 		for (; i + 1 < ib_umem->sg_head.nents; ++i) {
@@ -115,7 +115,7 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 			total_len = ib_umem->length;
 		}
 
-		pr_info("ntc_umem_sgl: dma_len %#llx", (u64)dma_len);
+		TRACE("ntc_umem_sgl: dma_len %#llx", (u64)dma_len);
 		if (sgl && (n < count)) {
 			if (ntc_mr_buf_map_dma(&sgl[n], ntc, dma_len,
 						dma_addr, mr_access_flags) < 0)
