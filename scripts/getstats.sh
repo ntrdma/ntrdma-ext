@@ -10,14 +10,14 @@ echo "dma channels stats (memcpy ops per channel)"
 cat /sys/class/dma/dma*chan*/memcpy_count | nl -w2 -s':  '| awk '$0="dma channel"$0'
 echo "======================================================================"
 
-CPU_CYC_PER_USEC=$(dmesg | grep tsc | grep ca | grep -Eo '[+-]?[0-9]+([.][0-9]+)?' | sed -n '2p')
+export CPU_CYC_PER_USEC=$(dmesg | grep tsc | grep ca | grep -Eo '[+-]?[0-9]+([.][0-9]+)?' | sed -n '2p')
 
-if [ $CPU_CYC_PER_USEC == 0 ]; then
+if [ !$CPU_CYC_PER_USEC ]; then
 	echo "NOTE: dmesg was probably wrapped around, setting to default freq $CPU_CYC_PER_USEC"
-	CPU_CYC_PER_USEC = 2200
+	export CPU_CYC_PER_USEC=2200
 fi
 
-echo "cpu freq is: $CPU_CYC_PER_USEC
+echo "cpu freq is: $CPU_CYC_PER_USEC"
 
 USEC_IN_SEC=1000^2
 
@@ -44,15 +44,22 @@ do
         cqes2=$(cat /sys/kernel/debug/ntrdma/ntrdma_0/perf |  grep cqes_polled | grep -o -E '[0-9]+' | awk '{s+=$1} END {printf "%.0f\n", s}')
 
 	c=`expr $b - $a`       
-        if [ ${c} -ne 0 ]; then bw=$(awk "BEGIN {printf \"%.3f\",${c}/1024^3}"); echo "bw: $bw GB/s ($c bytes/sec)"; fi
+        if [ ${c} -ne 0 ] 
+		then 
+		bw=$(awk "BEGIN {printf \"%.3f\",${c}/1024^3}")
+		echo "bw: ${bw} GB/s ${c} bytes/sec" 
+	fi
         
         cycles=`expr $cycles2 - $cycles1`
         cqes=`expr $cqes2 - $cqes1`
 
-        if [ ${cqes} -ne 0 ]; then lat=$(awk "BEGIN {printf \"%.3f\",${cycles}*${SHIFT_SAVE_BITS}/($cqes*$CPU_CYC_PER_USEC)}"); echo "latency: $lat usec"; fi
+        if [[ ${cqes} -ne 0 && ${cycles} -ne 0 ]]; then lat=$(awk "BEGIN {printf \"%.3f\",${cycles}*${SHIFT_SAVE_BITS}/($cqes*$CPU_CYC_PER_USEC)}"); echo "latency: $lat usec"; fi
 	
 	diff=`expr $poll_next - $poll`
-	if [[ ${diff} -ne 0 && ${cqes} -ne 0 ]]; then poll_cyc=$(awk 'BEGIN {printf "%.3f\n", '$USEC_IN_SEC/$diff' }'); echo "user polling : $poll_cyc usec"; fi
+	if [[ ${diff} -ne 0 && ${cqes} -ne 0 ]] 
+		then 
+		poll_cyc=$(awk 'BEGIN {printf "%.3f\n", '$USEC_IN_SEC/$diff' }'); echo "user polling : $poll_cyc usec"
+	fi
 
 
 done
