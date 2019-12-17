@@ -83,7 +83,7 @@ static inline int ntc_ctx_hello(struct ntc_dev *ntc, int phase,
 	const struct ntc_ctx_ops *ctx_ops;
 	void *ctx;
 
-	dev_dbg(&ntc->dev, "hello phase %d\n", phase);
+	ntc_dbg(ntc, "hello phase %d", phase);
 
 	ctx = ntc_get_ctx(ntc);
 	rmb(); /* if ctx_ops is set, drvdata must be set */
@@ -113,7 +113,7 @@ static inline int ntc_ctx_enable(struct ntc_dev *ntc)
 	void *ctx;
 	int ret = 0;
 
-	dev_dbg(&ntc->dev, "enable\n");
+	ntc_dbg(ntc, "enable");
 
 	ctx = ntc_get_ctx(ntc);
 	rmb(); /* if ctx_ops is set, drvdata must be set */
@@ -137,7 +137,7 @@ static inline void ntc_ctx_disable(struct ntc_dev *ntc)
 	const struct ntc_ctx_ops *ctx_ops;
 	void *ctx;
 
-	dev_dbg(&ntc->dev, "disable\n");
+	ntc_dbg(ntc, "disable");
 
 	ctx = ntc_get_ctx(ntc);
 	rmb(); /* if ctx_ops is set, drvdata must be set */
@@ -161,7 +161,7 @@ static inline void ntc_ctx_quiesce(struct ntc_dev *ntc)
 	const struct ntc_ctx_ops *ctx_ops;
 	void *ctx;
 
-	dev_dbg(&ntc->dev, "quiesce\n");
+	ntc_dbg(ntc, "quiesce");
 
 	ctx = ntc_get_ctx(ntc);
 	rmb(); /* if ctx_ops is set, drvdata must be set */
@@ -194,7 +194,7 @@ static inline void ntc_ctx_reset(struct ntc_dev *ntc)
 	const struct ntc_ctx_ops *ctx_ops;
 	void *ctx;
 
-	dev_dbg(&ntc->dev, "reset\n");
+	ntc_dbg(ntc, "reset");
 
 	ctx = ntc_get_ctx(ntc);
 	rmb(); /* if ctx_ops is set, drvdata must be set */
@@ -216,7 +216,7 @@ static inline void ntc_ctx_signal(struct ntc_dev *ntc, int vec)
 	const struct ntc_ctx_ops *ctx_ops;
 	void *ctx;
 
-	dev_vdbg(&ntc->dev, "signal\n");
+	ntc_vdbg(ntc, "signal");
 
 	ctx = ntc_get_ctx(ntc);
 	rmb(); /* if ctx_ops is set, drvdata must be set */

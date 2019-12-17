@@ -59,12 +59,12 @@ void ntc_flush_dma_channels(struct ntc_dev *ntc)
 
 	for (i = 0; i < ARRAY_SIZE(ntc->dma_chan); i++)
 		if (ntc->dma_chan[i].chan) {
-			pr_info("flushing DMA channel %d", i);
+			ntc_info(ntc, "flushing DMA channel %d", i);
 			ntc_dma_flush(&ntc->dma_chan[i]);
 		} else
 			break;
 
-	pr_info("All DMA channels flushed");
+	ntc_info(ntc, "All DMA channels flushed");
 }
 EXPORT_SYMBOL(ntc_flush_dma_channels);
 
@@ -138,14 +138,14 @@ static int ntc_probe(struct device *dev)
 	struct ntc_driver *driver = ntc_of_driver(dev->driver);
 	int rc;
 
-	dev_vdbg(dev, "probe\n");
+	ntc_vdbg(ntc, "probe");
 
 	get_device(dev);
 	rc = driver->ops.probe(driver, ntc);
 	if (rc)
 		put_device(dev);
 
-	dev_vdbg(dev, "probe return %d\n", rc);
+	ntc_vdbg(ntc, "probe return %d", rc);
 
 	return rc;
 }
@@ -155,7 +155,7 @@ static int ntc_remove(struct device *dev)
 	struct ntc_dev *ntc = ntc_of_dev(dev);
 	struct ntc_driver *driver;
 
-	dev_vdbg(dev, "remove\n");
+	ntc_vdbg(ntc, "remove");
 
 	if (dev->driver) {
 		driver = ntc_of_driver(dev->driver);
@@ -196,7 +196,7 @@ struct ntc_dma_chan *ntc_req_rr(struct ntc_dev *ntc,
 	} while (atomic_cmpxchg(&ntc->dma_chan_rr_index[type], old_index, i) !=
 		old_index);
 
-	pr_info("ntc_req_rr for type %d returns dma_chan #%d", type, i);
+	ntc_info(ntc, "ntc_req_rr for type %d returns dma_chan #%d", type, i);
 
 	return &ntc->dma_chan[i];
 }

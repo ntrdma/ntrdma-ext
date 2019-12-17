@@ -1750,10 +1750,6 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 			ntrdma_ib_sge_reserved(sg_list) ?
 			"DMA" : "MR", sg_list->length,
 			shadow->exp_buf.dma_addr);
-		TRACE("Allocating rcv %s buffer size %#x @DMA %#llx",
-			ntrdma_ib_sge_reserved(sg_list) ?
-			"DMA" : "MR", sg_list->length,
-			shadow->exp_buf.dma_addr);
 	}
 
 	return 0;
@@ -1854,9 +1850,9 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	struct ntrdma_mr_cmd_cb mrcb;
 	int rc, i, count;
 
-	ntrdma_info(dev, "called user addr %llx len %lld: (%d/%d)\n",
-			virt_addr, length, atomic_read(&dev->mr_num),
-			NTRDMA_DEV_MAX_MR);
+	ntrdma_info(dev, "called user addr %llx len %lld: (%d/%d)",
+		virt_addr, length, atomic_read(&dev->mr_num),
+		NTRDMA_DEV_MAX_MR);
 
 
 	if (length > IB_MR_LIMIT_BYTES) {
@@ -1885,7 +1881,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	if ((rc >= 0) && (dma_len >= length)) {
 		ib_umem = NULL;
 		count = 1;
-		pr_info("MAPPED ADDR %#llx TO DMA %#lx LEN %#llx",
+		ntrdma_info(dev, "MAPPED ADDR %#llx TO DMA %#lx LEN %#llx",
 			start, dma_addr, length);
 	} else {
 		ib_umem = ib_umem_get(pd->ibpd.uobject->context, start, length,
@@ -2355,7 +2351,7 @@ err_ib:
 
 void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev)
 {
-	pr_info("NTRDMA IB dev deinit\n");
+	ntrdma_info(dev, "NTRDMA IB dev deinit");
 	ib_unregister_device(&dev->ibdev);
 }
 

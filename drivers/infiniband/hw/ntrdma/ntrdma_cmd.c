@@ -373,7 +373,7 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 {
 	struct ntrdma_cmd_cb *cb_tmp, *cb;
 
-	pr_info("cmd quiesce starting ...\n");
+	ntrdma_info(dev, "cmd quiesce starting ...");
 
 	cancel_work_sync(&dev->cmd_send_work);
 	cancel_work_sync(&dev->cmd_recv_work);
@@ -388,8 +388,8 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 
 		list_del(&cb->dev_entry);
 		cb->in_list = false;
-		pr_info("cmd quiesce: aborting post %ps\n",
-				cb->rsp_cmpl);
+		ntrdma_info(dev, "cmd quiesce: aborting post %ps",
+			cb->rsp_cmpl);
 		complete_all(&cb->cmds_done);
 	}
 
@@ -402,12 +402,12 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 
 		list_del(&cb->dev_entry);
 		cb->in_list = false;
-		pr_info("cmd quiesce: aborting pend %ps\n",
-				cb->rsp_cmpl);
+		ntrdma_info(dev, "cmd quiesce: aborting pend %ps",
+			cb->rsp_cmpl);
 		complete_all(&cb->cmds_done);
 	}
 
-	pr_info("cmd quiesce done\n");
+	ntrdma_info(dev, "cmd quiesce done");
 }
 
 void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev)
@@ -640,7 +640,7 @@ static void ntrdma_cmd_send_work_cb(struct work_struct *ws)
 	struct ntrdma_dev *dev = ntrdma_cmd_send_work_dev(ws);
 
 	if (!dev->cmd_ready) {
-		pr_info("cmd not ready yet to send\n");
+		ntrdma_info(dev, "cmd not ready yet to send");
 		return;
 	}
 
@@ -1293,7 +1293,7 @@ static void ntrdma_cmd_recv_work_cb(struct work_struct *ws)
 	struct ntrdma_dev *dev = ntrdma_cmd_recv_work_dev(ws);
 
 	if (!dev->cmd_ready) {
-		pr_info("cmd not ready yet to recv\n");
+		ntrdma_info(dev, "cmd not ready yet to recv");
 		return;
 	}
 
