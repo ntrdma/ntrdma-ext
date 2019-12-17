@@ -341,7 +341,7 @@ static inline int ntc_set_ctx(struct ntc_dev *ntc, void *ctx,
 	if (!ntc_ctx_ops_is_valid(ctx_ops))
 		return -EINVAL;
 
-	dev_vdbg(&ntc->dev, "set ctx\n");
+	ntc_vdbg(ntc, "set ctx");
 
 	dev_set_drvdata(&ntc->dev, ctx);
 	wmb(); /* if ctx_ops is set, drvdata must be set */
@@ -359,7 +359,7 @@ static inline int ntc_set_ctx(struct ntc_dev *ntc, void *ctx,
  */
 static inline void ntc_clear_ctx(struct ntc_dev *ntc)
 {
-	dev_vdbg(&ntc->dev, "clear ctx\n");
+	ntc_vdbg(ntc, "clear ctx");
 
 	ntc->ctx_ops = NULL;
 	wmb(); /* if ctx_ops is set, drvdata must be set */
@@ -432,7 +432,7 @@ static inline struct ntc_peer_mw *ntc_peer_mw(struct ntc_dev *ntc,
 					const union ntc_chan_addr *chan_addr)
 {
 	if (unlikely(chan_addr->mw_idx >= (u8)NTC_MAX_NUM_MWS)) {
-		dev_err(&ntc->dev, "Unsupported MW %d", chan_addr->mw_idx);
+		ntc_err(ntc, "Unsupported MW %d", chan_addr->mw_idx);
 		return NULL;
 	}
 
@@ -467,7 +467,7 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 		return 0;
 
 	if (unlikely(offset >= peer_mw->size)) {
-		dev_err(&ntc->dev, "offset %#llx is beyond memory size %#llx\n",
+		ntc_err(ntc, "offset %#llx is beyond memory size %#llx",
 			offset, peer_mw->size);
 		return 0;
 	}
@@ -1563,7 +1563,7 @@ static inline int ntc_mr_buf_map_dma(struct ntc_mr_buf *buf,
 		return 0;
 
 	if (unlikely(i == NTC_MAX_NUM_MWS)) {
-		dev_err(&ntc->dev, "addr %#llx:%#llx beyond memory windows",
+		ntc_err(ntc, "addr %#llx:%#llx beyond memory windows",
 			dma_addr, dma_addr + size);
 		return -EINVAL;
 	}

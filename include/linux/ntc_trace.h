@@ -61,6 +61,59 @@
 #define TRACE_DATA(...) do {} while (0)
 #endif
 
+#ifdef TRACE_DBG_ENABLE
+#define TRACE_DBG(...) TRACE(__VA_ARGS__)
+#else
+#define TRACE_DBG(...) do {} while (0)
+#endif
+
+#ifdef TRACE_VDBG_ENABLE
+#define TRACE_VDBG(...) TRACE(__VA_ARGS__)
+#else
+#define TRACE_VDBG(...) do {} while (0)
+#endif
+
+#define _ntc_out(__out, __trace, __ntc, __fmt, __args...)		\
+	__out(&(__ntc)->dev, "%s: %d: " __fmt,				\
+		(({__trace("%s: %d: " __fmt,				\
+					__func__, __LINE__, ##__args);}), \
+			__func__), __LINE__, ## __args)
+
+#define ntc_out(__out, __dev, __fmt, ...) do {				\
+		char _______FMT[] = __stringify(__fmt);			\
+		int _______SIZE = sizeof(_______FMT);			\
+		if ((_______SIZE >= 4) &&				\
+			(_______FMT[_______SIZE - 4] == '\\') &&	\
+			(_______FMT[_______SIZE - 3] == 'n'))		\
+			__out(__dev, __fmt, ##__VA_ARGS__);		\
+		else							\
+			__out(__dev, __fmt "\n", ##__VA_ARGS__);	\
+	} while (0)
+
+#define _ntc_dbg(__ntc, __fmt, __args...)			\
+	_ntc_out(dev_dbg, TRACE_DBG, __ntc, __fmt, ##__args)
+
+#define _ntc_err(__ntc, __fmt, __args...)				\
+	_ntc_out(dev_err, TRACE, __ntc, "ERROR: " __fmt, ##__args)
+
+#define _ntc_info(__ntc, __fmt, __args...)			\
+	_ntc_out(dev_info, TRACE, __ntc, __fmt, ##__args)
+
+#define _ntc_vdbg(__ntc, __fmt, __args...)			\
+	_ntc_out(dev_vdbg, TRACE_VDBG, __ntc, __fmt, ##__args)
+
+#define ntc_dbg(__ntc, __fmt, ...)			\
+	ntc_out(_ntc_dbg, __ntc, __fmt, ##__VA_ARGS__)
+
+#define ntc_err(__ntc, __fmt, ...)			\
+	ntc_out(_ntc_err, __ntc, __fmt, ##__VA_ARGS__)
+
+#define ntc_info(__ntc, __fmt, ...)			\
+	ntc_out(_ntc_info, __ntc, __fmt, ##__VA_ARGS__)
+
+#define ntc_vdbg(__ntc, __fmt, ...)			\
+	ntc_out(_ntc_vdbg, __ntc, __fmt, ##__VA_ARGS__)
+
 struct ntc_perf_tracker {
 	cycles_t total;
 	cycles_t total_out;

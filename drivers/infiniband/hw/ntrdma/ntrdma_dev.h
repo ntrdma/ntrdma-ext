@@ -218,28 +218,26 @@ inline u32 ntrdma_dev_cmd_recv_prod(struct ntrdma_dev *dev);
 #define ntrdma_cmd_recv_work_dev(__ws) \
 	container_of(__ws, struct ntrdma_dev, cmd_recv_work)
 
-#define ntrdma_dbg(__dev, __args...) \
-	dev_dbg(&(__dev)->ntc->dev, ## __args)
+#define ntrdma_dbg(__dev, ...)			\
+	ntc_dbg((__dev)->ntc, ##__VA_ARGS__)
 
-#define ntrdma_err(__dev, __fmt, __args...) \
-	dev_err(&(__dev)->ntc->dev, "%s: %d: ERROR: " \
-			__fmt, __func__, __LINE__, ## __args)
+#define ntrdma_err(__dev, ...)			\
+	ntc_err((__dev)->ntc, ##__VA_ARGS__)
 
-#define ntrdma_info(__dev, __fmt, __args...) \
-	dev_info(&(__dev)->ntc->dev, "%s: %d: " \
-			__fmt, __func__, __LINE__, ## __args)
+#define ntrdma_info(__dev, ...)			\
+	ntc_info((__dev)->ntc, ##__VA_ARGS__)
 
-#define ntrdma_info_ratelimited(__dev, __fmt, __args...)	\
-	do {													\
-		static DEFINE_RATELIMIT_STATE(_rs,					\
-				DEFAULT_RATELIMIT_INTERVAL,					\
-				DEFAULT_RATELIMIT_BURST);					\
-				if (__ratelimit(&_rs))						\
-					ntrdma_info(__dev, __fmt, ## __args);		\
+#define ntrdma_vdbg(__dev, ...)			\
+	ntc_vdbg((__dev)->ntc, ##__VA_ARGS__)
+
+#define ntrdma_info_ratelimited(__dev, __fmt, __args...)		\
+	do {								\
+		static DEFINE_RATELIMIT_STATE(_rs,			\
+					DEFAULT_RATELIMIT_INTERVAL,	\
+					DEFAULT_RATELIMIT_BURST);	\
+		if (__ratelimit(&_rs))					\
+			ntrdma_info(__dev, __fmt, ## __args);		\
 	} while (0)
-
-#define ntrdma_vdbg(__dev, __args...) \
-	dev_vdbg(&(__dev)->ntc->dev, ## __args)
 
 static inline void ntrdma_vbell_del(struct ntrdma_vbell *vbell)
 {
@@ -278,7 +276,6 @@ static inline int ntrdma_vbell_add(struct ntrdma_vbell *vbell)
 	if (unlikely(!head->enabled)) {
 		rc = -EINVAL;
 		ntrdma_err(dev, "vbell disabled");
-		TRACE_DATA("vbell disabled");
 		goto unlock;
 	}
 
@@ -310,7 +307,6 @@ static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
 
 	if (unlikely(!head->enabled)) {
 		ntrdma_err(dev, "vbell disabled");
-		TRACE_DATA("vbell disabled");
 		rc = -EINVAL;
 		goto unlock;
 	}
@@ -342,7 +338,6 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 
 	if (unlikely(!head->enabled)) {
 		ntrdma_err(dev, "vbell disabled");
-		TRACE_DATA("vbell disabled");
 		rc = -EINVAL;
 		goto unlock;
 	}
@@ -377,10 +372,8 @@ static inline void ntrdma_vbell_head_fire(struct ntrdma_vbell_head *head,
 {
 	spin_lock_bh(&head->lock);
 
-	if (unlikely(!head->enabled)) {
-		TRACE_DATA("vbell disabled");
+	if (unlikely(!head->enabled))
 		goto unlock;
-	}
 
 	if (head->seq == vbell_val)
 		goto unlock;
