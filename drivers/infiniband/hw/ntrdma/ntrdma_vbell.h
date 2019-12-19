@@ -63,8 +63,8 @@ struct ntrdma_vbell_head {
 
 struct ntrdma_peer_vbell {
 	spinlock_t			lock;
-	u32				seq;
-	bool 				enabled;
+	u32				seq;	/* Protected by lock. */
+	bool 				enabled;/* Protected by lock. */
 };
 
 int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
