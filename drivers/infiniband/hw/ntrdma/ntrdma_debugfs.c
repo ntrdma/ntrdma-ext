@@ -401,8 +401,8 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 
 	seq_printf(s, "vbell_enable %d\n",dev->vbell_enable);
 	seq_printf(s, "vbell_count %u\n", dev->vbell_count);
-	seq_printf(s, "vbell_start %u\n", dev->vbell_next);
-	seq_printf(s, "vbell_next %u\n", dev->vbell_next);
+	seq_printf(s, "vbell_start %u\n", dev->vbell_start);
+	seq_printf(s, "vbell_next %u\n", atomic_read(&dev->vbell_next));
 	seq_printf(s, "vbell_buf.dma_addr %#llx\n",
 		dev->vbell_buf.dma_addr);
 	seq_printf(s, "peer_vbell_buf.dma_addr %#llx\n",

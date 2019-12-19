@@ -108,14 +108,13 @@ struct ntrdma_dev {
 	int			vbell_enable; /* Protected by vbell_self_lock */
 	struct tasklet_struct		vbell_work[NTB_MAX_IRQS];
 	struct vbell_work_data_s	vbell_work_data[NTB_MAX_IRQS];
-	spinlock_t			vbell_next_lock;
 	spinlock_t			vbell_self_lock;
 
 	/* local virtual doorbells */
 
 	u32				vbell_count;
 	u32				vbell_start;
-	u32			vbell_next; /* Protected by vbell_next_lock */
+	atomic_t			vbell_next;
 	struct ntrdma_vbell_head	*vbell_vec;
 	struct ntc_export_buf		vbell_buf;
 
