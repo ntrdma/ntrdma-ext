@@ -485,7 +485,7 @@ static void ntrdma_qp_enable_cb(struct ntrdma_res *res,
 	struct ntrdma_qp *qp = ntrdma_res_qp(res);
 	struct ntrdma_qp_cmd_cb *qpcb;
 
-	if (qp->ibqp.qp_type == IB_QPT_GSI) {
+	if (qp->qp_type == IB_QPT_GSI) {
 		qp->recv_prod = qp->recv_cons = qp->recv_cmpl;
 		TRACE("Enabling GSI QP post %u prod %u cons %u cmpl %u\n",
 				qp->recv_post, qp->recv_prod,
@@ -634,7 +634,7 @@ static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
 
 	qpcb = container_of(cb, struct ntrdma_qp_cmd_cb, cb);
 
-	if (unlikely(qp->ibqp.qp_type == IB_QPT_GSI))
+	if (unlikely(qp->qp_type == IB_QPT_GSI))
 		ntrdma_info(dev, "deleting QP type IB_QPT_GSI\n");
 
 	qpcb->cb.cmd_prep = ntrdma_qp_disable_prep;
@@ -697,7 +697,7 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 	TRACE("qp reset %p (res key: %d) rqp %p\n", qp, qp->res.key, rqp);
 	spin_lock_bh(&qp->recv_prod_lock);
 	{
-		if (qp->ibqp.qp_type != IB_QPT_GSI)
+		if (qp->qp_type != IB_QPT_GSI)
 			move_to_err_state(qp);
 		ntc_remote_buf_clear(&qp->peer_recv_wqe_buf);
 	}
@@ -714,7 +714,7 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 	 * if yet we move it to aborting and will generate the completion
 	 * later, if not it is transparent, and no need for the aborting
 	 */
-	if (qp->ibqp.qp_type == IB_QPT_GSI) {
+	if (qp->qp_type == IB_QPT_GSI) {
 		mutex_lock(&qp->send_cmpl_lock);
 		/* TODO: warn if qp state < SEND_DRAIN */
 
@@ -744,7 +744,7 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 	} else
 		qp->send_aborting = true;
 	/* GSI can have only send abort (in SQE state) */
-	if (qp->ibqp.qp_type != IB_QPT_GSI)
+	if (qp->qp_type != IB_QPT_GSI)
 		qp->recv_aborting = true;
 }
 
@@ -1377,7 +1377,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 		ntrdma_qp_info(qp, "qp %d state %d will retry", qp->res.key,
 			atomic_read(&qp->state));
 
-		if (qp->ibqp.qp_type != IB_QPT_GSI)
+		if (qp->qp_type != IB_QPT_GSI)
 			qp->recv_aborting = true;
 
 		goto unlock;
@@ -1492,7 +1492,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* get the next producing range in the send ring */
 	ntrdma_qp_send_prod_get(qp, &start, &end, &base);
-	if (qp->ibqp.qp_type == IB_QPT_GSI)
+	if (qp->qp_type == IB_QPT_GSI)
 		ntrdma_qp_info(qp, "qp %d, start %d, end %d, base %d",
 				qp->res.key, start, end, base);
 	/* quit if there is no send work to do */
@@ -1596,7 +1596,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				rc = ntrdma_qp_rdma_write(qp, wqe);
 			else if (check_recv_wqe_sanity(rqp, &recv_wqe)) {
 
-				if (qp->ibqp.qp_type == IB_QPT_GSI)
+				if (qp->qp_type == IB_QPT_GSI)
 					rcv_start_offset =
 						sizeof(struct ib_grh);
 				else
@@ -1699,7 +1699,7 @@ err_memcpy:
 err_recv:
 	ntrdma_rqp_put(rqp);
 err_rqp:
-	if (qp->ibqp.qp_type == IB_QPT_GSI) {
+	if (qp->qp_type == IB_QPT_GSI) {
 		atomic_set(&qp->state, IB_QPS_SQE);
 		qp->send_aborting = true;
 		qp->send_abort = false;
