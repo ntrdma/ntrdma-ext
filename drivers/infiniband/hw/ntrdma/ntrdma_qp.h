@@ -87,6 +87,9 @@ struct ntrdma_qp {
 
 	struct page			*send_page;
 
+	/* Same as ibqp.qp_type */
+	u32				qp_type;
+
 	/* Protection domain key */
 	u32				pd_key;
 	/* Queue pair access flags */
@@ -241,7 +244,7 @@ static inline void ntrdma_qp_recv_post_put(struct ntrdma_qp *qp,
 
 static inline void ntrdma_qp_send_post_lock(struct ntrdma_qp *qp)
 {
-	if (qp->ibqp.qp_type != IB_QPT_GSI)
+	if (qp->qp_type != IB_QPT_GSI)
 		mutex_lock(&qp->send_post_lock);
 	else
 		spin_lock_bh(&qp->send_post_slock); /* Potential deadlock? */
@@ -249,7 +252,7 @@ static inline void ntrdma_qp_send_post_lock(struct ntrdma_qp *qp)
 
 static inline void ntrdma_qp_send_post_unlock(struct ntrdma_qp *qp)
 {
-	if (qp->ibqp.qp_type != IB_QPT_GSI)
+	if (qp->qp_type != IB_QPT_GSI)
 		mutex_unlock(&qp->send_post_lock);
 	else
 		spin_unlock_bh(&qp->send_post_slock);
@@ -442,7 +445,7 @@ static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 {
 	TRACE("Move QP %d to err state from %s, line %d\n",
 			qp->res.key, s, line);
-	if (qp->ibqp.qp_type == IB_QPT_GSI)
+	if (qp->qp_type == IB_QPT_GSI)
 		atomic_set(&qp->state, IB_QPS_SQE);
 	else
 		atomic_set(&qp->state, IB_QPS_ERR);

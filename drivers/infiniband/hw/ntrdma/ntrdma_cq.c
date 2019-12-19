@@ -119,6 +119,12 @@ void _ntrdma_cq_cue(struct ntrdma_cq *cq, const char *f)
 	unsigned int arm, initial_arm;
 
 	spin_lock_bh(&cq->arm_lock);
+
+	if (unlikely(!cq->ibcq_valid)) {
+		spin_unlock_bh(&cq->arm_lock);
+		return;
+	}
+
 	arm = cq->arm;
 
 	initial_arm = arm = cq->arm;
