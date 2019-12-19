@@ -475,6 +475,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
 		&cq->ibcq, vbell_idx);
 
+	cq->ibcq_valid = true;
+
 	return &cq->ibcq;
 
 err_cq:
@@ -503,6 +505,10 @@ static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
 	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
+
+	spin_lock_bh(&cq->arm_lock);
+	cq->ibcq_valid = false;
+	spin_unlock_bh(&cq->arm_lock);
 
 	/*
 	 * Remove from list before killing vbell,
@@ -717,7 +723,7 @@ static void ntrdma_wc_from_cqe(struct ntrdma_ibv_wc *wc,
 	wc->status = ntrdma_ib_wc_status_from_cqe(op_status);
 	wc->opcode = ntrdma_ib_wc_opcode_from_cqe(op_code);
 
-	wc->qp_num = qp->ibqp.qp_num;
+	wc->qp_num = qp->res.key; /* == qp->ibqp.qp_num when valid */
 	wc->vendor_err = op_status;
 	wc->byte_len = cqe->rdma_len;
 	wc->imm_data = cqe->imm_data;
@@ -931,6 +937,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	memset(qp, 0, sizeof(*qp));
 
+	qp->qp_type = ibqp_attr->qp_type;
 	init_completion(&qp->enable_qpcb.cb.cmds_done);
 
 	qp_attr.pd_key = pd->key;
@@ -1384,7 +1391,7 @@ static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
 					struct ntrdma_send_wqe *wqe,
 					struct ib_sge *sg_list)
 {
-	bool from_user = (qp->ibqp.qp_type != IB_QPT_GSI);
+	bool from_user = (qp->qp_type != IB_QPT_GSI);
 	u64 tail_size;
 	u64 entry_size;
 	u64 available_size;
@@ -1462,7 +1469,7 @@ static inline int ntrdma_ib_send_to_wqe(struct ntrdma_qp *qp,
 	wqe->flags = ibwr->send_flags;
 
 	if (is_rdma) {
-		from_user = (qp->ibqp.qp_type != IB_QPT_GSI);
+		from_user = (qp->qp_type != IB_QPT_GSI);
 		if (unlikely(from_user !=
 				(wqe->rdma_sge.lkey !=
 					NTRDMA_RESERVED_DMA_LEKY))) {
@@ -1497,7 +1504,7 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
 					struct ntrdma_send_wqe *wqe,
 					struct ib_sge *sg_list)
 {
-	bool from_user = (qp->ibqp.qp_type != IB_QPT_GSI);
+	bool from_user = (qp->qp_type != IB_QPT_GSI);
 	int sg_count = wqe->sg_count;
 	struct ib_sge *sge;
 	struct ib_sge *wqe_snd_sge;

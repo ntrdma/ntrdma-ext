@@ -48,6 +48,7 @@
 struct ntrdma_cq {
 	/* Ofed cq structure */
 	struct ib_cq			ibcq;
+	bool				ibcq_valid; /* Protected by arm_lock. */
 
 	/* debugfs */
 	struct dentry			*debug;
