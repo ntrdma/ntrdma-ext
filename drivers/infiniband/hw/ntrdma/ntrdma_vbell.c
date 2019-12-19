@@ -45,7 +45,6 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 	int rc, i;
 
 	dev->vbell_enable = 0;
-	spin_lock_init(&dev->vbell_next_lock);
 	spin_lock_init(&dev->vbell_self_lock);
 
 	for (i = 0; i < NTB_MAX_IRQS; i++) {
@@ -58,7 +57,7 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 
 	dev->vbell_count = vbell_count;
 	dev->vbell_start = vbell_start;
-	dev->vbell_next = vbell_start;
+	atomic_set(&dev->vbell_next, 0);
 
 	dev->vbell_vec = kmalloc_node(vbell_count * sizeof(*dev->vbell_vec),
 				      GFP_KERNEL, dev->node);
@@ -104,18 +103,9 @@ void ntrdma_dev_vbell_deinit(struct ntrdma_dev *dev)
 
 u32 ntrdma_dev_vbell_next(struct ntrdma_dev *dev)
 {
-	u32 idx;
+	u32 idx = atomic_inc_return(&dev->vbell_next) - 1;
 
-	spin_lock_bh(&dev->vbell_next_lock);
-
-	idx = dev->vbell_next;
-
-	if (dev->vbell_count <= ++dev->vbell_next)
-		dev->vbell_next = dev->vbell_start;
-
-	spin_unlock_bh(&dev->vbell_next_lock);
-
-	return idx;
+	return dev->vbell_start + (idx % (dev->vbell_count - dev->vbell_start));
 }
 
 int ntrdma_dev_vbell_enable(struct ntrdma_dev *dev,
