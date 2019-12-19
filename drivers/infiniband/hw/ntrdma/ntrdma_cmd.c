@@ -881,13 +881,12 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 	rsp->hdr.status = 0;
 	return 0;
 err_map:
-	ntrdma_rmr_put(rmr);
 	for (--i; i >= 0 ; i--) {
 		ntc_remote_buf_unmap(&rmr->sg_list[pos + i], dev->ntc);
 	}
 
-	ntrdma_rmr_put(rmr);
 err_sanity:
+	ntrdma_rmr_put(rmr);
 err_rmr:
 	rsp->hdr.status = ~0;
 	return rc;
