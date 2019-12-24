@@ -1917,6 +1917,12 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			ntrdma_send_fail(cqe, &wqe, NTRDMA_WC_ERR_RDMA_ACCESS);
 		}
 
+		if (wqe.flags & IB_SEND_SIGNALED) {
+			TRACE_DATA(
+				"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu status %d",
+				wqe.op_code, wqe.flags, wqe.rdma_sge.addr, qp->res.key,
+				wqe.sg_count, cqe->ulp_handle, cqe->op_status);
+		}
 		if (recv_pos == recv_end) {
 			ntrdma_qp_recv_cons_put(qp, recv_pos, recv_base);
 			ntrdma_qp_recv_cons_get(qp, &recv_pos,
