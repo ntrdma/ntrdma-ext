@@ -1056,7 +1056,15 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 		goto err_rqp;
 	}
 	qp = ntrdma_dev_qp_look_and_get(dev, rqp->qp_key);
-	TRACE("stall qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
+
+	if (qp && (qp->qp_type == IB_QPT_GSI)) {
+		ntrdma_qp_put(qp);
+		ntrdma_rqp_put(rqp);
+		rsp->hdr.status = 0;
+		return 0;
+	}
+
+	ntrdma_info(dev, "stall qp %d\n", qp ? qp->res.key : -1);
 	ntrdma_qp_send_stall(qp, rqp);
 	if (qp) {
 		qp->rqp_key = -1;
