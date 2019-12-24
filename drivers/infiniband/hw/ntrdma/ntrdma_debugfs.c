@@ -337,8 +337,13 @@ void ntrdma_debugfs_qp_add(struct ntrdma_qp *qp)
 	snprintf(buf, NTRDMA_DEBUGFS_NAME_MAX, "qp%d", qp->res.key);
 
 	qp->debug = debugfs_create_dir(buf, dev->debug);
-	if (!qp->debug)
+	TRACE("qp %p (%d), debug %p\n", qp, qp->res.key, qp->debug);
+	if (!qp->debug) {
+		ntrdma_err(dev,
+				"Failed to create dir for QP %d\n",
+				qp->res.key);
 		return;
+	}
 
 	debugfs_create_file("info", S_IRUSR, qp->debug,
 			    qp, &ntrdma_debugfs_qp_info_ops);
@@ -522,20 +527,32 @@ static int ntrdma_debugfs_dev_perf_show(struct seq_file *s, void *v)
 				per_cpu(dev_cnt.post_send_wqes, i));
 		seq_printf(s, "post_send_wqes_signalled %llu\n",
 				per_cpu(dev_cnt.post_send_wqes_signalled, i));
+		seq_printf(s, "post_send_wqes_ioctl %llu\n",
+				per_cpu(dev_cnt.post_send_wqes_ioctl, i));
+		seq_printf(s, "post_send_wqes_ioctl_signalled %llu\n",
+				per_cpu(dev_cnt.post_send_wqes_ioctl_signalled, i));
 		seq_printf(s, "qp_send_work_bytes %llu\n",
 				per_cpu(dev_cnt.qp_send_work_bytes, i));
 		seq_printf(s, "tx_cqes %llu\n",
 				per_cpu(dev_cnt.tx_cqes, i));
 		seq_printf(s, "cqes_notified %llu\n",
 				per_cpu(dev_cnt.cqes_notified, i));
-		seq_printf(s, "cqes_polled %llu\n",
-				per_cpu(dev_cnt.cqes_polled, i));
+		seq_printf(s, "cqes_polled_signaled %llu\n",
+				per_cpu(dev_cnt.cqes_polled_s, i));
+		seq_printf(s, "cqes_polled_not_signaled %llu\n",
+				per_cpu(dev_cnt.cqes_polled_ns, i));
+		seq_printf(s, "cqes_polled_ioctl_signaled %llu\n",
+				per_cpu(dev_cnt.cqes_polled_ioctl_s, i));
+		seq_printf(s, "cqes_polled-ioctl_not_signaled %llu\n",
+				per_cpu(dev_cnt.cqes_polled_ioctl_ns, i));
 		seq_printf(s, "cqes_armed %llu\n",
 				per_cpu(dev_cnt.cqes_armed, i));
 		seq_printf(s, "accum_latency %llu cycles\n",
 				per_cpu(dev_cnt.accum_latency, i));
 		seq_printf(s, "poll_cq_count %llu\n",
 				per_cpu(dev_cnt.poll_cq_count, i));
+		seq_printf(s, "poll_cq_count_ioctl %llu\n",
+				per_cpu(dev_cnt.poll_cq_count_ioctl, i));
 
 		seq_puts(s, "***********\n");
 	}

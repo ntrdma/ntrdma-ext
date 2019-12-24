@@ -633,7 +633,8 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	struct ntrdma_qp *qp;
 	struct ntrdma_cqe cqe;
 	u32 pos, end, base;
-	int count = 0, rc = 0;
+	int count_s = 0, count_ns = 0, count_gsi = 0, rc = 0;
+	int count = 0;
 
 	/* lock for completions */
 	mutex_lock(&cq->poll_lock);
@@ -658,18 +659,26 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 				/* transform the entry into the work completion */
 				ntrdma_ib_wc_from_cqe(&ibwc[count], qp, &cqe);
 				TRACE_DATA(
-						"OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u\n",
+						"OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u flags %d\n",
 						ibwc[count].opcode,
 						cqe.op_code,
 						ibwc[count].wr_id,
 						qp->res.key,
 						ibwc[count].status,
 						pos,
-						end);
+						end,
+						cqe.flags);
 
 				/* SHIFT 10 >> for saving bits, postponing wrap-around... */
 				this_cpu_add(dev_cnt.accum_latency,
 				(u64)ntrdma_qp_stop_measure(qp, pos) >> SHIFT_SAVE_BITS);
+				if (qp->qp_type != IB_QPT_GSI) {
+					if (cqe.flags & IB_SEND_SIGNALED)
+						++count_s;
+					else
+						++count_ns;
+				} else
+					++count_gsi;
 				++count;
 			}
 
@@ -688,8 +697,9 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	mutex_unlock(&cq->poll_lock);
 
 	if (count) {
-		this_cpu_add(dev_cnt.cqes_polled, count);
-		return count;
+		this_cpu_add(dev_cnt.cqes_polled_s, count_s);
+		this_cpu_add(dev_cnt.cqes_polled_ns, count_ns);
+		return (count);
 	}
 	if ((rc == -EAGAIN) || (rc > 0))
 		return 0;
@@ -735,7 +745,8 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 	struct ntrdma_qp *qp;
 	struct ntrdma_cqe cqe;
 	u32 pos, end, base;
-	int count = 0, rc = 0;
+	int count_s = 0, count_ns = 0, rc = 0;
+	int count = 0;
 	struct ntrdma_poll_hdr *hdr;
 	struct ntrdma_ibv_wc *wc;
 	u32 howmany;
@@ -753,6 +764,7 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 
 	/* lock for completions */
 	mutex_lock(&cq->poll_lock);
+	this_cpu_inc(dev_cnt.poll_cq_count_ioctl);
 
 	while (count < howmany) {
 		/* get the next completing range in the next qp ring */
@@ -782,6 +794,12 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 					pos,
 					end,
 					cqe.flags);
+				if (qp->qp_type != IB_QPT_GSI) {
+					if (cqe.flags & IB_SEND_SIGNALED)
+						++count_s;
+					else
+						++count_ns;
+				}
 				++count;
 			}
 
@@ -802,7 +820,8 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 	hdr->wc_counter = count;
 
 	if (count) {
-		this_cpu_add(dev_cnt.cqes_polled, count);
+		this_cpu_add(dev_cnt.cqes_polled_ioctl_s, count_s);
+		this_cpu_add(dev_cnt.cqes_polled_ioctl_ns, count_ns);
 		return 0;
 	}
 	if ((rc == -EAGAIN) || (rc > 0))
@@ -1426,9 +1445,11 @@ static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
 		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
 		available_size, wqe->ulp_handle);
 
-	if (wqe->flags & IB_SEND_SIGNALED)
-		this_cpu_inc(dev_cnt.post_send_wqes_signalled);
-	this_cpu_inc(dev_cnt.post_send_wqes);
+	if (qp->qp_type != IB_QPT_GSI) {
+		if (wqe->flags & IB_SEND_SIGNALED)
+			this_cpu_inc(dev_cnt.post_send_wqes_signalled);
+		this_cpu_inc(dev_cnt.post_send_wqes);
+	}
 
 	return 0;
 }
@@ -1534,9 +1555,11 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
 		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
 		sg_count, wqe->ulp_handle);
 
-	if (wqe->flags & IB_SEND_SIGNALED)
-		this_cpu_add(dev_cnt.post_send_wqes_signalled, sg_count);
-	this_cpu_add(dev_cnt.post_send_wqes, sg_count);
+	if (qp->qp_type != IB_QPT_GSI) {
+		if (wqe->flags & IB_SEND_SIGNALED)
+			this_cpu_add(dev_cnt.post_send_wqes_signalled, sg_count);
+		this_cpu_add(dev_cnt.post_send_wqes, sg_count);
+	}
 
 	return 0;
 }
@@ -2133,6 +2156,7 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 {
 	struct ib_sge *wqe_snd_sge;
 	int i;
+	u64 available_size = 0;
 
 	wqe->op_status = 0;
 	wqe->recv_key = ~(u32)0;
@@ -2158,44 +2182,61 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 	}
 
 	if (ntrdma_send_wqe_is_inline(wqe)) {
-		if (wqe->inline_len != wqe_size - sizeof(*wqe)) {
+		if (unlikely(wqe->inline_len != wqe_size - sizeof(*wqe))) {
 			ntrdma_qp_err(qp,
-					"QP %d wrid 0x%llx inline len %d, size %d wqe size %ld",
-					qp->res.key, wqe->ulp_handle,
-					wqe->inline_len, wqe_size,
-					sizeof(*wqe));
+				"QP %d wrid 0x%llx inline len %d, size %d wqe size %ld",
+				qp->res.key, wqe->ulp_handle,
+				wqe->inline_len, wqe_size,
+				sizeof(*wqe));
 			return -EINVAL;
 		}
-		return 0;
-	}
+		available_size = wqe->inline_len;
+		TRACE_DATA(
+			"OPCODE %d: flags %x addr %llx QP %d inline len %lld wrid %llu",
+			wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
+			available_size, wqe->ulp_handle);
 
-	if (unlikely(wqe->sg_count * sizeof(struct ib_sge) !=
-			wqe_size - sizeof(*wqe))) {
-		ntrdma_qp_err(qp,
+		if (qp->qp_type != IB_QPT_GSI) {
+			if (wqe->flags & IB_SEND_SIGNALED)
+				this_cpu_inc(dev_cnt.post_send_wqes_ioctl_signalled);
+			this_cpu_inc(dev_cnt.post_send_wqes_ioctl);
+		}
+	} else {
+		if (unlikely(wqe->sg_count * sizeof(struct ib_sge) !=
+				wqe_size - sizeof(*wqe))) {
+			ntrdma_qp_err(qp,
 				"QP %d wrid 0x%llx sg_count %d ib_sge size %ld, size %d wqe size %ld",
 				qp->res.key, wqe->ulp_handle,
 				wqe->sg_count, sizeof(struct ib_sge),
 				wqe_size, sizeof(*wqe));
-		return -EINVAL;
-	}
+			return -EINVAL;
+		}
 
-	for (i = 0; i < wqe->sg_count; i++) {
-		wqe_snd_sge = snd_sg_list(i, wqe);
-		if (unlikely(wqe_snd_sge->lkey ==
-				NTRDMA_RESERVED_DMA_LEKY)) {
-			ntrdma_qp_err(qp,
+		for (i = 0; i < wqe->sg_count; i++) {
+			wqe_snd_sge = snd_sg_list(i, wqe);
+			if (unlikely(wqe_snd_sge->lkey ==
+					NTRDMA_RESERVED_DMA_LEKY)) {
+				ntrdma_qp_err(qp,
 					"QP %d wrid 0x%llx lkey %d ",
 					qp->res.key, wqe->ulp_handle,
 					wqe_snd_sge->lkey);
-			return -EINVAL;
+				return -EINVAL;
+			}
+			available_size += wqe_snd_sge->length;
+		}
+		TRACE_DATA(
+			"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu",
+			wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
+			wqe->sg_count, wqe->ulp_handle);
+
+		if (qp->qp_type != IB_QPT_GSI) {
+			if (wqe->flags & IB_SEND_SIGNALED)
+				this_cpu_inc(dev_cnt.post_send_wqes_ioctl_signalled);
+			this_cpu_inc(dev_cnt.post_send_wqes_ioctl);
 		}
 	}
 
-	TRACE_DATA(
-		"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu",
-		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
-		wqe->sg_count, wqe->ulp_handle);
-
+	this_cpu_add(dev_cnt.post_send_bytes, available_size);
 	return 0;
 }
 
