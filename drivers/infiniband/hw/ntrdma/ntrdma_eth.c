@@ -91,8 +91,8 @@ static inline void ntrdma_dev_eth_rx_drain(struct ntrdma_dev *dev)
 
 		eth->rx_cmpl = ntrdma_ring_update(end, base, eth->rx_cap);
 	} while (start != end);
-
 }
+
 static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 			u32 vbell_idx,
 			u32 rx_cap,
@@ -184,8 +184,10 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 		       NAPI_POLL_WEIGHT);
 
 	rc = register_netdev(net);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "err_register rc %d\n", rc);
 		goto err_register;
+	}
 
 	return 0;
 deinit:
@@ -583,9 +585,9 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 		netif_wake_queue(eth->napi.dev);
 
 	ntrdma_ring_consume(ntrdma_eth_rx_cons(eth),
-			    eth->rx_cmpl,
-			    eth->rx_cap,
-			    &start, &end, &base);
+			eth->rx_cmpl,
+			eth->rx_cap,
+			&start, &end, &base);
 
 	end = min_t(u32, end, start + budget);
 

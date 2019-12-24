@@ -70,14 +70,20 @@ struct ntrdma_dev_counters {
 	u64 post_send_bytes;
 	u64 post_send_wqes;
 	u64 post_send_wqes_signalled;
+	u64 post_send_wqes_ioctl;
+	u64 post_send_wqes_ioctl_signalled;
 	u64 tx_cqes;
 
 	u64 cqes_notified;
-	u64 cqes_polled;
+	u64 cqes_polled_s;
+	u64 cqes_polled_ns;
+	u64 cqes_polled_ioctl_s;
+	u64 cqes_polled_ioctl_ns;
 	u64 cqes_armed;
 
 	u64 accum_latency;
 	u64 poll_cq_count;
+	u64 poll_cq_count_ioctl;
 };
 
 
@@ -287,7 +293,8 @@ static inline void ntrdma_vbell_clear(struct ntrdma_vbell *vbell)
 	spin_unlock_bh(&head->lock);
 }
 
-static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
+static inline int _ntrdma_vbell_readd(const char *caller, int line,
+				struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
 	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
@@ -296,7 +303,7 @@ static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
 	spin_lock_bh(&head->lock);
 
 	if (unlikely(!vbell->alive)) {
-		ntrdma_err(dev, "this vbell is dead");
+		ntrdma_err(dev, "this vbell is dead @%s:%d", caller, line);
 		rc = -EINVAL;
 		goto unlock;
 	}
@@ -317,6 +324,8 @@ static inline int ntrdma_vbell_readd(struct ntrdma_vbell *vbell)
 
 	return rc;
 }
+#define ntrdma_vbell_readd(...) \
+	_ntrdma_vbell_readd(__func__, __LINE__, ##__VA_ARGS__)
 
 static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 {
@@ -345,7 +354,8 @@ static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 	return rc;
 }
 
-static inline int ntrdma_vbell_trigger(struct ntrdma_vbell *vbell)
+static inline int _ntrdma_vbell_trigger(const char *caller, int line,
+					struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
 	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
@@ -354,7 +364,7 @@ static inline int ntrdma_vbell_trigger(struct ntrdma_vbell *vbell)
 	spin_lock_bh(&head->lock);
 
 	if (unlikely(!vbell->enabled)) {
-		ntrdma_err(dev, "this vbell disabled");
+		ntrdma_err(dev, "this vbell disabled @%s:%d", caller, line);
 		rc = -EINVAL;
 		goto unlock;
 	}
@@ -371,6 +381,8 @@ static inline int ntrdma_vbell_trigger(struct ntrdma_vbell *vbell)
 
 	return rc;
 }
+#define ntrdma_vbell_trigger(...) \
+	_ntrdma_vbell_trigger(__func__, __LINE__, ##__VA_ARGS__)
 
 static inline void ntrdma_vbell_head_fire_locked(struct ntrdma_vbell_head *head)
 {

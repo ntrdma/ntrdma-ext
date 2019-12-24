@@ -195,7 +195,6 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 	u32 vbell_val;
 	int i;
 
-	TRACE_DATA("vbell work vec=%d", vec);
 
 	vbell_buf = ntc_export_buf_const_deref(&dev->vbell_buf,
 			0, dev->vbell_count * sizeof(u32));
@@ -204,10 +203,8 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 		vbell_val = READ_ONCE(vbell_buf[i]);
 		if (READ_ONCE(head->seq) == vbell_val)
 			continue;
-		TRACE_DATA("firing vbell head i=%d", i);
 		ntrdma_vbell_head_fire(head, vbell_val);
 	}
-	TRACE_DATA("vbell work done vec=%d", vec);
 
 	if (ntc_clear_signal(dev->ntc, vec))
 		tasklet_schedule(&dev->vbell_work[vec]);
