@@ -383,6 +383,7 @@ int ntrdma_dev_eth_hello_done_undone(struct ntrdma_dev *dev,
 				int is_undone)
 {
 	struct ntrdma_eth *eth = dev->eth;
+	u32 rx_cons;
 	int rc;
 
 	if (is_undone)
@@ -408,6 +409,10 @@ undone:
 	eth->is_hello_done = false;
 	WARN(eth->link == true,
 			"OMG!!! eth hello undone while eth link is up");
+
+	ntrdma_dev_eth_rx_drain(dev);
+	rx_cons = eth->rx_cmpl;
+	ntc_export_buf_reinit(&eth->rx_cons_buf, &rx_cons, 0, sizeof(rx_cons));
 
 	ntc_remote_buf_unmap(&eth->peer_tx_prod_buf, dev->ntc);
 err_peer_tx_prod_buf:
@@ -440,11 +445,6 @@ void ntrdma_dev_eth_disable(struct ntrdma_dev *dev)
 
 void ntrdma_dev_eth_reset(struct ntrdma_dev *dev)
 {
-	struct ntrdma_eth *eth = dev->eth;
-	u32 rx_cons = eth->rx_cmpl;
-
-	ntc_export_buf_reinit(&eth->rx_cons_buf, &rx_cons, 0, sizeof(rx_cons));
-
 	ntrdma_dev_eth_hello_done_undone(dev, NULL, true);
 	ntrdma_dev_eth_hello_prep_unperp(dev, NULL, NULL, true);
 }
