@@ -578,9 +578,11 @@ static inline int ntrdma_ib_wc_opcode_from_cqe(u32 op_code)
 	return -1;
 }
 
-static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code)
+static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code, bool set_grh)
 {
 	switch (op_code) {
+	case NTRDMA_WR_RECV:
+		return (set_grh ? IB_WC_GRH : 0);
 	case NTRDMA_WR_RECV_IMM:
 	case NTRDMA_WR_RECV_RDMA:
 		return IB_WC_WITH_IMM;
@@ -619,7 +621,8 @@ static int ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 	ibwc->ex.imm_data = cqe->imm_data;
 	ibwc->src_qp = qp->rqp_key;
 	ibwc->wc_flags = 0;
-	ibwc->wc_flags = ntrdma_ib_wc_flags_from_cqe(cqe->op_code);
+	ibwc->wc_flags = ntrdma_ib_wc_flags_from_cqe(cqe->op_code,
+			(ibwc->qp->qp_type == IB_QPT_GSI));
 	ibwc->pkey_index = 0;
 	ibwc->slid = 0;
 	ibwc->sl = 0;
@@ -728,7 +731,8 @@ static void ntrdma_wc_from_cqe(struct ntrdma_ibv_wc *wc,
 	wc->byte_len = cqe->rdma_len;
 	wc->imm_data = cqe->imm_data;
 	wc->src_qp = qp->rqp_key;
-	wc->wc_flags = ntrdma_ib_wc_flags_from_cqe(op_code);
+	wc->wc_flags = ntrdma_ib_wc_flags_from_cqe(op_code,
+			(qp->ibqp.qp_type == IB_QPT_GSI));
 	wc->pkey_index = 0;
 	wc->slid = 0;
 	wc->sl = 0;
@@ -2098,7 +2102,25 @@ int ntrdma_process_mad(struct ib_device *device,
 		size_t *out_mad_size,
 		u16 *out_mad_pkey_index)
 {
+	struct ntrdma_dev *dev = ntrdma_ib_dev(device);
+	union ib_gid gid;
+	int ret;
+
 	TRACE("RDMA CM MAD received: class %d\n", in_mad->mgmt_class);
+
+	if (in_wc && in_grh) {
+		ret = ib_query_gid(device, port_num, 0, &gid, NULL);
+		if (ret)
+			ntrdma_err(dev, "error query gid\n");
+
+		TRACE("RDMA CM MAD received: set GRH and sgid=dgid=%pI6\n",
+				gid.raw);
+		memset((struct ib_grh *)in_grh, 0, sizeof(struct ib_grh));
+		((struct ib_grh *)in_grh)->version_tclass_flow = 1;
+		((struct ib_grh *)in_grh)->dgid = gid;
+		((struct ib_grh *)in_grh)->sgid = gid;
+		((struct ib_wc *)in_wc)->wc_flags |= IB_WC_GRH;
+	}
 
 	return IB_MAD_RESULT_SUCCESS;
 }
