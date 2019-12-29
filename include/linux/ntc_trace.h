@@ -39,6 +39,7 @@
 #include <linux/smp.h>
 
 #define TRACE_EN
+#define TRACE_DATA_ENABLE
 
 #ifdef TRACE_EN
 #define TRACE(fmt, ...) do {						\
