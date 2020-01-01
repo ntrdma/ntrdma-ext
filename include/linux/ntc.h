@@ -54,6 +54,7 @@
 #define NTC_DRAM_MW_IDX 1
 #define NTC_MAX_NUM_MWS 2
 
+#define NTC_DEFAULT_DMA_CHANS 1
 #define NTC_MAX_DMA_CHANS 8
 
 struct ntc_driver;
