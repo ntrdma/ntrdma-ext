@@ -1873,7 +1873,9 @@ int __init ntc_init(void)
 		return -ENOMEM;
 	}
 
-	if (!num_dma_chan || (num_dma_chan > NTC_MAX_DMA_CHANS))
+	if (((int)num_dma_chan) <= 0)
+		num_dma_chan = NTC_DEFAULT_DMA_CHANS;
+	if (num_dma_chan > NTC_MAX_DMA_CHANS)
 		num_dma_chan = NTC_MAX_DMA_CHANS;
 	if (!mw0_mm_len)
 		mw0_mm_len = mw0_len;
