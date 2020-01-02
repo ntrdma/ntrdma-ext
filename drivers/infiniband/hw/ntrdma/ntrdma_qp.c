@@ -251,6 +251,12 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (rc < 0)
 		goto err_send_cqe_buf;
 
+	/* set up the send work queue buffer */
+	rc = ntc_local_buf_zalloc(&qp->send_wqe_grh_buf, dev->ntc,
+				qp->send_cap * sizeof(struct ib_grh), GFP_KERNEL);
+	if (rc < 0)
+		goto err_send_grh_buf;
+
 	/* peer rqp send queue is zero until enabled */
 	ntc_remote_buf_clear(&qp->peer_send_wqe_buf);
 	qp->peer_send_vbell_idx = 0;
@@ -309,6 +315,8 @@ err_recv_cqe_buf:
 
 	ntc_local_buf_free(&qp->recv_wqe_buf, dev->ntc);
 err_recv_wqe_buf:
+	ntc_local_buf_free(&qp->send_wqe_grh_buf, dev->ntc);
+err_send_grh_buf:
 	ntc_export_buf_free(&qp->send_cqe_buf);
 err_send_cqe_buf:
 	kfree(qp->send_wqe_cycles_buf);
@@ -368,6 +376,16 @@ inline struct ntrdma_send_wqe *ntrdma_qp_send_wqe(struct ntrdma_qp *qp,
 inline void ntrdma_qp_set_stats(struct ntrdma_qp *qp, u32 pos)
 {
 	qp->send_wqe_cycles_buf[pos] = get_cycles();
+}
+
+inline struct ib_grh *ntrdma_qp_grh(struct ntrdma_qp *qp, u32 pos)
+{
+	return ntc_local_buf_deref(&qp->send_wqe_grh_buf) + pos * sizeof(struct ib_grh);
+}
+
+static inline u64 ntrdma_qp_dma_grh(struct ntrdma_qp *qp, u32 pos)
+{
+	return qp->send_wqe_grh_buf.dma_addr + pos * sizeof(struct ib_grh);
 }
 
 inline cycles_t ntrdma_qp_get_diff_cycles(struct ntrdma_qp *qp, u32 pos)
@@ -1614,11 +1632,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				rc = ntrdma_qp_rdma_write(qp, wqe);
 			else if (check_recv_wqe_sanity(rqp, &recv_wqe)) {
 
-				if (qp->qp_type == IB_QPT_GSI)
-					rcv_start_offset =
-						sizeof(struct ib_grh);
-				else
-					rcv_start_offset = 0;
+				rcv_start_offset = qp->qp_type == IB_QPT_GSI ? sizeof(struct ib_grh) : 0;
 
 				/* This goes from send to post recv */
 				rc = ntrdma_zip_rdma(dev, qp->dma_chan,
@@ -1628,8 +1642,28 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						recv_wqe.sg_count,
 						wqe->sg_count,
 						rcv_start_offset);
-				if (rc >= 0)
+				if (rc >= 0) {
 					wqe->rdma_sge.length = rdma_len;
+
+					if (qp->qp_type == IB_QPT_GSI) {
+						struct ib_sge sge = {
+							.addr = ntrdma_qp_dma_grh(qp, pos-1),
+							.length = sizeof(struct ib_grh),
+							.lkey = NTRDMA_RESERVED_DMA_LEKY
+						};
+
+						ntrdma_qp_grh(qp, pos-1)->paylen =
+								rdma_len;
+
+						rc = ntrdma_zip_rdma(dev, qp->dma_chan,
+									&rdma_len,
+									_recv_wqe->rcv_sg_list,
+									&sge,
+									recv_wqe.sg_count,
+									1,
+									0);
+					}
+				}
 			} else
 				rc = -EINVAL;
 			if (rc) {
@@ -1642,7 +1676,6 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				break;
 			}
 		}
-
 		if (pos == end) {
 			reschedule = true;
 			break;
