@@ -43,7 +43,7 @@
 #include <rdma/ib_mad.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_umem.h>
-
+#include <rdma/ib_hdrs.h>
 #include "ntrdma_dev.h"
 #include "ntrdma_cmd.h"
 #include "ntrdma_cq.h"
@@ -580,9 +580,11 @@ static inline int ntrdma_ib_wc_opcode_from_cqe(u32 op_code)
 	return -1;
 }
 
-static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code)
+static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code, bool set_grh)
 {
 	switch (op_code) {
+	case NTRDMA_WR_RECV:
+		return (set_grh ? IB_WC_GRH : 0);
 	case NTRDMA_WR_RECV_IMM:
 	case NTRDMA_WR_RECV_RDMA:
 		return IB_WC_WITH_IMM;
@@ -590,6 +592,12 @@ static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code)
 		return IB_WC_WITH_INVALIDATE;
 	}
 	return 0;
+}
+
+static inline void ntrdma_qp_set_grh_hdr(struct ntrdma_qp *qp,
+		u32 pos, struct ib_grh *grh)
+{
+	memcpy(ntrdma_qp_grh(qp, pos), grh, sizeof(*grh));
 }
 
 static inline void ntrdma_qp_start_measure(struct ntrdma_qp *qp,
@@ -621,7 +629,8 @@ static void ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 	ibwc->ex.imm_data = cqe->imm_data;
 	ibwc->src_qp = qp->rqp_key;
 	ibwc->wc_flags = 0;
-	ibwc->wc_flags = ntrdma_ib_wc_flags_from_cqe(cqe->op_code);
+	ibwc->wc_flags = ntrdma_ib_wc_flags_from_cqe(cqe->op_code,
+			(ibwc->qp->qp_type == IB_QPT_GSI));
 	ibwc->pkey_index = 0;
 	ibwc->slid = 0;
 	ibwc->sl = 0;
@@ -737,7 +746,8 @@ static void ntrdma_wc_from_cqe(struct ntrdma_ibv_wc *wc,
 	wc->byte_len = cqe->rdma_len;
 	wc->imm_data = cqe->imm_data;
 	wc->src_qp = qp->rqp_key;
-	wc->wc_flags = ntrdma_ib_wc_flags_from_cqe(op_code);
+	wc->wc_flags = ntrdma_ib_wc_flags_from_cqe(op_code,
+			(qp->ibqp.qp_type == IB_QPT_GSI));
 	wc->pkey_index = 0;
 	wc->slid = 0;
 	wc->sl = 0;
@@ -1638,6 +1648,46 @@ static void ntrdma_qp_deferred_work(struct work_struct *ws)
 	mutex_unlock(&qp->send_post_lock);
 }
 
+
+static inline struct ntrdma_ah *ntrdma_ah(struct ib_ah *ibah)
+{
+	return container_of(ibah, struct ntrdma_ah, ibah);
+}
+
+
+static inline int ntrdma_init_grh(struct ntrdma_qp *qp,
+					struct ib_send_wr *ibwr, struct ib_grh *grh)
+{
+	struct ib_gid_attr sgid_attr;
+	union ib_gid sgid;
+	int rc = 0;
+	struct rdma_ah_attr *ah_attr = &ntrdma_ah(ud_wr(ibwr)->ah)->attr;
+	const struct ib_global_route *global_route = rdma_ah_read_grh(ah_attr);
+
+	rc = ib_query_gid(qp->ibqp.device, rdma_ah_get_port_num(ah_attr),
+			global_route->sgid_index, &sgid, &sgid_attr);
+	if (rc) {
+		ntrdma_qp_err(qp, "ntrdma_post_send: qp %d failed to query GID (port=%d, ix=%d), rc=%d\n",
+				qp->res.key, rdma_ah_get_port_num(ah_attr),
+				global_route->sgid_index, rc);
+		goto out;
+	}
+
+	grh->sgid = sgid;
+	grh->dgid = global_route->dgid;
+
+	grh->version_tclass_flow =
+			cpu_to_be32(IB_GRH_VERSION << IB_GRH_VERSION_SHIFT);
+	grh->next_hdr = IB_GRH_NEXT_HDR;
+	grh->hop_limit = 0xff;
+	grh->paylen = 0; // will get real value before send
+
+out:
+	dev_put(sgid_attr.ndev);
+	TRACE("ntrdma_init_grh: sgid=%pI6, dgid=%pI6\n",grh->sgid.raw, grh->dgid.raw);
+	return rc;
+}
+
 static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 					struct ib_send_wr *ibwr,
 					struct ib_send_wr **bad,
@@ -1648,6 +1698,7 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 	struct ntrdma_send_wqe *wqe;
 	u32 pos, end, base;
 	struct ib_sge *sg_list;
+	struct ib_grh grh_hdr;
 	int rc = 0;
 
 	while (ibwr) {
@@ -1657,6 +1708,14 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 			break;
 		}
 
+		if (qp->ibqp.qp_type == IB_QPT_GSI) {
+			rc = ntrdma_init_grh(qp, ibwr, &grh_hdr);
+			if (rc > 0) {
+				ntrdma_qp_err(qp, "qp %d failed to init grh",
+						qp->res.key);
+				return rc;
+			}
+		}
 		wqe = NULL;
 		for (;;) {
 			/* current entry in the ring */
@@ -1680,6 +1739,8 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 			rc = ntrdma_ib_send_to_wqe(qp, wqe, ibwr);
 			if (rc < 0)
 				break;
+			if (qp->ibqp.qp_type == IB_QPT_GSI)
+				ntrdma_qp_set_grh_hdr(qp, pos, &grh_hdr);
 
 			ntrdma_qp_start_measure(qp, wqe, pos);
 
@@ -2170,7 +2231,6 @@ int ntrdma_process_mad(struct ib_device *device,
 		u16 *out_mad_pkey_index)
 {
 	TRACE("RDMA CM MAD received: class %d\n", in_mad->mgmt_class);
-
 	return IB_MAD_RESULT_SUCCESS;
 }
 
