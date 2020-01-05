@@ -1648,6 +1648,7 @@ ntc_remote_buf_desc_clip(struct ntc_remote_buf_desc *desc, u64 offset, u64 len)
 static inline void ntc_remote_buf_clear(struct ntc_remote_buf *buf)
 {
 	buf->dma_addr = 0;
+	buf->size = 0;
 }
 
 static inline bool ntc_remote_buf_valid(struct ntc_remote_buf *buf)
