@@ -664,6 +664,8 @@ err:
 	ntc_ntb_error(dev);
 }
 
+static bool ntc_request_dma(struct ntc_dev *ntc);
+
 static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 {
 	int rc;
@@ -674,6 +676,11 @@ static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 	u64 peer_db_mask;
 	int max_irqs;
 	u64 db_bits;
+
+	if (!ntc_request_dma(ntc)) {
+		ntc_ntb_dev_err(dev, "no dma");
+		return -ENODEV;
+	}
 
 	ntc->peer_irq_num = 0;
 
@@ -789,6 +796,8 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	else
 		ntc_ntb_dev_dbg(dev, "link work state %d event %d",
 				dev->link_state, link_event);
+
+	ntc_request_dma(&dev->ntc);
 
 	switch (dev->link_state) {
 	case NTC_NTB_LINK_QUIESCE:
@@ -1487,7 +1496,6 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	ntc->dev.parent = &dev->ntb->dev;
 
 	ntc->ntb_dev = ntc_ntb_dma_dev(dev);
-	ntc->dma_engine_dev = ntc->dma_chan[0].chan->device->dev;
 
 	/* make sure link is disabled and warnings are cleared */
 	ntb_link_disable(dev->ntb);
@@ -1602,29 +1610,64 @@ static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 static bool ntc_ntb_filter_bus(struct dma_chan *chan,
 			       void *filter_param)
 {
-	int node = *(int *)filter_param;
+	return true;
+}
 
-	return node == dev_to_node(&chan->dev->device);
+void ntc_init_dma(struct ntc_dev *ntc)
+{
+	int j;
+
+	memset(&ntc->dma_chan, 0, sizeof(ntc->dma_chan));
+	for (j = 0; j < ARRAY_SIZE(ntc->dma_chan); j++)
+		ntc->dma_chan[j].ntc = ntc;
+}
+
+static bool ntc_request_dma(struct ntc_dev *ntc)
+{
+	struct dma_chan *dma;
+	dma_cap_mask_t mask;
+	int i, j;
+
+	if (ntc->dma_chan[0].chan)
+		return true;
+
+	dma_cap_zero(mask);
+	dma_cap_set(DMA_MEMCPY, mask);
+
+	for (i = 0, j = 0; i < num_dma_chan; i++) {
+		dma = dma_request_channel(mask, ntc_ntb_filter_bus, NULL);
+		ntc->dma_chan[j].chan = dma;
+		if (dma)
+			j++;
+	}
+
+	return j > 0;
+}
+
+static void ntc_release_dma(struct ntc_dev *ntc)
+{
+	struct dma_chan *dma;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ntc->dma_chan); i++) {
+		dma = ntc->dma_chan[i].chan;
+		ntc->dma_chan[i].chan = NULL;
+		if (!dma)
+			break;
+		dma_release_channel(dma);
+	}
 }
 
 static void ntc_ntb_release(struct device *device)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_of_dev(device);
-	struct dma_chan *dma;
-	int i;
 
 	pr_debug("release %s\n", dev_name(&dev->ntc.dev));
 
 	ntc_ntb_dev_deinit(dev);
 	put_device(&dev->ntb->dev);
 
-	for (i = 0; i < ARRAY_SIZE(dev->ntc.dma_chan); i++) {
-		dma = dev->ntc.dma_chan[i].chan;
-		dev->ntc.dma_chan[i].chan = NULL;
-		if (!dma)
-			break;
-		dma_release_channel(dma);
-	}
+	ntc_release_dma(&dev->ntc);
 	kfree(dev);
 }
 
@@ -1747,17 +1790,12 @@ static int set_affinity(struct ntb_dev *ntb)
 	return 0;
 }
 
-
 static int ntc_ntb_probe(struct ntb_client *self,
 			 struct ntb_dev *ntb)
 {
 	struct ntc_ntb_dev *dev;
-	struct dma_chan *dma;
-	dma_cap_mask_t mask;
 	enum ntc_dma_chan_type type;
-	struct ntc_dma_chan *dma_chan;
-	int node, rc;
-	int i, j;
+	int rc;
 
 	pr_debug("probe ntb %s\n", dev_name(&ntb->dev));
 
@@ -1768,30 +1806,8 @@ static int ntc_ntb_probe(struct ntb_client *self,
 		goto err_dev;
 	}
 
-	dma_cap_zero(mask);
-	dma_cap_set(DMA_MEMCPY, mask);
+	ntc_init_dma(&dev->ntc);
 
-	node = dev_to_node(&ntb->dev);
-
-	for (i = 0, j = 0; i < num_dma_chan; i++) {
-		dma = dma_request_channel(mask, ntc_ntb_filter_bus, &node);
-		dma_chan = &dev->ntc.dma_chan[j];
-		dma_chan->ntc = &dev->ntc;
-		dma_chan->chan = dma;
-		dma_chan->last_cookie = 0;
-		dma_chan->submit_cookie = 0;
-		dma_chan->submit_counter = 0;
-		if (dma)
-			j++;
-	}
-	for (; j < ARRAY_SIZE(dev->ntc.dma_chan); j++)
-		dev->ntc.dma_chan[j].chan = NULL;
-
-	if (!dev->ntc.dma_chan[0].chan) {
-		pr_debug("no dma for new device %s\n", dev_name(&ntb->dev));
-		rc = -ENODEV;
-		goto err_dma;
-	}
 	for (type = 0; type < NTC_NUM_DMA_CHAN_TYPES; type++)
 		atomic_set(&dev->ntc.dma_chan_rr_index[type], 0);
 
@@ -1815,14 +1831,6 @@ static int ntc_ntb_probe(struct ntb_client *self,
 
 err_init:
 	put_device(&ntb->dev);
-	for (i = 0; i < ARRAY_SIZE(dev->ntc.dma_chan); i++) {
-		dma = dev->ntc.dma_chan[i].chan;
-		dev->ntc.dma_chan[i].chan = NULL;
-		if (!dma)
-			break;
-		dma_release_channel(dma);
-	}
-err_dma:
 	kfree(dev);
 err_dev:
 	pr_err("%s failure rc=%d", __func__, rc);
