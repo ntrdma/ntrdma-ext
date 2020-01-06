@@ -772,6 +772,16 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 					(cqe.flags & IB_SEND_SIGNALED)) {
 				/* transform the entry into work completion */
 				ntrdma_wc_from_cqe(&wc[count], qp, &cqe);
+				TRACE_DATA(
+					"OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u flags %d\n",
+					wc[count].opcode,
+					cqe.op_code,
+					wc[count].wr_id,
+					qp->res.key,
+					wc[count].status,
+					pos,
+					end,
+					cqe.flags);
 				++count;
 			}
 
@@ -2149,6 +2159,10 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 				return -EINVAL;
 		}
 	}
+	TRACE_DATA(
+		"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu",
+		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
+		wqe->sg_count, wqe->ulp_handle);
 
 	return 0;
 }
