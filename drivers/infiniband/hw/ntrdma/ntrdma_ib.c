@@ -2293,7 +2293,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	/* TODO: maybe this should be the number of virtual doorbells */
 	ibdev->num_comp_vectors		= 1;
 
-	ibdev->dev.parent = dev->ntc->dma_engine_dev;
+	ibdev->dev.parent = dev->ntc->ntb_dev;
 
 	ibdev->uverbs_abi_ver		= 1;
 	ibdev->phys_port_cnt		= 1;
