@@ -604,7 +604,7 @@ static inline cycles_t ntrdma_qp_stop_measure(struct ntrdma_qp *qp, u32 pos)
 	return ntrdma_qp_get_diff_cycles(qp, pos);
 }
 
-static int ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
+static void ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 				struct ntrdma_qp *qp,
 				const struct ntrdma_cqe *cqe)
 {
@@ -625,7 +625,6 @@ static int ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 	ibwc->sl = 0;
 	ibwc->dlid_path_bits = 0;
 	ibwc->port_num = 0;
-	return 0;
 }
 #define SHIFT_SAVE_BITS 10
 static int ntrdma_poll_cq(struct ib_cq *ibcq,
@@ -659,9 +658,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 			if (!ntrdma_wr_code_push_data(cqe.op_code) ||
 					(cqe.flags & IB_SEND_SIGNALED)) {
 				/* transform the entry into the work completion */
-				rc = ntrdma_ib_wc_from_cqe(&ibwc[count], qp, &cqe);
-				if (rc)
-					break;
+				ntrdma_ib_wc_from_cqe(&ibwc[count], qp, &cqe);
 				TRACE_DATA(
 						"OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u\n",
 						ibwc[count].opcode,
@@ -696,7 +693,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 		this_cpu_add(dev_cnt.cqes_polled, count);
 		return count;
 	}
-	if (rc == -EAGAIN)
+	if ((rc == -EAGAIN) || (rc > 0))
 		return 0;
 	return rc;
 }
@@ -800,7 +797,7 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 		this_cpu_add(dev_cnt.cqes_polled, count);
 		return 0;
 	}
-	if (rc == -EAGAIN)
+	if ((rc == -EAGAIN) || (rc > 0))
 		return 0;
 	return rc;
 }
@@ -1655,6 +1652,9 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 
 	*bad = ibwr;
 
+	if (rc > 0)
+		rc = 0;
+
 	return rc;
 }
 
@@ -2226,6 +2226,8 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 
 	if (rc < 0)
 		*(u32 volatile *)_uptr = i;
+	else
+		rc = 0;
 
 	return rc;
 }
