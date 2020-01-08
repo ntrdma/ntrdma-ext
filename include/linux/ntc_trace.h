@@ -55,6 +55,7 @@
 #define TRACE(...) do {} while (0)
 #endif
 
+#define TRACE_DATA_ENABLE
 #ifdef TRACE_DATA_ENABLE
 #define TRACE_DATA(...) TRACE(__VA_ARGS__)
 #else
