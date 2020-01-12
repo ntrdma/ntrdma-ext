@@ -69,6 +69,9 @@ struct ntrdma_qp {
 
 	struct ntrdma_qp_cmd_cb		enable_qpcb;
 
+	struct work_struct		deferred_work;
+	bool				stop_deferred_work;
+
 	/* debugfs */
 	struct dentry			*debug;
 
