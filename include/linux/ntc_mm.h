@@ -37,7 +37,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/kernel.h>
-#include <linux/ntc_trace.h>
+#include "ntc_trace.h"
 
 struct ntc_mm_free_entry {
 	struct ntc_mm_free_entry *next;

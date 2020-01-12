@@ -45,8 +45,6 @@
 #include "ntrdma_cq.h"
 #include "ntrdma_zip.h"
 
-#include <linux/ntc_trace.h>
-
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
 #define NTRDMA_QP_BATCH_SIZE 0x10

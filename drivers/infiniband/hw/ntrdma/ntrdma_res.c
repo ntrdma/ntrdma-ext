@@ -38,7 +38,6 @@
 #include "ntrdma_cmd.h"
 #include "ntrdma_qp.h"
 #include "ntrdma_mr.h"
-#include <linux/ntc_trace.h>
 
 int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 {
