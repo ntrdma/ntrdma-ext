@@ -716,6 +716,7 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 		mutex_lock(&qp->send_cmpl_lock);
 		/* TODO: warn if qp state < SEND_DRAIN */
 
+		mutex_lock(&qp->send_post_lock);
 		spin_lock_irqsave(&qp->send_post_slock, irqflags); /* Potential deadlock? */
 		ntrdma_ring_consume(qp->send_post, qp->send_cmpl,
 				qp->send_cap, &start_cmpl, &end, &base);
@@ -735,6 +736,7 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 			need_cue = true;
 		}
 		spin_unlock_irqrestore(&qp->send_post_slock, irqflags);
+		mutex_unlock(&qp->send_post_lock);
 		mutex_unlock(&qp->send_cmpl_lock);
 
 		if (need_cue)
