@@ -34,8 +34,7 @@
 #define NTRDMA_H
 
 #include <linux/kernel.h>
-#include <linux/ntc.h>
-#include <linux/ntc_trace.h>
+#include "ntc.h"
 #include "ntrdma_file.h"
 
 #define NTRDMA_PERF_MEASURE(name) do {					\

@@ -33,7 +33,7 @@
 #ifndef NTRDMA_MR_H
 #define NTRDMA_MR_H
 
-#include <linux/ntc.h>
+#include "ntc.h"
 
 #include <rdma/ib_verbs.h>
 

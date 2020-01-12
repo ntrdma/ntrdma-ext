@@ -35,7 +35,6 @@
 #include "ntrdma_pd.h"
 #include "ntrdma_mr.h"
 #include "ntrdma_res.h"
-#include <linux/ntc_trace.h>
 
 #define ntrdma_cmd_cb_mrcb(__cb) \
 	container_of(__cb, struct ntrdma_mr_cmd_cb, cb)

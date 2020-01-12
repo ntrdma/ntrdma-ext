@@ -35,7 +35,8 @@
 
 /* Non-Transparent Channel */
 
-#include <linux/ntc_mm.h>
+#include "ntc_pfn.h"
+#include "ntc_mm.h"
 #include <linux/device.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-direction.h>
@@ -45,7 +46,7 @@
 #include <linux/slab.h>
 #include <rdma/ib_verbs.h>
 
-#include "linux/ntc_trace.h"
+#include "ntc_trace.h"
 #define NTB_MAX_IRQS (64)
 #define SYNC_RESET 1
 #define ASYNC_RESET 0

@@ -44,7 +44,6 @@
 #include "ntrdma_mr.h"
 #include "ntrdma_qp.h"
 #include "ntrdma_wr.h"
-#include "linux/ntc_trace.h"
 
 #define NTRDMA_RES_VBELL		1
 #define NTRDMA_RRES_VBELL		0

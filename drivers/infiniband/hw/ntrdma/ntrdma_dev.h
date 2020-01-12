@@ -40,7 +40,7 @@
 #include <linux/types.h>
 #include <linux/ratelimit.h>
 #include <linux/percpu.h>
-#include <linux/ntc.h>
+#include "ntc.h"
 
 #include <rdma/ib_verbs.h>
 

@@ -44,8 +44,7 @@
 #include <linux/cpumask.h>
 #include <linux/slab.h>
 
-#include <linux/ntc.h>
-#include <linux/ntc_trace.h>
+#include "ntc.h"
 
 #include <asm/e820/api.h>
 

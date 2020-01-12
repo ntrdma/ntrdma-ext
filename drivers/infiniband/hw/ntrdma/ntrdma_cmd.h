@@ -33,7 +33,7 @@
 #ifndef NTRDMA_CMD_H
 #define NTRDMA_CMD_H
 
-#include <linux/ntc.h>
+#include "ntc.h"
 #include <linux/types.h>
 
 #include "ntrdma_sg.h"

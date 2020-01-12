@@ -34,7 +34,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 
-#include <linux/ntc.h>
+#include "ntc.h"
 #include <linux/scatterlist.h>
 #include <rdma/ib_umem.h>
 
