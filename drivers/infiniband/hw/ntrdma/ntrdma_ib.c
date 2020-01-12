@@ -31,7 +31,6 @@
  */
 
 #include "ntrdma_ioctl.h"
-#include <linux/ntc_pfn.h>
 
 #include <linux/module.h>
 #include <linux/in6.h>
@@ -41,7 +40,6 @@
 #include <linux/anon_inodes.h>
 
 #include <rdma/ib_user_verbs.h>
-#include <linux/ntc_trace.h>
 #include <rdma/ib_mad.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_umem.h>

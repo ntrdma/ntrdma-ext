@@ -33,7 +33,7 @@
 #ifndef _NTC_INTERNAL_H_
 #define _NTC_INTERNAL_H_
 
-#include <linux/ntc.h>
+#include "ntc.h"
 
 /**
  * ntc_ctx_hello() - exchange data for upper layer protocol initialization
