@@ -2139,26 +2139,58 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 	wqe->rdma_sge.length = 0;
 
 	if (unlikely((wqe->rdma_sge.lkey ==
-				NTRDMA_RESERVED_DMA_LEKY) ||
-			((unsigned)wqe->op_code > (unsigned)
-				NTRDMA_SEND_WR_MAX_SUPPORTED)))
+				NTRDMA_RESERVED_DMA_LEKY))) {
+		ntrdma_qp_err(qp,
+				"QP %d, wrid 0x%llx invalid  lkey %u",
+						qp->res.key,
+						wqe->ulp_handle,
+						wqe->rdma_sge.lkey);
 		return -EINVAL;
+	}
+
+	if (unlikely(((unsigned int)wqe->op_code > (unsigned int)
+				NTRDMA_SEND_WR_MAX_SUPPORTED))) {
+		ntrdma_qp_err(qp,
+				"QP %d, wrid 0x%llx invalid opcode %u ",
+				qp->res.key, wqe->ulp_handle,
+				(unsigned int)wqe->op_code);
+		return -EINVAL;
+	}
 
 	if (ntrdma_send_wqe_is_inline(wqe)) {
-		if (unlikely(wqe->inline_len != wqe_size - sizeof(*wqe)))
+		if (wqe->inline_len != wqe_size - sizeof(*wqe)) {
+			ntrdma_qp_err(qp,
+					"QP %d wrid 0x%llx inline len %d, size %d wqe size %ld",
+					qp->res.key, wqe->ulp_handle,
+					wqe->inline_len, wqe_size,
+					sizeof(*wqe));
 			return -EINVAL;
-	} else {
-		if (unlikely(wqe->sg_count * sizeof(struct ib_sge) !=
-				wqe_size - sizeof(*wqe)))
-			return -EINVAL;
+		}
+		return 0;
+	}
 
-		for (i = 0; i < wqe->sg_count; i++) {
-			wqe_snd_sge = snd_sg_list(i, wqe);
-			if (unlikely(wqe_snd_sge->lkey ==
-					NTRDMA_RESERVED_DMA_LEKY))
-				return -EINVAL;
+	if (unlikely(wqe->sg_count * sizeof(struct ib_sge) !=
+			wqe_size - sizeof(*wqe))) {
+		ntrdma_qp_err(qp,
+				"QP %d wrid 0x%llx sg_count %d ib_sge size %ld, size %d wqe size %ld",
+				qp->res.key, wqe->ulp_handle,
+				wqe->sg_count, sizeof(struct ib_sge),
+				wqe_size, sizeof(*wqe));
+		return -EINVAL;
+	}
+
+	for (i = 0; i < wqe->sg_count; i++) {
+		wqe_snd_sge = snd_sg_list(i, wqe);
+		if (unlikely(wqe_snd_sge->lkey ==
+				NTRDMA_RESERVED_DMA_LEKY)) {
+			ntrdma_qp_err(qp,
+					"QP %d wrid 0x%llx lkey %d ",
+					qp->res.key, wqe->ulp_handle,
+					wqe_snd_sge->lkey);
+			return -EINVAL;
 		}
 	}
+
 	TRACE_DATA(
 		"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu",
 		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
@@ -2202,8 +2234,8 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 				wqe = ntrdma_qp_send_wqe(qp, pos);
 
 			if (unlikely(wqe_size > max_size)) {
-				ntrdma_qp_err(qp, "wqe_size %d max_size %d",
-					wqe_size, (int)max_size);
+				ntrdma_qp_err(qp, "wqe_size %d max_size %zu",
+					wqe_size, max_size);
 				rc = -EINVAL;
 				break;
 			}
@@ -2215,13 +2247,20 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 			rc = ntrdma_validate_post_send_wqe(qp, wqe, wqe_size);
 			if (rc < 0)
 				break;
+
 			wqe_size = next_wqe_size;
 
 			if (!(wqe->flags & IB_SEND_SIGNALED) &&
 				(wqe->op_code == IB_WR_RDMA_WRITE)) {
 				rc = ntrdma_qp_rdma_write(qp, wqe);
-				if (unlikely(rc < 0))
+				if (unlikely(rc < 0)) {
+					ntrdma_qp_err(qp,
+						"ntrdma_qp_rdma_write returned %d, QP %d pos %d wrid 0x%llx flags %x opcode %d",
+						rc, qp->res.key, pos,
+						wqe->ulp_handle, wqe->flags,
+						wqe->op_code);
 					break;
+				}
 
 				*had_immediate_work = true;
 				/* pos and wqe can be reused. */
@@ -2236,11 +2275,11 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 		ntrdma_qp_send_post_put(qp, pos, base);
 	}
 
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_qp_err(qp, "rc %d, QP %d", rc, qp->res.key);
 		*(u32 volatile *)_uptr = i;
-	else
+	} else
 		rc = 0;
-
 	return rc;
 }
 
@@ -2275,7 +2314,8 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 	NTRDMA_PERF_MEASURE(perf);
 
 	if (unlikely(rc < 0) && (rc != -EAGAIN))
-		ntrdma_qp_err(qp, "%s returning %d", __func__, rc);
+		ntrdma_qp_err(qp, "%s returning %d on QP %d",
+				__func__, rc, qp->res.key);
 
 	return rc;
 }
