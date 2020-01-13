@@ -1447,8 +1447,12 @@ inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
 	u32 rdma_len;
 	int rc;
 
-	if (unlikely(ntrdma_ib_sge_reserved(&wqe->rdma_sge)))
+	if (unlikely(ntrdma_ib_sge_reserved(&wqe->rdma_sge))) {
+		ntrdma_qp_err(qp,
+				"ntrdma_ib_sge_reserved not supported, QP %d",
+				qp->res.key);
 		return -EINVAL;
+	}
 
 	rdma_sge.shadow = NULL;
 	rdma_sge.sge = wqe->rdma_sge;
@@ -1458,12 +1462,19 @@ inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
 		rdma_len = wqe->inline_len;
 		rc = ntrdma_zip_rdma_imm(dev, qp->dma_chan, &rdma_sge,
 					wqe + 1, 1, wqe->inline_len, 0);
-	} else
+	} else {
 		rc = ntrdma_zip_rdma(dev, qp->dma_chan, &rdma_len, &rdma_sge,
 				const_snd_sg_list(0, wqe), 1, wqe->sg_count, 0);
+	}
 
-	if (likely(rc >= 0))
+	if (likely(rc >= 0)) {
 		wqe->rdma_sge.length = rdma_len;
+	} else {
+		ntrdma_qp_err(qp,
+				"QP %d wrid 0x%llx flags %u failed on ntrdma_zip_rdma",
+				qp->res.key, wqe->ulp_handle,
+				(unsigned int)wqe->flags);
+	}
 
 	return rc;
 }
