@@ -1745,6 +1745,8 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	int rc = 0;
 	bool do_signal = false;
 	bool abort = false;
+	bool need_qp_put = false;
+	bool is_unrecoverable_err = false;
 
 	/* verify the rqp state and lock for consuming sends */
 	spin_lock_bh(&rqp->send_cons_lock);
@@ -1789,9 +1791,13 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				atomic_read(&qp->state));
 		spin_unlock_bh(&qp->recv_cons_lock);
 		rc = -EINVAL;
+		need_qp_put = true;
 		goto err_recv;
 	}
 	/* FIXME: need to complete the send with error??? */
+
+	/* in case we fail now it is unrecoverable error */
+	is_unrecoverable_err = true;
 
 	/* get the next consuming range in the recv ring */
 	ntrdma_qp_recv_cons_get(qp, &recv_pos, &recv_end, &recv_base);
@@ -1931,8 +1937,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		ntrdma_cq_cue(qp->recv_cq);
 	/* TODO: What if not? */
 
-	ntrdma_qp_put(qp);
-
 	ntrdma_rqp_send_cons_put(rqp, pos, base);
 
 	if (abort) {
@@ -1992,20 +1996,19 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	/* release lock for state change or consuming later sends */
 	spin_unlock_bh(&rqp->send_cons_lock);
+	ntrdma_qp_put(qp);
 	return;
 
+err_memcpy:
 err_recv:
-	ntrdma_qp_put(qp);
 err_qp:
 	spin_unlock_bh(&rqp->send_cons_lock);
-	ntrdma_err(dev, "%s Failed qp key %d\n",
-			__func__, rqp->qp_key);
-	return;
-err_memcpy:
-	spin_unlock_bh(&rqp->send_cons_lock);
-	ntrdma_err(dev, "%s Failed qp key %d\n",
-			__func__, rqp->qp_key);
-	ntrdma_unrecoverable_err(dev);
+	ntrdma_err(dev, "Failed qp key %d\n",
+			rqp->qp_key);
+	if (need_qp_put)
+		ntrdma_qp_put(qp);
+	if (is_unrecoverable_err)
+		ntrdma_unrecoverable_err(dev);
 }
 
 static void ntrdma_rqp_work_cb(unsigned long ptrhld)
