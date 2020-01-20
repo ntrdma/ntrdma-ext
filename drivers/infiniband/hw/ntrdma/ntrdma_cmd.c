@@ -220,8 +220,10 @@ int ntrdma_dev_cmd_hello_done_undone(struct ntrdma_dev *dev,
 
 	rc = ntc_remote_buf_map(&dev->peer_cmd_recv_buf, dev->ntc,
 				&peer_prep->recv_buf_desc);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "peer cmd recv buff map failed");
 		goto err_peer_cmd_recv_buf;
+	}
 
 	dev->peer_recv_prod_shift = peer_prep->recv_prod_shift;
 
@@ -290,8 +292,10 @@ int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
 
 	rc = ntc_remote_buf_map(&dev->peer_cmd_send_rsp_buf, dev->ntc,
 				&peer_info->send_rsp_buf_desc);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "peer_cmd_send_rsp_buf map failed");
 		goto err_peer_cmd_send_rsp_buf;
+	}
 
 	dev->peer_send_cons_shift = peer_info->send_cons_shift;
 
@@ -307,7 +311,7 @@ int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
 				+ sizeof(u32), /* for cmd_recv_prod */
 				GFP_KERNEL);
 	if (rc < 0) {
-		ntrdma_err(dev, "dma mapping failed\n");
+		ntrdma_err(dev, "cmd recv buffer dma mapping failed\n");
 		goto err_recv_buf;
 	}
 
@@ -315,7 +319,7 @@ int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
 				dev->cmd_recv_cap * sizeof(union ntrdma_rsp),
 				GFP_KERNEL);
 	if (rc < 0) {
-		ntrdma_err(dev, "dma mapping failed\n");
+		ntrdma_err(dev, "cmd recv resp buffer dma mapping failed\n");
 		goto err_recv_rsp_buf;
 	}
 
@@ -753,6 +757,8 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	rmr = kmalloc_node(sizeof(*rmr) + cmd.sg_cap * sizeof(*rmr->sg_list),
 			   GFP_KERNEL, dev->node);
 	if (!rmr) {
+		ntrdma_err(dev, "rmr alloc failed for size %ld",
+			sizeof(*rmr) + cmd.sg_cap * sizeof(*rmr->sg_list));
 		rc = -ENOMEM;
 		goto err_rmr;
 	}
@@ -766,8 +772,11 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 
 		rc = ntc_remote_buf_map(&rmr->sg_list[i], dev->ntc,
 					&sg_desc_list);
-		if (rc < 0)
+		if (rc < 0) {
+			ntrdma_err(dev, "rmr (%p) sg_list[%d] map failed",
+					rmr, i);
 			goto err_map;
+		}
 	}
 
 	rc = ntrdma_rmr_add(rmr);
@@ -872,6 +881,8 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 
 	for (i = 0; i < count; ++i) {
 		if (ntc_remote_buf_valid(&rmr->sg_list[pos + i])) {
+			ntrdma_err(dev, "rmr %p sg_list[%d] invalid",
+					rmr, pos + i);
 			rc = -EINVAL;
 			goto err_map;
 		}
@@ -880,8 +891,11 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 
 		rc = ntc_remote_buf_map(&rmr->sg_list[pos + i], dev->ntc,
 					&sg_desc_list);
-		if (rc < 0)
+		if (rc < 0) {
+			ntrdma_err(dev, "rmr %p sg_list[%d] map fail rc %d",
+					rmr, pos + i, rc);
 			goto err_map;
+		}
 	}
 
 	ntrdma_rmr_put(rmr);
@@ -970,6 +984,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 
 	rqp = ntrdma_alloc_rqp(GFP_KERNEL, dev);
 	if (!rqp) {
+		ntrdma_err(dev, "RQP %d alloc failed", cmd.qp_key);
 		rc = -ENOMEM;
 		goto err_rqp;
 	}
@@ -993,8 +1008,10 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	attr.peer_cmpl_vbell_idx = cmd.cmpl_vbell_idx;
 
 	rc = ntrdma_rqp_init(rqp, dev, &attr, cmd.qp_key);
-	if (rc)
+	if (rc) {
+		ntrdma_err(dev, "RQP %d init failed", cmd.qp_key);
 		goto err_init;
+	}
 
 	ntc_export_buf_make_desc(&rsp->recv_wqe_buf_desc, &rqp->recv_wqe_buf);
 	rsp->recv_prod_shift = rqp->recv_cap * rqp->recv_wqe_size;
@@ -1007,7 +1024,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 
 	rc = ntrdma_rqp_add(rqp);
 	if (rc) {
-		ntrdma_err(dev, "rqp add failed rc = %d\n", rc);
+		ntrdma_err(dev, "RQP %d add failed rc = %d\n", cmd.qp_key, rc);
 		goto err_add;
 	}
 
@@ -1063,7 +1080,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 		return 0;
 	}
 
-	ntrdma_info(dev, "stall qp %d\n", qp ? qp->res.key : -1);
+	ntrdma_info(dev, "stall QP %d\n", qp ? qp->res.key : -1);
 	ntrdma_qp_send_stall(qp, rqp);
 	if (qp) {
 		qp->rqp_key = -1;
@@ -1131,7 +1148,7 @@ static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	if (is_state_error(cmd.state) &&
 			(qp_according_to_rqp == cmd.dest_qp_key)) {
 		qp = ntrdma_dev_qp_look_and_get(dev, cmd.dest_qp_key);
-		TRACE("qp %p (%d) state changed to %d", qp,
+		TRACE("qp %p (QP %d) state changed to %d", qp,
 			cmd.dest_qp_key, cmd.state);
 		if (!qp) {
 			ntrdma_info(dev,

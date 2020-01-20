@@ -131,8 +131,12 @@ static int ntrdma_query_pkey(struct ib_device *ibdev,
 			     u16 index,
 			     u16 *pkey)
 {
-	if (index > NTRDMA_PKEY_TBL_LEN)
+	if (index > NTRDMA_PKEY_TBL_LEN) {
+		ntrdma_err(ntrdma_ib_dev(ibdev),
+				"port %d, index %d is out of range (%d)",
+				port_num, index, NTRDMA_PKEY_TBL_LEN);
 		return -EINVAL;
+	}
 
 	*pkey = NTRDMA_PKEY_DEFAULT;
 
@@ -182,8 +186,10 @@ static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
 {
 	struct ntrdma_ah *ah = kmem_cache_zalloc(ah_slab, GFP_ATOMIC);
 
-	if (!ah)
+	if (!ah) {
+		WARN_ON(1);
 		return ERR_PTR(-ENOMEM);
+	}
 
 	ah->attr = *ah_attr;
 
@@ -361,7 +367,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	int rc;
 
 	if (atomic_inc_return(&dev->cq_num) >= NTRDMA_DEV_MAX_CQ) {
-		ntrdma_err(dev, "beyond supported number %d\n",
+		ntrdma_err(dev, "cq beyond supported number %d\n",
 				NTRDMA_DEV_MAX_CQ);
 		rc = -ETOOMANYREFS;
 		goto err_cq;
@@ -381,7 +387,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
 	cq = kmem_cache_alloc_node(cq_slab, GFP_KERNEL, dev->node);
 	if (!cq) {
-		ntrdma_err(dev, "kmem_cache_alloc_node failed\n");
+		ntrdma_err(dev, "kmem_cache_alloc_node %d failed", dev->node);
 		rc = -ENOMEM;
 		goto err_cq;
 	}
@@ -392,7 +398,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
 	if (ibudata && ibudata->inlen >= sizeof(inbuf)) {
 		if (copy_from_user(&inbuf, ibudata->inbuf, sizeof(inbuf))) {
-			ntrdma_cq_err(cq, "copy_from_user failed");
+			ntrdma_cq_err(cq, "copy_from_user (%p -> %p) failed ",
+					ibudata->inbuf, &inbuf);
 			ntrdma_cq_put(cq); /* The initial ref */
 			rc = -EFAULT;
 			goto err_cq;
@@ -446,7 +453,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		ntrdma_cq_get(cq);
 
 		if (copy_to_user(ibudata->outbuf, &outbuf, sizeof(outbuf))) {
-			ntrdma_cq_err(cq, "copy_to_user failed");
+			ntrdma_cq_err(cq, "copy_to_user (%p -> %p) failed",
+					&outbuf, ibudata->outbuf);
 			fput(file); /* Close the file. */
 			ntrdma_cq_put(cq); /* The initial ref */
 			put_unused_fd(outbuf.cqfd);
@@ -716,6 +724,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	}
 	if ((rc == -EAGAIN) || (rc > 0))
 		return 0;
+	ntrdma_cq_err(cq, "rc %d", rc);
 	return rc;
 }
 
@@ -765,14 +774,19 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 	struct ntrdma_ibv_wc *wc;
 	u32 howmany;
 
-	if (!cq->poll_page)
+	if (!cq->poll_page) {
+		ntrdma_cq_err(cq, "poll page is NULL");
 		return -EINVAL;
+	}
 
 	hdr = page_address(cq->poll_page);
 	howmany = READ_ONCE(hdr->wc_counter);
 
-	if (howmany > (PAGE_SIZE - sizeof(*hdr)) / sizeof(*wc))
+	if (howmany > (PAGE_SIZE - sizeof(*hdr)) / sizeof(*wc)) {
+		ntrdma_cq_err(cq, "wc_counter %d, larger than page size",
+				howmany);
 		return -EINVAL;
+	}
 
 	wc = (void *)(hdr + 1);
 
@@ -840,6 +854,7 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 	}
 	if ((rc == -EAGAIN) || (rc > 0))
 		return 0;
+	ntrdma_cq_err(cq, "rc %d", rc);
 	return rc;
 }
 
@@ -852,6 +867,7 @@ static long ntrdma_cq_file_ioctl(struct file *filp, unsigned int cmd,
 	case NTRDMA_IOCTL_POLL:
 		return ntrdma_cq_process_poll_ioctl(cq);
 	default:
+		ntrdma_cq_err(cq, "Unknown command %d", cmd);
 		return -EINVAL;
 	}
 }
@@ -1029,7 +1045,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	qp->ibqp.qp_num = qp->res.key;
 	atomic_set(&qp->state, IB_QPS_RESET);
 
-	ntrdma_info(dev, "added qp%d type %d (%d/%d)\n",
+	ntrdma_info(dev, "added QP %d type %d (%d/%d)\n",
 		qp->res.key, ibqp_attr->qp_type,
 		atomic_read(&dev->qp_num), NTRDMA_DEV_MAX_QP);
 
@@ -1059,7 +1075,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			return ERR_PTR(rc);
 		}
 	}
-	ntrdma_info(dev, "added qp%d type %d (%d/%d)\n",
+	ntrdma_info(dev, "added QP %d type %d (%d/%d)\n",
 			qp->res.key, ibqp_attr->qp_type,
 			atomic_read(&dev->qp_num), NTRDMA_DEV_MAX_QP);
 
@@ -1103,7 +1119,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
  bad_ntrdma_ioctl_if:
 	ntrdma_debugfs_qp_add(qp);
 
-	ntrdma_qp_dbg(qp, "added qp%d type %d",
+	ntrdma_qp_dbg(qp, "added QP %d type %d",
 			qp->res.key, ibqp_attr->qp_type);
 
 	return &qp->ibqp;
@@ -1319,8 +1335,8 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 				(ibqp_attr->cur_qp_state !=
 						atomic_read(&qp->state))) {
 			ntrdma_err(dev,
-					"%s: unexpected current state %d %d\n",
-					__func__, cur_state,
+					"QP %d: unexpected current state %d %d\n",
+					qp->res.key, cur_state,
 					atomic_read(&qp->state));
 			rc = -EINVAL;
 			goto unlock_exit;
@@ -1339,7 +1355,10 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 				IB_LINK_LAYER_UNSPECIFIED);
 
 		if (!rc) {
-			ntrdma_err(dev, "ib_modify_qp_is_ok failed\n");
+			ntrdma_err(dev,
+					"QP %d: ib_modify_qp_is_ok failed, cur_state %d, new_state %d, type %d, mask 0x%x\n",
+					qp->res.key, cur_state, new_state,
+					ibqp->qp_type, ibqp_mask);
 			rc = -EINVAL;
 			goto unlock_exit;
 		}
@@ -1347,7 +1366,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 		if ((ibqp->qp_type != IB_QPT_GSI) && !ntc_is_link_up(dev->ntc)
 				&& is_state_send_ready(new_state)) {
 			ntrdma_err(dev,
-					"link is not up, cannot move to ready qp %d\n",
+					"link is not up, cannot move to ready QP %d\n",
 					qp->res.key);
 			rc = -EAGAIN;
 			goto unlock_exit;
@@ -1361,7 +1380,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 				atomic_cmpxchg(&qp->state, cur_state,
 					new_state) == cur_state;
 			TRACE(
-				"try qp %d move from state %d to state %d (success %d), s_a %d, s_aing %d, r_a %d, r_aing %d\n",
+				"try QP %d move from state %d to state %d (success %d), s_a %d, s_aing %d, r_a %d, r_aing %d\n",
 				qp->res.key, cur_state, new_state, success,
 				qp->send_abort, qp->send_aborting,
 				qp->recv_abort, qp->recv_aborting);
@@ -1391,7 +1410,8 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	rc = ntrdma_qp_modify(qp);
 
 	if (unlikely(rc))
-		ntrdma_err(dev, "ntrdma_qp_modify: failed rc = %d", rc);
+		ntrdma_err(dev, "QP %d: ntrdma_qp_modify: failed rc = %d",
+				qp->res.key, rc);
 
 unlock_exit:
 	ntrdma_res_unlock(&qp->res);
@@ -1450,7 +1470,12 @@ static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
 			if (copy_from_user(snd_inline_data(wqe) + tail_size,
 						(void __user *)sg_list[i].addr,
 						entry_size)) {
-				ntrdma_qp_err(qp, "copy from user failed");
+				ntrdma_qp_err(qp,
+					"QP %d: copy from user failed (%p -> %p) size %lld",
+					qp->res.key,
+					snd_inline_data(wqe) + tail_size,
+					(void __user *)sg_list[i].addr,
+							entry_size);
 				return -EFAULT;
 			}
 		} else
@@ -1519,10 +1544,10 @@ static inline int ntrdma_ib_send_to_wqe(struct ntrdma_qp *qp,
 		if (unlikely(from_user !=
 				(wqe->rdma_sge.lkey !=
 					NTRDMA_RESERVED_DMA_LEKY))) {
-			ntrdma_qp_err(qp, "from_user %d but key reserved %d",
-				from_user,
+			ntrdma_qp_err(qp, "QP %d: wrid 0x%llx from_user %d but key reserved %d",
+				qp->res.key, wqe->ulp_handle, from_user,
 				(wqe->rdma_sge.lkey ==
-					NTRDMA_RESERVED_DMA_LEKY));
+						NTRDMA_RESERVED_DMA_LEKY));
 			return -EINVAL;
 		}
 	}
@@ -1533,11 +1558,21 @@ static inline int ntrdma_ib_send_to_wqe(struct ntrdma_qp *qp,
 			entry_size = ibwr->sg_list[i].length;
 			if (!entry_size)
 				continue;
-			if (tail_size + entry_size < tail_size)
+			if (tail_size + entry_size < tail_size) {
+				ntrdma_qp_err(qp,
+					"QP %d: wrid 0x%llx memory overflow tail 0x%llx, entry 0x%llx",
+					qp->res.key, wqe->ulp_handle,
+					tail_size, entry_size);
 				return -ENOMEM;
+			}
 			tail_size += entry_size;
-			if (available_size < tail_size)
+			if (available_size < tail_size) {
+				ntrdma_qp_err(qp,
+					"QP %d: wrid 0x%llx no memory available 0x%llx, tail 0x%llx",
+					qp->res.key, wqe->ulp_handle,
+					available_size, tail_size);
 				return -ENOMEM;
+			}
 		}
 		wqe->inline_len = tail_size;
 	} else
@@ -1562,8 +1597,10 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
 		*wqe_snd_sge = *sge;
 
 		if (unlikely(from_user != !ntrdma_ib_sge_reserved(sge))) {
-			ntrdma_qp_err(qp, "from_user %d but key reserved %d",
-				from_user, ntrdma_ib_sge_reserved(sge));
+			ntrdma_qp_err(qp,
+				"QP %d from_user %d but key reserved %d",
+				qp->res.key, from_user,
+				ntrdma_ib_sge_reserved(sge));
 			return -EINVAL;
 		}
 
@@ -1724,13 +1761,16 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 
 			if (unlikely((unsigned)ibwr->num_sge >
 					(unsigned)qp->send_wqe_sg_cap)) {
-				ntrdma_qp_dbg(qp, "too many sges %d", ibwr->num_sge);
+				ntrdma_qp_err(qp, "QP %d: too many sges %d",
+						qp->res.key, ibwr->num_sge);
 				rc = -EINVAL;
 				break;
 			}
 
 			if (unlikely((unsigned)ibwr->opcode > (unsigned)
 					NTRDMA_SEND_WR_MAX_SUPPORTED)) {
+				ntrdma_qp_err(qp, "QP %d: not supported opcode %d",
+						qp->res.key, ibwr->opcode);
 				rc = -EINVAL;
 				break;
 			}
@@ -1802,7 +1842,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 		if (had_immediate_work)
 			ntc_req_submit(qp->dma_chan);
 	} else {
-		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
+		ntrdma_qp_err(qp, "QP %d state %d", qp->res.key,
 			atomic_read(&qp->state));
 		rc = -EINVAL;
 	}
@@ -1838,8 +1878,11 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 
 	wqe->op_code = NTRDMA_WR_RECV;
 
-	if (ibwr->num_sge > sg_cap)
+	if (ibwr->num_sge > sg_cap) {
+		ntrdma_err(dev, "wrid 0x%llx num sge %d",
+				ibwr->wr_id, ibwr->num_sge);
 		return -EINVAL;
+	}
 
 	wqe->sg_count = ibwr->num_sge;
 	for (i = 0; i < ibwr->num_sge; ++i) {
@@ -1866,7 +1909,8 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 			shadow = ntrdma_zalloc_sge_shadow(GFP_KERNEL, dev);
 		if (!shadow) {
 			rc = -ENOMEM;
-			ntrdma_err(dev, "FAILED to alloc shadow");
+			ntrdma_err(dev, "wrid 0x%llx FAILED to alloc shadow",
+					wqe->ulp_handle);
 			goto err;
 		}
 		shadow->local_key = key;
@@ -1883,7 +1927,8 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 					sg_list->length,
 					GFP_KERNEL);
 		if (rc < 0) {
-			ntrdma_err(dev, "FAILED %d", -rc);
+			ntrdma_err(dev, "wrid 0x%llx FAILED %d",
+					wqe->ulp_handle, rc);
 			goto err;
 		}
 		ntc_export_buf_make_desc(&rcv_sge->exp_buf_desc,
@@ -1918,8 +1963,8 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 	/* verify the qp state and lock for posting recvs */
 	mutex_lock(&qp->recv_post_lock);
 	if (!is_state_out_of_reset(atomic_read(&qp->state))) {
-		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
-			atomic_read(&qp->state));
+		ntrdma_qp_err(qp, "QP %d wrid 0x%llx state %d", qp->res.key,
+			ibwr ? ibwr->wr_id : -1, atomic_read(&qp->state));
 		rc = -EINVAL;
 		goto out;
 	}
@@ -1928,7 +1973,9 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 		/* get the next posting range in the ring */
 		if (!ntrdma_qp_recv_post_get(qp, &pos, &end, &base)) {
 			/* posting too many oustanding requests */
-			ntrdma_qp_dbg(qp, "posting too many recvs");
+			ntrdma_qp_dbg(qp,
+				"QP %d wrid 0x%llx posting too many recvs",
+				qp->res.key, ibwr->wr_id);
 			rc = -EINVAL;
 			break;
 		}
@@ -2040,6 +2087,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		count = ntc_umem_count(dev->ntc, ib_umem);
 		if (count < 0) {
 			rc = count;
+			ntrdma_err(dev, "ntc_umem_count returned %d\n", count);
 			goto err_mr;
 		}
 	}
@@ -2065,8 +2113,10 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	if (!ib_umem) {
 		rc = ntc_mr_buf_map_dma(&mr->sg_list[0], dev->ntc, length,
 					dma_addr, mr_access_flags);
-		if (rc < 0)
+		if (rc < 0) {
+			ntrdma_err(dev, "ntc_mr_buf_map_dma rc = %d\n", rc);
 			goto err_init;
+		}
 	}
 
 	rc = ntrdma_mr_init(mr, dev);
@@ -2178,6 +2228,7 @@ static struct ib_ucontext *ntrdma_alloc_ucontext(struct ib_device *ibdev,
 
 	ibuctx = kmem_cache_alloc_node(ibuctx_slab, GFP_KERNEL, dev->node);
 	if (!ibuctx) {
+		ntrdma_err(dev, "kmem_cache_alloc_node failed");
 		rc = -ENOMEM;
 		goto err_ctx;
 	}
@@ -2376,7 +2427,10 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 				wqe = ntrdma_qp_send_wqe(qp, pos);
 
 			if (unlikely(wqe_size > max_size)) {
-				ntrdma_qp_err(qp, "wqe_size %d max_size %zu",
+				ntrdma_qp_err(qp,
+					"wrid 0x%llx wqe_size %d max_size %zu",
+					((struct ntrdma_send_wqe *)
+							uptr)->ulp_handle,
 					wqe_size, max_size);
 				rc = -EINVAL;
 				break;
@@ -2434,8 +2488,10 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 	void volatile *_uptr;
 	int rc;
 
-	if (unlikely(!qp->send_page))
+	if (unlikely(!qp->send_page)) {
+		ntrdma_qp_err(qp, "QP %d: no send page", qp->res.key);
 		return -EINVAL;
+	}
 	_uptr = page_address(qp->send_page);
 
 	ntrdma_qp_send_post_lock(qp);
@@ -2448,7 +2504,7 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 		if (had_immediate_work)
 			ntc_req_submit(qp->dma_chan);
 	} else {
-		ntrdma_qp_err(qp, "qp %d state %d", qp->res.key,
+		ntrdma_qp_err(qp, "QP %d state %d", qp->res.key,
 			atomic_read(&qp->state));
 		rc = -EINVAL;
 	}
@@ -2465,7 +2521,7 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 	NTRDMA_PERF_MEASURE(perf);
 
 	if (unlikely(rc < 0) && (rc != -EAGAIN))
-		ntrdma_qp_err(qp, "returning %d on QP %d",
+		ntrdma_qp_err(qp, "rc %d on QP %d",
 				rc, qp->res.key);
 
 	return rc;
@@ -2480,6 +2536,8 @@ static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
 	case NTRDMA_IOCTL_SEND:
 		return ntrdma_qp_process_send_ioctl(qp);
 	default:
+		ntrdma_qp_err(qp, "non supported command %d on QP %d", cmd,
+				qp ? qp->res.key : -1);
 		return -EINVAL;
 	}
 }
@@ -2576,6 +2634,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	return 0;
 
 err_ib:
+	ntrdma_err(dev, "got rc = %d on ib_register_device", rc);
 	return rc;
 }
 
@@ -2608,6 +2667,7 @@ int __init ntrdma_ib_module_init(void)
 			(qp_slab = KMEM_CACHE(ntrdma_qp, 0)) &&
 			(ibuctx_slab = KMEM_CACHE(ib_ucontext, 0)))) {
 		ntrdma_ib_module_deinit();
+		pr_err("%s - failed to find slab\n", __func__);
 		return -ENOMEM;
 	}
 

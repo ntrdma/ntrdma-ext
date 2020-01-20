@@ -159,8 +159,10 @@ int __init ntrdma_debugfs_init(void)
 		return 0;
 
 	debug = debugfs_create_dir(KBUILD_MODNAME, NULL);
-	if (!debug)
+	if (!debug) {
+		pr_err("%s - debugfs_create_dir failed\n", __func__);
 		return -ENOMEM;
+	}
 
 	return 0;
 }
@@ -191,6 +193,7 @@ void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)
 	if (IS_ERR(dev_dbg)) {
 		dev->debug = NULL;
 		mutex_unlock(&dev->debugfs_lock);
+		ntrdma_err(dev, "debugfs_create_dir fir dev %p", dev);
 		return;
 	}
 	dev->debug = dev_dbg;
@@ -239,8 +242,10 @@ void ntrdma_debugfs_cq_add(struct ntrdma_cq *cq)
 	snprintf(buf, NTRDMA_DEBUGFS_NAME_MAX, "cq%#llx", (u64)cq);
 
 	cq->debug = debugfs_create_dir(buf, dev->debug);
-	if (!cq->debug)
+	if (!cq->debug) {
+		ntrdma_err(dev, "debugfs_create_dir failed for cq %p", cq);
 		return;
+	}
 
 	debugfs_create_file("info", S_IRUSR, cq->debug,
 			    cq, &ntrdma_debugfs_cq_info_ops);
@@ -271,8 +276,11 @@ void ntrdma_debugfs_mr_add(struct ntrdma_mr *mr)
 	snprintf(buf, NTRDMA_DEBUGFS_NAME_MAX, "mr%d", mr->res.key);
 
 	mr->debug = debugfs_create_dir(buf, dev->debug);
-	if (!mr->debug)
+	if (!mr->debug) {
+		ntrdma_err(dev, "debugfs_create_dir failed got mr %d",
+				mr->res.key);
 		return;
+	}
 
 	debugfs_create_file("info", S_IRUSR, mr->debug,
 			    mr, &ntrdma_debugfs_mr_info_ops);
@@ -303,8 +311,11 @@ void ntrdma_debugfs_rmr_add(struct ntrdma_rmr *rmr)
 	snprintf(buf, NTRDMA_DEBUGFS_NAME_MAX, "rmr%d", rmr->rres.key);
 
 	rmr->debug = debugfs_create_dir(buf, dev->debug);
-	if (!rmr->debug)
+	if (!rmr->debug) {
+		ntrdma_err(dev, "debugfs_create_dir failed for rmr %d",
+				rmr->rres.key);
 		return;
+	}
 
 	debugfs_create_file("info", S_IRUSR, rmr->debug,
 			    rmr, &ntrdma_debugfs_rmr_info_ops);
@@ -337,7 +348,6 @@ void ntrdma_debugfs_qp_add(struct ntrdma_qp *qp)
 	snprintf(buf, NTRDMA_DEBUGFS_NAME_MAX, "qp%d", qp->res.key);
 
 	qp->debug = debugfs_create_dir(buf, dev->debug);
-	TRACE("qp %p (%d), debug %p\n", qp, qp->res.key, qp->debug);
 	if (!qp->debug) {
 		ntrdma_err(dev,
 				"Failed to create dir for QP %d\n",
@@ -378,8 +388,11 @@ void ntrdma_debugfs_rqp_add(struct ntrdma_rqp *rqp)
 	snprintf(buf, NTRDMA_DEBUGFS_NAME_MAX, "rqp%d", rqp->rres.key);
 
 	rqp->debug = debugfs_create_dir(buf, dev->debug);
-	if (!rqp->debug)
+	if (!rqp->debug) {
+		ntrdma_err(dev, "debugfs_create_dir failed for RQP %d",
+				rqp->rres.key);
 		return;
+	}
 
 	debugfs_create_file("info", S_IRUSR, rqp->debug,
 			    rqp, &ntrdma_debugfs_rqp_info_ops);

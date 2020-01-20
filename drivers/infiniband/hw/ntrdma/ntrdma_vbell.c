@@ -62,6 +62,7 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 	dev->vbell_vec = kmalloc_node(vbell_count * sizeof(*dev->vbell_vec),
 				      GFP_KERNEL, dev->node);
 	if (!dev->vbell_vec) {
+		ntrdma_err(dev, "failed to alloc vbell vec");
 		rc = -ENOMEM;
 		goto err_vec;
 	}
@@ -69,8 +70,10 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 	rc = ntc_export_buf_zalloc(&dev->vbell_buf, dev->ntc,
 				vbell_count * sizeof(u32),
 				GFP_KERNEL);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "failed to alloc vbell buffer");
 		goto err_buf;
+	}
 
 	for (i = 0; i < vbell_count; ++i)
 		ntrdma_vbell_head_init(&dev->vbell_vec[i]);
@@ -127,8 +130,10 @@ int ntrdma_dev_vbell_enable(struct ntrdma_dev *dev,
 
 	rc = ntc_remote_buf_map(&peer_vbell_buf, dev->ntc,
 				vbell_ntc_buf_desc);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "Failed to map peer vbell buff");
 		return rc;
+	}
 
 	spin_lock_bh(&dev->vbell_self_lock);
 
@@ -228,6 +233,7 @@ int ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
 	spin_lock_bh(&peer_vbell->lock);
 
 	if (unlikely(!peer_vbell->enabled)) {
+		ntrdma_err(dev, "peer vbell disabled");
 		rc = -EINVAL;
 		goto exit_unlock;
 	}
@@ -327,8 +333,10 @@ int __init ntrdma_vbell_module_init(void)
 	ntrdma_workq =
 		alloc_workqueue("ntrdma-vbell", WQ_UNBOUND | WQ_MEM_RECLAIM |
 				WQ_SYSFS, 0);
-	if (!ntrdma_workq)
+	if (!ntrdma_workq) {
+		pr_err("%s failed to alloc work queue\n", __func__);
 		return -ENOMEM;
+	}
 
 	return 0;
 }
