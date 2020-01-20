@@ -437,8 +437,10 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 	struct ntc_local_buf snd_dma_buf;
 	int rc;
 
-	if (len < 0)
+	if (len < 0) {
+		ntrdma_err(dev, "invalid len %lld", len);
 		return -EINVAL;
+	}
 
 	ntc = dev->ntc;
 
@@ -562,16 +564,20 @@ static inline s64 ntrdma_cursor_next_imm_io(struct ntrdma_dev *dev,
 	struct ntc_remote_buf remote;
 	int rc;
 
-	if (unlikely(len < 0))
+	if (unlikely(len < 0)) {
+		ntrdma_err(dev, "invalid len %lld", len);
 		return -EINVAL;
+	}
 
 	ntc = dev->ntc;
 
 	if (!rcv->rmr) {
 		rc = ntc_remote_buf_map(&remote, ntc,
 					&rcv->rcv_sge->exp_buf_desc);
-		if (rc < 0)
+		if (rc < 0) {
+			ntrdma_err(dev, "failed to map buffer");
 			return rc;
+		}
 		TRACE("DMA copy %#lx bytes to remote at %#lx offset %#lx\n",
 			(long)len,
 			(long)rcv->rcv_sge->exp_buf_desc.chan_addr.value,
@@ -676,8 +682,10 @@ int ntrdma_zip_memcpy(struct ntrdma_dev *dev, u32 target_key, u64 target_addr,
 		return 0;
 
 	mr = ntrdma_dev_mr_look(dev, target_key);
-	if (!mr)
+	if (!mr) {
+		ntrdma_err(dev, "Invalid mr key %d", target_key);
 		return -EINVAL;
+	}
 
 	mr_sge = mr->sg_list;
 	mr_sg_end = mr_sge + mr->sg_count;

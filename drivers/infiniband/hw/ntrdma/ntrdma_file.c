@@ -90,8 +90,10 @@ static int ntrdma_file_open(struct inode *inode, struct file *filp)
 	struct ntrdma_common_data *common_data;
 
 	common_data = kmalloc(sizeof(*common_data), GFP_KERNEL);
-	if (!common_data)
+	if (!common_data) {
+		pr_err("%s failed to alloc common data\n", __func__);
 		return -ENOMEM;
+	}
 
 	common_data->common_page = NULL;
 	common_data->common_ptr = NULL;
@@ -123,16 +125,20 @@ static long ntrdma_file_ioctl(struct file *filp, unsigned int cmd,
 
 	switch (cmd) {
 	case NTRDMA_FILEIOCTL_REG:
-		if (common_data->common_page)
+		if (common_data->common_page) {
+			pr_err("%s has no common page\n", __func__);
 			return -EINVAL;
+		}
 		rc = get_user_pages_fast(arg, 1, 1, &common_data->common_page);
 		if (rc >= 0)
 			common_data->common_ptr =
 				page_address(common_data->common_page);
 		return rc;
 	case NTRDMA_FILEIOCTL_SEND:
-		if (!common_data->common_page)
+		if (!common_data->common_page) {
+			pr_err("%s has no common page\n", __func__);
 			return -EINVAL;
+		}
 		memcpy(data, (void *)common_data->common_ptr, sizeof(data));
 		for (i = 0; i < sizeof(data); i++)
 			data[i]++;
@@ -140,6 +146,7 @@ static long ntrdma_file_ioctl(struct file *filp, unsigned int cmd,
 			data, sizeof(data));
 		return 0;
 	default:
+		pr_err("%s unsupported cmd %d\n", __func__, cmd);
 		return -EINVAL;
 	}
 	return 0;
@@ -160,8 +167,10 @@ static ssize_t write_measure_perf(struct device *dev,
 	int val = 0;
 
 	rc = sscanf(buf, "%i", &val);
-	if (rc != 1)
+	if (rc != 1) {
+		pr_err("%s: Failed to read buffer\n", __func__);
 		return -EINVAL;
+	}
 
 	ntrdma_measure_perf = !!val;
 
@@ -183,8 +192,10 @@ static ssize_t write_print_debug(struct device *dev,
 	int val = 0;
 
 	rc = sscanf(buf, "%i", &val);
-	if (rc != 1)
+	if (rc != 1) {
+		pr_err("%s: Failed to read buffer\n", __func__);
 		return -EINVAL;
+	}
 
 	ntrdma_print_debug = !!val;
 
@@ -197,9 +208,10 @@ int __init ntrdma_file_register(void)
 
 	rc = __register_chrdev(ntrdma_char_major, 0, NTRDMA_MINORS, "ntrdma",
 			&ntrdma_file_ops);
-	if (rc < 0)
+	if (rc < 0) {
+		pr_err("%s: failed to register chrdev\n", __func__);
 		goto err_out;
-	else {
+	} else {
 		if (rc > 0)
 			ntrdma_char_major = rc;
 
@@ -210,6 +222,7 @@ int __init ntrdma_file_register(void)
 	if (IS_ERR(ntrdma_class)) {
 		rc = PTR_ERR(ntrdma_class);
 		ntrdma_class = NULL;
+		pr_err("%s: failed to create ntrdma class\n", __func__);
 		goto err_out;
 	}
 
@@ -220,6 +233,7 @@ int __init ntrdma_file_register(void)
 	if (IS_ERR(ntrdma_dev)) {
 		rc = PTR_ERR(ntrdma_dev);
 		ntrdma_dev = NULL;
+		pr_err("%s: faile to create groups\n", __func__);
 		goto err_out;
 	}
 

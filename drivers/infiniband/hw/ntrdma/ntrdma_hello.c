@@ -97,8 +97,11 @@ static int ntrdma_dev_hello_phase0(struct ntrdma_dev *dev,
 				void __iomem *out_buf, size_t out_size)
 {
 	struct ntrdma_hello_phase1 __iomem *out = out_buf;
-	if (sizeof(struct ntrdma_hello_phase1) > out_size)
+	if (sizeof(struct ntrdma_hello_phase1) > out_size) {
+		ntrdma_err(dev, "out size %zu is too small for %ld",
+				out_size, sizeof(struct ntrdma_hello_phase1));
 		return -EINVAL;
+	}
 
 	ntrdma_buff_supported_versions(out);
 
@@ -137,8 +140,12 @@ static int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	struct ntrdma_hello_phase2 __iomem *out;
 	struct ntc_remote_buf_desc vbell_ntc_buf_desc;
 
-	if (in_size < sizeof(*in) || out_size < sizeof(*out))
+	if (in_size < sizeof(*in) || out_size < sizeof(*out)) {
+		ntrdma_err(dev,
+				"in_size %zu *in size %ld, out_size %zu *out size %ld",
+				in_size, sizeof(*in), out_size, sizeof(*out));
 		return -EINVAL;
+	}
 
 	in = in_buf;
 	out = out_buf;
@@ -146,8 +153,11 @@ static int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 
 	dev->latest_version = local.versions[local.version_num-1];
 
-	if (!in || (in->version_num > MAX_SUPPORTED_VERSIONS))
+	if (!in || (in->version_num > MAX_SUPPORTED_VERSIONS)) {
+		ntrdma_err(dev, "version %d not supported",
+				in ? in->version_num : -1);
 		return -EINVAL;
+	}
 
 	dev->version = ntrdma_version_choose(dev, in, &local);
 	if (dev->version == NTRDMA_VER_NONE) {
@@ -183,17 +193,27 @@ static int ntrdma_dev_hello_phase2(struct ntrdma_dev *dev,
 	struct ntrdma_hello_phase3 __iomem *out;
 	int rc;
 
-	if (in_size < sizeof(*in) || out_size < sizeof(*out))
+	if (in_size < sizeof(*in) || out_size < sizeof(*out)) {
+		ntrdma_err(dev,
+				"in_size %zu *in size %ld, out_size %zu *out size %ld",
+				in_size, sizeof(*in), out_size, sizeof(*out));
 		return -EINVAL;
+	}
 
 	in = in_buf;
 	out = out_buf;
 
 	/* protocol validation */
-	if (in->version_magic != NTRDMA_V1_MAGIC)
+	if (in->version_magic != NTRDMA_V1_MAGIC) {
+		ntrdma_err(dev, "version magic 0x%x wrong (0x%x)",
+				in->version_magic, NTRDMA_V1_MAGIC);
 		return -EINVAL;
-	if (in->phase_magic != NTRDMA_V1_P2_MAGIC)
+	}
+	if (in->phase_magic != NTRDMA_V1_P2_MAGIC) {
+		ntrdma_err(dev, "pase magic 0x%x wrong (0x%x)",
+				in->phase_magic, NTRDMA_V1_P2_MAGIC);
 		return -EINVAL;
+	}
 
 	iowrite32(NTRDMA_V1_MAGIC, &out->version_magic);
 	iowrite32(NTRDMA_V1_P3_MAGIC, &out->phase_magic);
@@ -238,8 +258,11 @@ static int ntrdma_dev_hello_phase3(struct ntrdma_dev *dev,
 	const struct ntrdma_hello_phase3 *in;
 	int rc;
 
-	if (in_size < sizeof(*in))
+	if (in_size < sizeof(*in)) {
+		ntrdma_err(dev, "in_size %zu smaller then needed %ld",
+				in_size, sizeof(*in));
 		return -EINVAL;
+	}
 
 	in = in_buf;
 
@@ -302,6 +325,6 @@ int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase)
 					       out_buf, out_size);
 	}
 
-	ntrdma_dbg(dev, " %s failed\n", __func__);
+	ntrdma_err(dev, "Failed\n");
 	return -EINVAL;
 }
