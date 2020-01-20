@@ -64,6 +64,8 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 		count = ntc_umem_sgl(dev->ntc, mr->ib_umem,
 				mr->sg_list, mr->sg_count, mr->access);
 		if (count != mr->sg_count) {
+			ntrdma_err(dev, "mr %p count %d != sg_count %d",
+					mr, count, mr->sg_count);
 			rc = -EFAULT;
 			goto err;
 		}
@@ -74,8 +76,10 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 			ntrdma_mr_enable_cb, ntrdma_mr_disable_cb);
 
 	rc = ntrdma_kvec_reserve_key(&dev->mr_vec, dev->node);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "mr %p failed to reserve key rc = %d", mr, rc);
 		goto err;
+	}
 	mr->res.key = rc;
 
 	return 0;
@@ -166,12 +170,13 @@ static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
 	struct ntrdma_dev *dev = ntrdma_res_dev(&mr->res);
-	u32 end, count;
+	u32 end, count, status;
 	int rc;
 
 	TRACE("mr_enable cmpl: %d\n", mr->res.key);
-
-	if (unlikely(READ_ONCE(rsp->hdr.status))) {
+	status = READ_ONCE(rsp->hdr.status);
+	if (unlikely(status)) {
+		ntrdma_err(dev, "mr %p rsp status %d", mr, status);
 		rc = -EIO;
 		goto out;
 	} else
@@ -232,10 +237,18 @@ static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp)
 {
+	u32 status;
+	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
+	struct ntrdma_mr *mr = mrcb->mr;
+	struct ntrdma_dev *dev = ntrdma_res_dev(&mr->res);
+
 	complete_all(&cb->cmds_done);
 
-	if (unlikely(READ_ONCE(rsp->hdr.status)))
+	status = READ_ONCE(rsp->hdr.status);
+	if (unlikely(status)) {
+		ntrdma_err(dev, "mr %p status %d", mr, status);
 		return -EIO;
+	}
 
 	return 0;
 }

@@ -108,6 +108,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 
 	net = alloc_etherdev(sizeof(*eth));
 	if (!net) {
+		ntrdma_err(dev, "alloc etherdec failed");
 		rc = -ENOMEM;
 		goto err_net;
 	}
@@ -134,6 +135,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	eth->rx_buf = kmalloc_node(eth->rx_cap * sizeof(*eth->rx_buf),
 				   GFP_KERNEL, dev->node);
 	if (!eth->rx_buf) {
+		ntrdma_err(dev, "rx buffer alloc failed");
 		rc = -ENOMEM;
 		goto err_rx_buf;
 	}
@@ -142,21 +144,27 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 				eth->rx_cap *
 				sizeof(struct ntc_remote_buf_desc),
 				GFP_KERNEL);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "rx wqe buffer alloc failed");
 		goto err_rx_wqe_buf;
+	}
 
 	rc = ntc_export_buf_zalloc(&eth->rx_cqe_buf, dev->ntc,
 				eth->rx_cap *
 				sizeof(struct ntc_remote_buf_desc),
 				GFP_KERNEL);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "rx cqe buffer alloc failed");
 		goto err_rx_cqe_buf;
+	}
 
 	rc = ntc_export_buf_zalloc_init(&eth->rx_cons_buf, dev->ntc,
 					sizeof(u32),
 					GFP_KERNEL, &rx_cons, sizeof(u32), 0);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "rx cons buffer alloc failed");
 		goto err_rx_cons_buf;
+	}
 
 	ntc_remote_buf_clear(&eth->peer_tx_wqe_buf);
 	ntc_remote_buf_clear(&eth->peer_tx_prod_buf);
@@ -241,8 +249,10 @@ int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 	iowrite32(eth->rx_cap, &info->rx_cap);
 	iowrite32(eth->rx_cmpl, &info->rx_idx);
 	if (!ntc_export_buf_valid(&eth->rx_cqe_buf) ||
-		!ntc_export_buf_valid(&eth->rx_cons_buf))
+		!ntc_export_buf_valid(&eth->rx_cons_buf)) {
+		ntrdma_err(dev, "either cqe or cons buffers are not ready");
 		return -EINVAL;
+	}
 
 	ntc_export_buf_make_desc(&rx_cqe_buf_desc, &eth->rx_cqe_buf);
 	memcpy_toio(&info->rx_cqe_buf_desc, &rx_cqe_buf_desc,
@@ -290,13 +300,17 @@ int ntrdma_dev_eth_hello_prep_unperp(struct ntrdma_dev *dev,
 
 	rc = ntc_remote_buf_map(&eth->peer_rx_cqe_buf, dev->ntc,
 				&peer_info->rx_cqe_buf_desc);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "peer rx cqe buffer map failed");
 		goto err_peer_rx_cqe_buf;
+	}
 
 	rc = ntc_remote_buf_map(&eth->peer_rx_cons_buf, dev->ntc,
 				&peer_info->rx_cons_buf_desc);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "peer rx cons buffer map failed");
 		goto err_peer_rx_cons_buf;
+	}
 
 	eth->peer_vbell_idx = peer_info->vbell_idx;
 
@@ -318,15 +332,19 @@ int ntrdma_dev_eth_hello_prep_unperp(struct ntrdma_dev *dev,
 				eth->tx_cap *
 				sizeof(struct ntc_remote_buf_desc),
 				GFP_KERNEL);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "tx cqe buffer alloc failed");
 		goto err_tx_cqe_buf;
+	}
 
 	tx_prod = peer_info->rx_idx;
 	rc = ntc_export_buf_zalloc_init(&eth->tx_prod_buf, dev->ntc,
 					sizeof(u32), GFP_KERNEL,
 					&tx_prod, sizeof(u32), 0);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "tx prod buffer alloc failed");
 		goto err_tx_prod_buf;
+	}
 
 	eth->is_hello_prep = true;
 
@@ -393,13 +411,17 @@ int ntrdma_dev_eth_hello_done_undone(struct ntrdma_dev *dev,
 
 	rc = ntc_remote_buf_map(&eth->peer_tx_wqe_buf, dev->ntc,
 				&peer_prep->tx_wqe_buf_desc);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "peer tx wqe buffer map failed");
 		goto err_peer_tx_wqe_buf;
+	}
 
 	rc = ntc_remote_buf_map(&eth->peer_tx_prod_buf, dev->ntc,
 				&peer_prep->tx_prod_buf_desc);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "peer tx prod buffer map failed");
 		goto err_peer_tx_prod_buf;
+	}
 
 	eth->is_hello_done = true;
 
@@ -496,8 +518,11 @@ more:
 			rc = ntc_export_buf_zalloc(&eth->rx_buf[pos], dev->ntc,
 						len + SKINFO_SIZE,
 						GFP_ATOMIC);
-			if (rc < 0)
+			if (rc < 0) {
+				ntrdma_err(dev, "alloc rx buff[%d] failed",
+						pos);
 				break;
+			}
 
 			rc = ntc_export_buf_make_partial_desc(&rx_wqe_buf[pos],
 							&eth->rx_buf[pos],
@@ -759,14 +784,18 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 		rc = ntc_remote_buf_map(&skb_ctx->dst, dev->ntc,
 					&tmp_desc);
-		if (rc < 0)
+		if (rc < 0) {
+			ntrdma_err(dev, "failed to map dst buffer");
 			goto err_res_map;
+		}
 		skb_ctx_dst_alloced = true;
 
 		rc = ntc_local_buf_map_prealloced(&skb_ctx->src, dev->ntc,
 						skb_end_offset(skb), skb->head);
-		if (rc < 0)
+		if (rc < 0) {
+			ntrdma_err(dev, "failed to map src buffer");
 			goto err_buf_map;
+		}
 		skb_ctx_src_alloced = true;
 
 		rc = ntc_request_memcpy_with_cb(eth->dma_chan,
@@ -954,6 +983,7 @@ int __init ntrdma_eth_module_init(void)
 {
 	if (!(skb_cb_slab = KMEM_CACHE(ntrdma_skb_cb, 0))) {
 		ntrdma_eth_module_deinit();
+		pr_err("%s failed to alloc slab\n", __func__);
 		return -ENOMEM;
 	}
 
