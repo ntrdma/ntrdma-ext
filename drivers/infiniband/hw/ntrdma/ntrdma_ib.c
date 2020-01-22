@@ -2217,9 +2217,9 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 			if (unlikely(wqe_snd_sge->lkey ==
 					NTRDMA_RESERVED_DMA_LEKY)) {
 				ntrdma_qp_err(qp,
-					"QP %d wrid 0x%llx lkey %d ",
-					qp->res.key, wqe->ulp_handle,
-					wqe_snd_sge->lkey);
+						"QP %d wrid 0x%llx lkey %d ",
+						qp->res.key, wqe->ulp_handle,
+						wqe_snd_sge->lkey);
 				return -EINVAL;
 			}
 			available_size += wqe_snd_sge->length;
@@ -2288,7 +2288,6 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 			rc = ntrdma_validate_post_send_wqe(qp, wqe, wqe_size);
 			if (rc < 0)
 				break;
-
 			wqe_size = next_wqe_size;
 
 			if (!(wqe->flags & IB_SEND_SIGNALED) &&
@@ -2355,8 +2354,8 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 	NTRDMA_PERF_MEASURE(perf);
 
 	if (unlikely(rc < 0) && (rc != -EAGAIN))
-		ntrdma_qp_err(qp, "%s returning %d on QP %d",
-				__func__, rc, qp->res.key);
+		ntrdma_qp_err(qp, "returning %d on QP %d",
+				rc, qp->res.key);
 
 	return rc;
 }
