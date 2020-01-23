@@ -427,7 +427,8 @@ static inline u64 ntrdma_lrcv_cursor_next_io_size(struct ntrdma_lrcv_cursor *c)
 static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 					struct ntrdma_rcv_cursor *rcv,
 					struct ntrdma_snd_cursor *snd,
-					struct ntc_dma_chan *chan)
+					struct ntc_dma_chan *chan,
+					u64 wrid)
 {
 	s64 len = min_t(u64, ntrdma_snd_cursor_next_io_size(snd),
 			ntrdma_rcv_cursor_next_io_size(rcv));
@@ -457,12 +458,22 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 	} else
 		rcv_buf = rcv->rmr_sge;
 
-	if (snd->mr)
+	if (snd->mr) {
 		rc = ntc_mr_request_memcpy_unfenced(chan,
 						rcv_buf, rcv->next_io_off,
 						snd->mr_sge, snd->next_io_off,
 						len);
-	else {
+		TRACE_DATA(
+				"wrid 0x%llx src phy 0x%llx src vir 0x%llx, dst phy 0x%llx dst vir 0x%llx, len 0x%llx, rc %d",
+				wrid,
+				snd->snd_sge->addr + snd->next_io_off,
+				(u64)snd->mr_sge->dma_addr + snd->next_io_off,
+				rcv->rcv_sge->exp_buf_desc.chan_addr.value +
+					rcv->next_io_off,
+				(u64)rcv_buf->dma_addr + rcv->next_io_off,
+				len,
+				rc);
+	} else {
 		TRACE("DMA copy %#lx bytes from %#lx offset %#lx\n",
 			(long)len, (long)snd->snd_sge->addr,
 			(long)snd->next_io_off);
@@ -473,6 +484,16 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 		rc = ntc_request_memcpy_fenced(chan, rcv_buf, rcv->next_io_off,
 					&snd_dma_buf,
 					snd->next_io_off, len);
+		TRACE_DATA(
+				"wrid 0x%llx src vir 0x%llx src phy 0x%llx, dst phy 0x%llx dst vir 0x%llx, len 0x%llx, rc %d",
+				wrid,
+				snd->snd_sge->addr + snd->next_io_off,
+				(u64)snd_dma_buf.ptr + snd->next_io_off,
+				rcv->rcv_sge->exp_buf_desc.chan_addr.value +
+					rcv->next_io_off,
+				(u64)rcv_buf->dma_addr + rcv->next_io_off,
+				len,
+				rc);
 	}
 
 	if (!rcv->rmr)
@@ -505,7 +526,8 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 		u32 *rdma_len,
 		const struct ntrdma_wr_rcv_sge *rcv_sg_list,
 		const struct ib_sge *snd_sg_list,
-		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset)
+		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset,
+		u64 wrid)
 {
 	u32 total_len = 0;
 	s64 len;
@@ -522,7 +544,8 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 		goto out;
 
 	do {
-		len = ntrdma_cursor_next_io(dev, &rcv_cursor, &snd_cursor, chan);
+		len = ntrdma_cursor_next_io(dev, &rcv_cursor, &snd_cursor,
+				chan, wrid);
 		if (len < 0) {
 			rc = len;
 			break;
@@ -555,7 +578,8 @@ static inline s64 ntrdma_cursor_next_imm_io(struct ntrdma_dev *dev,
 					struct ntrdma_rcv_cursor *rcv,
 					const void *snd_data,
 					u32 snd_data_size,
-					struct ntc_dma_chan *chan)
+					struct ntc_dma_chan *chan,
+					u64 wrid)
 {
 	s64 len = min_t(u64, snd_data_size,
 			ntrdma_rcv_cursor_next_io_size(rcv));
@@ -589,6 +613,15 @@ static inline s64 ntrdma_cursor_next_imm_io(struct ntrdma_dev *dev,
 	rc = ntc_mr_request_memcpy_unfenced_imm(chan, rcv_buf, rcv->next_io_off,
 						snd_data, len);
 
+	TRACE_DATA(
+			"wrid 0x%llx snd data 0x%llx, dst phy 0x%llx dst vir 0x%llx, len 0x%llx, rc %d",
+			wrid,
+			*((u64 *)snd_data),
+			rcv->rcv_sge->exp_buf_desc.chan_addr.value +
+				rcv->next_io_off,
+			(u64)rcv_buf->dma_addr + rcv->next_io_off,
+			len,
+			rc);
 	if (!rcv->rmr)
 		ntc_remote_buf_unmap(&remote, ntc);
 
@@ -605,7 +638,7 @@ int ntrdma_zip_rdma_imm(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 			const struct ntrdma_wr_rcv_sge *rcv_sg_list,
 			const void *snd_data,
 			u32 rcv_sg_count, u32 snd_data_size,
-			u32 rcv_start_offset)
+			u32 rcv_start_offset, u64 wrid)
 {
 	u32 total_len = 0;
 	s64 len;
@@ -623,7 +656,8 @@ int ntrdma_zip_rdma_imm(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 
 	do {
 		len = ntrdma_cursor_next_imm_io(dev, &rcv_cursor,
-						snd_data, snd_data_size, chan);
+						snd_data, snd_data_size, chan,
+						wrid);
 		if (len < 0) {
 			rc = len;
 			break;

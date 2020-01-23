@@ -1528,7 +1528,8 @@ inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
 	if (wqe->flags & IB_SEND_INLINE) {
 		rdma_len = wqe->inline_len;
 		rc = ntrdma_zip_rdma_imm(dev, qp->dma_chan, &rdma_sge,
-					wqe + 1, 1, wqe->inline_len, 0);
+					wqe + 1, 1, wqe->inline_len, 0,
+					wqe->ulp_handle);
 		if (rc < 0) {
 			ntrdma_qp_err(qp,
 				"QP %d wrid 0x%llx failed on ntrdma_zip_rdma_imm",
@@ -1536,7 +1537,8 @@ inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
 		}
 	} else {
 		rc = ntrdma_zip_rdma(dev, qp->dma_chan, &rdma_len, &rdma_sge,
-				const_snd_sg_list(0, wqe), 1, wqe->sg_count, 0);
+				const_snd_sg_list(0, wqe), 1, wqe->sg_count, 0,
+				wqe->ulp_handle);
 		if (rc < 0)
 			ntrdma_qp_err(qp,
 				"QP %d wrid 0x%llx failed on ntrdma_zip_rdma",
@@ -1690,7 +1692,8 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						const_snd_sg_list(0, wqe),
 						recv_wqe.sg_count,
 						wqe->sg_count,
-						rcv_start_offset);
+						rcv_start_offset,
+						wqe->ulp_handle);
 				if (rc >= 0) {
 					wqe->rdma_sge.length = rdma_len;
 
@@ -1710,7 +1713,8 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 									&sge,
 									recv_wqe.sg_count,
 									1,
-									0);
+									0,
+									wqe->ulp_handle);
 					}
 				}
 			} else {
@@ -1789,12 +1793,6 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 				qp->res.key, rc);
 		goto err_memcpy;
 	}
-
-	TRACE_DATA(
-		"start %u pos %u QP %d RQP %d prod %u peer vbell idx %d (recv_pos %d, recv_base %d)\n",
-		start, pos, qp->res.key, qp->rqp_key, qp->send_prod,
-		qp->peer_send_vbell_idx, recv_pos, recv_base);
-
 	/* release lock for state change or producing later sends */
 done:
 	spin_unlock_bh(&qp->send_prod_lock);

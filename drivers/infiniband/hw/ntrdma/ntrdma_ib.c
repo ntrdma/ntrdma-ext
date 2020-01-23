@@ -1484,12 +1484,6 @@ static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
 	}
 
 	this_cpu_add(dev_cnt.post_send_bytes, available_size);
-
-	TRACE_DATA(
-		"OPCODE %d: flags %x addr %llx QP %d inline len %lld wrid %llu",
-		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
-		available_size, wqe->ulp_handle);
-
 	if (qp->qp_type != IB_QPT_GSI) {
 		if (wqe->flags & IB_SEND_SIGNALED)
 			this_cpu_inc(dev_cnt.post_send_wqes_signalled);
@@ -1606,12 +1600,6 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
 
 		this_cpu_add(dev_cnt.post_send_bytes, sge->length);
 	}
-
-	TRACE_DATA(
-		"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu",
-		wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
-		sg_count, wqe->ulp_handle);
-
 	if (qp->qp_type != IB_QPT_GSI) {
 		if (wqe->flags & IB_SEND_SIGNALED)
 			this_cpu_add(dev_cnt.post_send_wqes_signalled, sg_count);
@@ -2342,11 +2330,6 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 			return -EINVAL;
 		}
 		available_size = wqe->inline_len;
-		TRACE_DATA(
-			"OPCODE %d: flags %x addr %llx QP %d inline len %lld wrid %llu",
-			wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
-			available_size, wqe->ulp_handle);
-
 		if (qp->qp_type != IB_QPT_GSI) {
 			if (wqe->flags & IB_SEND_SIGNALED)
 				this_cpu_inc(dev_cnt.post_send_wqes_ioctl_signalled);
@@ -2375,11 +2358,6 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 			}
 			available_size += wqe_snd_sge->length;
 		}
-		TRACE_DATA(
-			"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu",
-			wqe->op_code, wqe->flags, wqe->rdma_sge.addr, qp->res.key,
-			wqe->sg_count, wqe->ulp_handle);
-
 		if (qp->qp_type != IB_QPT_GSI) {
 			if (wqe->flags & IB_SEND_SIGNALED)
 				this_cpu_inc(dev_cnt.post_send_wqes_ioctl_signalled);
