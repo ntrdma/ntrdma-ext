@@ -44,13 +44,14 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 		u32 *rdma_len,
 		const struct ntrdma_wr_rcv_sge *rcv_sg_list,
 		const struct ib_sge *snd_sg_list,
-		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset);
+		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset,
+		u64 wrid);
 
 int ntrdma_zip_rdma_imm(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 			const struct ntrdma_wr_rcv_sge *rcv_sg_list,
 			const void *snd_data,
 			u32 rcv_sg_count, u32 snd_data_size,
-			u32 rcv_start_offset);
+			u32 rcv_start_offset, u64 wrid);
 
 /* Sync incoming data to dst entries in pd for the cpu */
 /* Called on rcv side. */
