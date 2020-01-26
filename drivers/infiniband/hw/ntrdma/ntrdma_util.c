@@ -194,7 +194,7 @@ int ntrdma_kvec_reserve_key(struct ntrdma_kvec *vec, int node)
 
 	__set_bit(key, vec->keys);
 
-	vec->next_key = key + 1;
+	vec->next_key = (key + 1 == vec->cap) ? vec->num_reserved_keys : key + 1;
 
 	write_unlock_bh(&vec->lock);
 
