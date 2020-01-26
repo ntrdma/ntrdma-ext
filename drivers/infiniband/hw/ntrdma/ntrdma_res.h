@@ -41,7 +41,7 @@
 #include "ntrdma_obj.h"
 #include "ntrdma_dev.h"
 
-#define NTRDMA_RES_VEC_INIT_CAP		0x10
+#define NTRDMA_RES_VEC_INIT_CAP		512
 #define NTRDMA_QP_VEC_PREALLOCATED	2
 #define NTRDMA_MR_VEC_PREALLOCATED	0
 

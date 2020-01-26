@@ -112,10 +112,6 @@ static inline void ntrdma_kvec_dispose_key(struct ntrdma_kvec *vec, u32 key)
 		goto out;
 
 	__clear_bit(key, vec->keys);
-
-	if (key < vec->next_key)
-		vec->next_key = key;
-
  out:
 	write_unlock_bh(&vec->lock);
 }
