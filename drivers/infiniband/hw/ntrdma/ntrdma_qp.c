@@ -1879,6 +1879,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	}
 	/* FIXME: need to complete the send with error??? */
 
+	need_qp_put = true;
 	WRITE_ONCE(rqp->dma_chan, qp->dma_chan);
 
 	/* connected qp must be ready to receive */
@@ -1889,7 +1890,6 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 				atomic_read(&qp->state));
 		spin_unlock_bh(&qp->recv_cons_lock);
 		rc = -EINVAL;
-		need_qp_put = true;
 		goto err_recv;
 	}
 	/* FIXME: need to complete the send with error??? */
