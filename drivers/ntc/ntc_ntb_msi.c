@@ -145,6 +145,8 @@ struct ntc_ntb_imm {
 	dma_addr_t			dma_addr;
 	void				(*cb)(void *cb_ctx);
 	void				*cb_ctx;
+	u64				wrid;
+	bool				data_trace;
 };
 
 #define MAX_SUPPORTED_VERSIONS 32
@@ -1052,13 +1054,17 @@ static void ntc_req_imm_cb(void *ctx)
 
 	if (imm->cb)
 		imm->cb(imm->cb_ctx);
-
+	if (imm->data_trace) {
+		TRACE_DATA("Completion of wrid %#llx addr %#llx len %zu",
+				imm->wrid, imm->dma_addr, imm->data_len);
+	}
 	kmem_cache_free(imm_slab, imm);
 }
 
 int ntc_req_imm(struct ntc_dma_chan *chan,
 		u64 dst, const void *ptr, size_t len, bool fence,
-		void (*cb)(void *cb_ctx), void *cb_ctx)
+		void (*cb)(void *cb_ctx), void *cb_ctx, u64 wrid,
+		bool need_trace_data)
 {
 	struct ntc_ntb_imm *imm;
 	int rc;
@@ -1094,9 +1100,11 @@ int ntc_req_imm(struct ntc_dma_chan *chan,
 
 	imm->cb = cb;
 	imm->cb_ctx = cb_ctx;
+	imm->wrid = wrid;
+	imm->data_trace = need_trace_data;
 
 	rc = ntc_req_memcpy(chan, dst, imm->dma_addr, imm->data_len,
-			fence, ntc_req_imm_cb, imm);
+			fence, ntc_req_imm_cb, imm, wrid);
 	if (unlikely(rc < 0))
 		goto err_memcpy;
 
