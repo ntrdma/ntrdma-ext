@@ -577,7 +577,7 @@ void ntc_flush_dma_channels(struct ntc_dev *ntc);
 static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 				dma_addr_t dst, dma_addr_t src, u64 len,
 				bool fence, void (*cb)(void *cb_ctx),
-				void *cb_ctx)
+				void *cb_ctx, u64 wrid)
 {
 	struct dma_async_tx_descriptor *tx;
 	dma_cookie_t last_cookie;
@@ -654,7 +654,7 @@ int _ntc_request_memcpy(struct ntc_dma_chan *chan,
 {
 	return ntc_req_memcpy(chan,
 			dst_start + dst_offset, src_start + src_offset, len,
-			fence, cb, cb_ctx);
+			fence, cb, cb_ctx, 0);
 }
 
 static inline
@@ -756,7 +756,8 @@ int ntc_mr_request_memcpy_unfenced(struct ntc_dma_chan *chan,
 
 int ntc_req_imm(struct ntc_dma_chan *chan,
 		u64 dst, const void *ptr, size_t len, bool fence,
-		void (*cb)(void *cb_ctx), void *cb_ctx);
+		void (*cb)(void *cb_ctx), void *cb_ctx, u64 wrid,
+		bool need_trace_data);
 
 /**
  * ntc_req_imm32() - append a 32 bit immediate data write operation
@@ -786,7 +787,7 @@ static inline int ntc_req_imm32(struct ntc_dma_chan *chan,
 				void *cb_ctx)
 {
 	return ntc_req_imm(chan, dst, &val, sizeof(val),
-			fence, cb, cb_ctx);
+			fence, cb, cb_ctx, 0, false);
 }
 
 static inline int _ntc_request_imm32(struct ntc_dma_chan *chan,
@@ -841,7 +842,7 @@ static inline int ntc_req_imm64(struct ntc_dma_chan *chan,
 				void *cb_ctx)
 {
 	return ntc_req_imm(chan, dst, &val, sizeof(val),
-			fence, cb, cb_ctx);
+			fence, cb, cb_ctx, 0, false);
 }
 
 static inline int _ntc_request_imm64(struct ntc_dma_chan *chan,
@@ -873,13 +874,13 @@ int ntc_mr_request_memcpy_unfenced_imm(struct ntc_dma_chan *chan,
 				const struct ntc_remote_buf *dst,
 				u64 dst_offset,
 				const void *src_data,
-				u32 len)
+				u32 len, u64 wrid)
 {
 	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, len)))
 		return -EINVAL;
 
 	return ntc_req_imm(chan, dst->dma_addr + dst_offset, src_data, len,
-			false, NULL, NULL);
+			false, NULL, NULL, wrid, true);
 }
 
 /**

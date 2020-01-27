@@ -611,7 +611,7 @@ static inline s64 ntrdma_cursor_next_imm_io(struct ntrdma_dev *dev,
 		rcv_buf = rcv->rmr_sge;
 
 	rc = ntc_mr_request_memcpy_unfenced_imm(chan, rcv_buf, rcv->next_io_off,
-						snd_data, len);
+						snd_data, len, wrid);
 
 	TRACE_DATA(
 			"wrid 0x%llx snd data 0x%llx, dst phy 0x%llx dst vir 0x%llx, len 0x%llx, rc %d",
