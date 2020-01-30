@@ -1035,7 +1035,7 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
 }
 EXPORT_SYMBOL(_ntc_link_reset);
 
-static void ntc_req_imm_cb(void *ctx)
+static void ntc_req_imm_cb(void *ctx, const struct dmaengine_result *result)
 {
 	struct ntc_ntb_imm *imm = ctx;
 
@@ -1049,9 +1049,19 @@ static void ntc_req_imm_cb(void *ctx)
 
 	if (imm->cb)
 		imm->cb(imm->cb_ctx);
+	if (result && result->result) {
+		pr_err(
+			"%s: Completion of wrid %#llx addr %#llx len %zu, result %d, residue %d",
+			__func__, imm->wrid, imm->dma_addr, imm->data_len,
+			result->result, result->residue);
+	}
 	if (imm->data_trace) {
-		TRACE_DATA("Completion of wrid %#llx addr %#llx len %zu",
-				imm->wrid, imm->dma_addr, imm->data_len);
+		WARN_ON(result == NULL);
+		TRACE_DATA(
+			"Completion of wrid %#llx addr %#llx len %zu, result %d, residue %d",
+			imm->wrid, imm->dma_addr, imm->data_len,
+			result ? result->result : -1,
+			result ? result->residue : -1);
 	}
 	kmem_cache_free(imm_slab, imm);
 }
