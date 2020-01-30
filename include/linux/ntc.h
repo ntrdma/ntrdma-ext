@@ -576,7 +576,8 @@ void ntc_flush_dma_channels(struct ntc_dev *ntc);
  */
 static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 				dma_addr_t dst, dma_addr_t src, u64 len,
-				bool fence, void (*cb)(void *cb_ctx),
+				bool fence, void (*cb)(void *cb_ctx,
+					const struct dmaengine_result *result),
 				void *cb_ctx, u64 wrid)
 {
 	struct dma_async_tx_descriptor *tx;
@@ -619,7 +620,9 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 		return -ENOMEM;
 	} while (false);
 
-	tx->callback = cb;
+	tx->callback_result = cb;
+	WARN_ON(tx->callback);
+	tx->callback = NULL;
 	tx->callback_param = cb_ctx;
 
 	this_cpu_add(chan->chan->local->bytes_transferred, len);
@@ -650,7 +653,9 @@ int _ntc_request_memcpy(struct ntc_dma_chan *chan,
 			dma_addr_t dst_start, u64 dst_size, u64 dst_offset,
 			dma_addr_t src_start, u64 src_size, u64 src_offset,
 			u64 len, bool fence,
-			void (*cb)(void *cb_ctx), void *cb_ctx)
+			void (*cb)(void *cb_ctx,
+					const struct dmaengine_result *result),
+			void *cb_ctx)
 {
 	return ntc_req_memcpy(chan,
 			dst_start + dst_offset, src_start + src_offset, len,
@@ -670,7 +675,9 @@ static inline int ntc_request_memcpy_with_cb(struct ntc_dma_chan *chan,
 					const struct ntc_local_buf *src,
 					u64 src_offset,
 					u64 len,
-					void (*cb)(void *cb_ctx), void *cb_ctx)
+					void (*cb)(void *cb_ctx,
+					const struct dmaengine_result *result),
+					void *cb_ctx)
 {
 	if (unlikely(len == 0))
 		return 0;
