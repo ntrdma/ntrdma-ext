@@ -41,7 +41,7 @@ static struct kmem_cache *skb_cb_slab;
 
 static const struct net_device_ops ntrdma_eth_net_ops;
 static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget);
-static void ntrdma_eth_dma_cb(void *ctx);
+static void ntrdma_eth_dma_cb(void *ctx, const struct dmaengine_result *result);
 static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
 static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
 
@@ -900,7 +900,7 @@ done:
 	return NETDEV_TX_OK;
 }
 
-static void ntrdma_eth_dma_cb(void *ctx)
+static void ntrdma_eth_dma_cb(void *ctx, const struct dmaengine_result *result)
 {
 	struct sk_buff *skb = ctx;
 	struct ntrdma_eth *eth = ntrdma_net_eth(skb->dev);
