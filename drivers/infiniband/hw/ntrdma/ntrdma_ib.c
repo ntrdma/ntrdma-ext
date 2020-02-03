@@ -68,15 +68,11 @@ static int ntrdma_cq_file_release(struct inode *inode, struct file *filp);
 static long ntrdma_cq_file_ioctl(struct file *filp, unsigned int cmd,
 				unsigned long arg);
 
-static void ntrdma_qp_deferred_work(struct work_struct *ws);
-
 static struct kmem_cache *ah_slab;
 static struct kmem_cache *cq_slab;
 static struct kmem_cache *pd_slab;
 static struct kmem_cache *qp_slab;
 static struct kmem_cache *ibuctx_slab;
-
-static struct workqueue_struct *ntrdma_ib_workq;
 
 static struct file_operations ntrdma_qp_fops = {
 	.owner		= THIS_MODULE,
@@ -991,8 +987,6 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	memset(qp, 0, sizeof(*qp));
 
-	INIT_WORK(&qp->deferred_work, ntrdma_qp_deferred_work);
-
 	qp->qp_type = ibqp_attr->qp_type;
 	init_completion(&qp->enable_qpcb.cb.cmds_done);
 
@@ -1433,10 +1427,6 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 				qp->send_post, qp->send_prod, qp->send_cap);
 	}
 
-	qp->stop_deferred_work = true;
-	flush_work(&qp->deferred_work);
-	flush_work(&qp->deferred_work); /* In case the work scheduled itself. */
-
 	ntrdma_debugfs_qp_del(qp);
 
 	memset(&qpcb, 0, sizeof(qpcb));
@@ -1617,7 +1607,6 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
  * Otherwise, return 0.
  */
 static inline int ntrdma_post_send_wqe(struct ntrdma_qp *qp,
-				bool try_send_immediately,
 				struct ntrdma_send_wqe *wqe,
 				struct ib_sge *sg_list)
 {
@@ -1631,9 +1620,6 @@ static inline int ntrdma_post_send_wqe(struct ntrdma_qp *qp,
 	if (rc < 0)
 		return rc;
 
-	if (!try_send_immediately)
-		return 0;
-
 	if ((wqe->flags & IB_SEND_SIGNALED) ||
 		(wqe->op_code != IB_WR_RDMA_WRITE))
 		return 0;
@@ -1645,32 +1631,18 @@ static inline int ntrdma_post_send_wqe(struct ntrdma_qp *qp,
 	return 1;
 }
 
-static inline void ntrdma_qp_schedule_deferred_work(struct ntrdma_qp *qp)
-{
-	queue_work(ntrdma_ib_workq, &qp->deferred_work);
-}
-
-static inline void ntrdma_qp_perform_send_work_locked(struct ntrdma_qp *qp)
-{
+static inline void ntrdma_qp_additional_work(struct ntrdma_qp *qp,
+					bool has_deferred_work,
+					bool had_immediate_work) {
 	bool reschedule;
 
-	reschedule = ntrdma_qp_send_work(qp);
-	ntc_req_submit(qp->dma_chan);
-	if (reschedule)
-		ntrdma_qp_schedule_deferred_work(qp);
-}
-
-static void ntrdma_qp_deferred_work(struct work_struct *ws)
-{
-	struct ntrdma_qp *qp =
-		container_of(ws, struct ntrdma_qp, deferred_work);
-
-	mutex_lock(&qp->send_post_lock);
-
-	if (likely(!qp->stop_deferred_work))
-		ntrdma_qp_perform_send_work_locked(qp);
-
-	mutex_unlock(&qp->send_post_lock);
+	if (has_deferred_work)
+		do {
+			reschedule = ntrdma_qp_send_work(qp);
+			ntc_req_submit(qp->dma_chan);
+		} while (reschedule);
+	else if (had_immediate_work)
+		ntc_req_submit(qp->dma_chan);
 }
 
 
@@ -1716,7 +1688,6 @@ out:
 static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 					struct ib_send_wr *ibwr,
 					struct ib_send_wr **bad,
-					bool try_send_immediately,
 					bool *had_immediate_work,
 					bool *has_deferred_work)
 {
@@ -1772,8 +1743,7 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 
 			ntrdma_qp_start_measure(qp, wqe, pos);
 
-			rc = ntrdma_post_send_wqe(qp, try_send_immediately,
-						wqe, sg_list);
+			rc = ntrdma_post_send_wqe(qp, wqe, sg_list);
 			if (rc < 0)
 				break;
 
@@ -1816,30 +1786,20 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	bool had_immediate_work = false;
 	bool has_deferred_work = false;
-	bool try_send_immediately = (qp->qp_type != IB_QPT_GSI);
-
 	int rc;
 
 	ntrdma_qp_send_post_lock(qp);
 
 	if (likely(ntrdma_qp_is_send_ready(qp))) {
 		rc = ntrdma_post_send_locked(qp, ibwr, bad,
-					try_send_immediately,
 					&had_immediate_work,
 					&has_deferred_work);
-		if (had_immediate_work)
-			ntc_req_submit(qp->dma_chan);
+		ntrdma_qp_additional_work(qp, has_deferred_work,
+					had_immediate_work);
 	} else {
 		ntrdma_qp_err(qp, "QP %d state %d", qp->res.key,
 			atomic_read(&qp->state));
 		rc = -EINVAL;
-	}
-
-	if (has_deferred_work) {
-		if (try_send_immediately)
-			ntrdma_qp_perform_send_work_locked(qp);
-		else
-			ntrdma_qp_schedule_deferred_work(qp);
 	}
 
 	ntrdma_qp_send_post_unlock(qp);
@@ -2371,7 +2331,6 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 
 static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 						void volatile *_uptr,
-						bool try_send_immediately,
 						bool *had_immediate_work,
 						bool *has_deferred_work)
 {
@@ -2423,8 +2382,7 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 				break;
 			wqe_size = next_wqe_size;
 
-			if (try_send_immediately &&
-				!(wqe->flags & IB_SEND_SIGNALED) &&
+			if (!(wqe->flags & IB_SEND_SIGNALED) &&
 				(wqe->op_code == IB_WR_RDMA_WRITE)) {
 				rc = ntrdma_qp_rdma_write(qp, wqe);
 				if (unlikely(rc < 0)) {
@@ -2460,7 +2418,6 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 {
 	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 20);
-	bool try_send_immediately = (qp->qp_type != IB_QPT_GSI);
 	bool had_immediate_work = false;
 	bool has_deferred_work = false;
 	void volatile *_uptr;
@@ -2476,22 +2433,14 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 
 	if (likely(ntrdma_qp_is_send_ready(qp))) {
 		rc = ntrdma_qp_process_send_ioctl_locked(qp, _uptr,
-							try_send_immediately,
 							&had_immediate_work,
 							&has_deferred_work);
-		if (had_immediate_work)
-			ntc_req_submit(qp->dma_chan);
+		ntrdma_qp_additional_work(qp, has_deferred_work,
+					had_immediate_work);
 	} else {
 		ntrdma_qp_err(qp, "QP %d state %d", qp->res.key,
 			atomic_read(&qp->state));
 		rc = -EINVAL;
-	}
-
-	if (has_deferred_work) {
-		if (try_send_immediately)
-			ntrdma_qp_perform_send_work_locked(qp);
-		else
-			ntrdma_qp_schedule_deferred_work(qp);
 	}
 
 	ntrdma_qp_send_post_unlock(qp);
@@ -2631,14 +2580,6 @@ int __init ntrdma_ib_module_init(void)
 			(IB_WR_RDMA_READ == NTRDMA_WR_RDMA_READ),
 			"IB_WR and NTRDMA_WR enums must match for supported");
 
-	ntrdma_ib_workq =
-		alloc_workqueue("ntrdma-ib", WQ_UNBOUND | WQ_MEM_RECLAIM |
-				WQ_SYSFS, 0);
-	if (!ntrdma_ib_workq) {
-		ntrdma_ib_module_deinit();
-		return -ENOMEM;
-	}
-
 	if (!((ah_slab = KMEM_CACHE(ntrdma_ah, 0)) &&
 			(cq_slab = KMEM_CACHE(ntrdma_cq, 0)) &&
 			(pd_slab = KMEM_CACHE(ntrdma_pd, 0)) &&
@@ -2659,9 +2600,4 @@ void ntrdma_ib_module_deinit(void)
 	ntrdma_deinit_slab(&pd_slab);
 	ntrdma_deinit_slab(&qp_slab);
 	ntrdma_deinit_slab(&ibuctx_slab);
-
-	if (ntrdma_ib_workq) {
-		destroy_workqueue(ntrdma_ib_workq);
-		ntrdma_ib_workq = NULL;
-	}
 }
