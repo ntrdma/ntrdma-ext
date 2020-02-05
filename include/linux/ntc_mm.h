@@ -72,7 +72,7 @@ static inline int _ntc_mm_chunk_size(int size)
 	if (unlikely(clz < 2))
 		return 0;
 
-	if (size << (clz + 1))
+	if ((size << (clz + 1)) != 0)
 		return 1 << (8 * sizeof(int) - clz);
 	else
 		return 1 << (8 * sizeof(int) - clz - 1);
