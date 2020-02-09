@@ -80,7 +80,6 @@ static inline void __lame_iowrite64(u64 val, void __iomem *ptr)
 #define MAX_DMA_PREP_RETRIES 100000
 
 enum ntc_dma_chan_type {
-	NTC_DEV_DMA_CHAN,
 	NTC_ETH_DMA_CHAN,
 	NTC_QP_DMA_CHAN,
 	NTC_NUM_DMA_CHAN_TYPES
@@ -200,6 +199,7 @@ struct ntc_remote_buf_desc {
 struct ntc_remote_buf {
 	u64 size;
 	dma_addr_t dma_addr;
+	void __iomem *io_addr;
 };
 
 struct ntc_dma_chan {
@@ -462,6 +462,7 @@ static inline struct ntc_peer_mw *ntc_peer_mw(struct ntc_dev *ntc,
  * ntc_peer_addr() - transform a channel-mapped address into a peer address
  * @ntc:	Device context.
  * @addr:	Channel-mapped address of a remote buffer.
+ * @io_addr:	Output parameter: translated peer IO address.
  *
  * Transform a channel-mapped address of a remote buffer, mapped by the peer,
  * into a peer address to be used as the destination of a channel request.
@@ -477,7 +478,8 @@ static inline struct ntc_peer_mw *ntc_peer_mw(struct ntc_dev *ntc,
  * Return: The translated peer address.
  */
 static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
-					const union ntc_chan_addr *chan_addr)
+					const union ntc_chan_addr *chan_addr,
+					void __iomem **io_addr)
 {
 	struct ntc_peer_mw *peer_mw = ntc_peer_mw(ntc, chan_addr);
 	u64 offset = chan_addr->offset;
@@ -490,6 +492,8 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 			offset, peer_mw->size);
 		return 0;
 	}
+
+	*io_addr = peer_mw->base_ptr + offset;
 
 	return peer_mw->base + offset;
 }
@@ -596,7 +600,8 @@ void inc_dma_reject_counter(void);
  */
 static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 				dma_addr_t dst, dma_addr_t src, u64 len,
-				bool fence, void (*cb)(void *cb_ctx,
+				bool fence,
+				void (*cb)(void *cb_ctx,
 					const struct dmaengine_result *result),
 				void *cb_ctx, u64 wrid, int dma_wait)
 {
@@ -696,10 +701,42 @@ static inline bool ntc_segment_valid(u64 buf_size, u64 buf_offset, u64 len)
 	return true;
 }
 
+static inline int ntc_memcpy(const struct ntc_remote_buf *dst,
+			u64 dst_offset,
+			const struct ntc_local_buf *src,
+			u64 src_offset,
+			u64 len)
+{
+	if (unlikely(!dst->io_addr))
+		return -EINVAL;
+
+	if (unlikely(!ntc_segment_valid(src->size, src_offset, len)))
+		return -EINVAL;
+
+	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, len)))
+		return -EINVAL;
+
+	memcpy_toio(dst->io_addr + dst_offset, src->ptr + src_offset, len);
+	return 0;
+}
+
+static inline int ntc_imm32(const struct ntc_remote_buf *dst,
+			u64 dst_offset, u32 val)
+{
+	if (unlikely(!dst->io_addr))
+		return -EINVAL;
+
+	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, sizeof(u32))))
+		return -EINVAL;
+
+	memcpy_toio(dst->io_addr + dst_offset, &val, sizeof(u32));
+	return 0;
+}
+
 static inline
 int _ntc_request_memcpy(struct ntc_dma_chan *chan,
-			dma_addr_t dst_start, u64 dst_size, u64 dst_offset,
-			dma_addr_t src_start, u64 src_size, u64 src_offset,
+			dma_addr_t dst_start, u64 dst_offset,
+			dma_addr_t src_start, u64 src_offset,
 			u64 len, bool fence,
 			void (*cb)(void *cb_ctx,
 				const struct dmaengine_result *result),
@@ -717,15 +754,16 @@ void ntc_prepare_to_copy(struct ntc_dma_chan *chan, dma_addr_t dma_addr, u64 len
 				DMA_TO_DEVICE);
 }
 
-static inline int ntc_request_memcpy_with_cb(struct ntc_dma_chan *chan,
-					const struct ntc_remote_buf *dst,
-					u64 dst_offset,
-					const struct ntc_local_buf *src,
-					u64 src_offset,
-					u64 len,
-					void (*cb)(void *cb_ctx,
-					const struct dmaengine_result *result),
-					void *cb_ctx, bool dma_wait)
+static inline
+int ntc_request_memcpy_with_cb(struct ntc_dma_chan *chan,
+			const struct ntc_remote_buf *dst,
+			u64 dst_offset,
+			const struct ntc_local_buf *src,
+			u64 src_offset,
+			u64 len,
+			void (*cb)(void *cb_ctx,
+				const struct dmaengine_result *result),
+			void *cb_ctx, int dma_wait)
 {
 	if (unlikely(len == 0))
 		return 0;
@@ -739,8 +777,8 @@ static inline int ntc_request_memcpy_with_cb(struct ntc_dma_chan *chan,
 	ntc_prepare_to_copy(chan, src->dma_addr + src_offset, len);
 
 	return _ntc_request_memcpy(chan,
-				dst->dma_addr, dst->size, dst_offset,
-				src->dma_addr, src->size, src_offset,
+				dst->dma_addr, dst_offset,
+				src->dma_addr, src_offset,
 				len, false, cb, cb_ctx, dma_wait);
 }
 
@@ -760,8 +798,8 @@ static inline int ntc_request_memcpy(struct ntc_dma_chan *chan,
 	ntc_prepare_to_copy(chan, src->dma_addr + src_offset, len);
 
 	return _ntc_request_memcpy(chan,
-				dst->dma_addr, dst->size, dst_offset,
-				src->dma_addr, src->size, src_offset,
+				dst->dma_addr, dst_offset,
+				src->dma_addr, src_offset,
 				len, fence, NULL, NULL, dma_wait);
 }
 
@@ -804,8 +842,8 @@ int ntc_mr_request_memcpy_unfenced(struct ntc_dma_chan *chan,
 	ntc_prepare_to_copy(chan, src->dma_addr + src_offset, len);
 
 	return _ntc_request_memcpy(chan,
-				dst->dma_addr, dst->size, dst_offset,
-				src->dma_addr, src->size, src_offset,
+				dst->dma_addr, dst_offset,
+				src->dma_addr, src_offset,
 				len, false, NULL, NULL, dma_wait);
 }
 
@@ -966,6 +1004,29 @@ int ntc_mr_request_memcpy_unfenced_imm(struct ntc_dma_chan *chan,
  */
 int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
 		void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
+
+/**
+ * ntc_signal() - append an operation to signal the peer
+ * @ntc:	Device context.
+ *
+ * Append an operation to signal the peer.  The peer driver will be receive
+ * ntc_signal_event() after processing this operation.
+ *
+ * The channel implementation may coalesce interrupts to the peer driver,
+ * therefore the upper layer must not rely on a one-to-one correspondence of
+ * signals requested, and signal events received.  The only guarantee is that
+ * at least one signal event will be received after the last signal requested.
+ *
+ * The upper layer should attempt to minimize the frequency of signal requests.
+ * Signal requests may be implemented as small operations processed as dma
+ * requests, and many small dma requests may impact the throughput performance
+ * of the channel.  Furthermore, the channel may not coalesce interrupts, and a
+ * high frequency of interrupts may impact the scheduling performance of the
+ * peer.
+ *
+ * Return: Zero on success, othewise an error number.
+ */
+int ntc_signal(struct ntc_dev *ntc, int vec);
 
 static inline int ntc_phys_local_buf_map(struct ntc_local_buf *buf,
 					struct ntc_dev *ntc)
@@ -1705,6 +1766,7 @@ ntc_remote_buf_desc_clip(struct ntc_remote_buf_desc *desc, u64 offset, u64 len)
 static inline void ntc_remote_buf_clear(struct ntc_remote_buf *buf)
 {
 	buf->dma_addr = 0;
+	buf->io_addr = 0;
 	buf->size = 0;
 }
 
@@ -1731,13 +1793,14 @@ static inline int ntc_remote_buf_map(struct ntc_remote_buf *buf,
 	struct device *dev = ntc->ntb_dev;
 	phys_addr_t ptr;
 	dma_addr_t dma_addr;
+	void __iomem *io_addr;
 
 	ntc_remote_buf_clear(buf);
 
 	if (!desc->chan_addr.value)
 		return 0;
 
-	ptr = ntc_peer_addr(ntc, &desc->chan_addr);
+	ptr = ntc_peer_addr(ntc, &desc->chan_addr, &io_addr);
 	if (unlikely(!ptr))
 		return -EIO;
 
@@ -1746,6 +1809,7 @@ static inline int ntc_remote_buf_map(struct ntc_remote_buf *buf,
 		return -EIO;
 
 	buf->dma_addr = dma_addr;
+	buf->io_addr = io_addr;
 	buf->size = desc->size;
 
 	return 0;
