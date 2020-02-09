@@ -252,6 +252,33 @@ exit_unlock:
 	return rc;
 }
 
+int ntrdma_dev_vbell_peer_direct(struct ntrdma_dev *dev, u32 idx)
+{
+	struct ntrdma_peer_vbell *peer_vbell = &dev->peer_vbell[idx];
+	int rc = 0;
+
+	TRACE_DEBUG("vbell peer idx %d\n", idx);
+
+	spin_lock_bh(&peer_vbell->lock);
+
+	if (unlikely(!peer_vbell->enabled)) {
+		ntrdma_err(dev, "peer vbell disabled");
+		rc = -EINVAL;
+		goto exit_unlock;
+	}
+
+	rc = ntc_imm32(&dev->peer_vbell_buf, idx * sizeof(u32),
+		++peer_vbell->seq);
+
+	if (unlikely(rc < 0))
+		ntrdma_err(dev, "ntc_imm32 failed. rc=%d", rc);
+
+exit_unlock:
+	spin_unlock_bh(&peer_vbell->lock);
+
+	return rc;
+}
+
 static void vbell_tasklet_cb(void *cb_ctx)
 {
 	struct tasklet_struct *tasklet = cb_ctx;
