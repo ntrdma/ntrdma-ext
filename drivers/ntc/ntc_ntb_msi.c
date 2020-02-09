@@ -1171,6 +1171,20 @@ err_imm:
 }
 EXPORT_SYMBOL(ntc_req_imm);
 
+int ntc_signal(struct ntc_dev *ntc, int vec)
+{
+	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+	u64 db_bits = 1;
+
+	ntc_ntb_dev_vdbg(dev, "send signal to peer");
+
+	if (WARN_ON(ntc->peer_irq_num <= vec))
+		return -EFAULT;
+
+	return ntb_peer_db_set(dev->ntb, db_bits << vec);
+}
+EXPORT_SYMBOL(ntc_signal);
+
 int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
 		void (*cb)(void *cb_ctx), void *cb_ctx, int vec)
 {
@@ -1276,22 +1290,23 @@ static int ntc_ntb_init_peer(struct ntc_ntb_dev *dev, int mw_idx,
 	peer_mw->ntc = ntc;
 	peer_mw->base_ptr = NULL;
 
-	info("PEER MW: idx %d base %#llx size %#llx",
-		mw_idx, peer_mw->base, peer_mw->size);
-
 	if ((peer_mw->size < deref_size) || !peer_mw->base) {
 		pr_debug("Not enough peer memory for %#lx bytes.", deref_size);
 		return -ENOMEM;
 	}
 
-	if (!deref_size)
-		return 0;
-
-	peer_mw->base_ptr = ioremap(peer_mw->base, deref_size);
+	peer_mw->base_ptr = ioremap(peer_mw->base, peer_mw->size);
 	if (!peer_mw->base_ptr) {
-		info("Failed to remap peer memory.");
+		info("Failed to remap peer memory of size %#llx",
+			peer_mw->size);
 		return -EIO;
 	}
+
+	info("PEER MW: idx %d base %#llx base_ptr %#lx size %#llx",
+		mw_idx, peer_mw->base, (long)peer_mw->base_ptr, peer_mw->size);
+
+	if (!deref_size)
+		return 0;
 
 	memset_io(peer_mw->base_ptr, 0, deref_size);
 	dev->self_info_done = 0;

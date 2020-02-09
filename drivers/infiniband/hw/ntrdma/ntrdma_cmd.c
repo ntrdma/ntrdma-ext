@@ -179,7 +179,6 @@ deinit:
 	WARN(dev->is_cmd_prep, "Deinit while cmd prep not unprep");
 	ntrdma_work_vbell_kill(&dev->cmd_send_vbell);
 	ntrdma_work_vbell_kill(&dev->cmd_recv_vbell);
-	ntc_dma_flush(dev->dma_chan);
 	ntc_export_buf_free(&dev->cmd_send_rsp_buf);
 err_send_rsp_buf:
 	ntc_local_buf_free(&dev->cmd_send_buf, dev->ntc);
@@ -381,7 +380,6 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 
 	ntrdma_work_vbell_flush(&dev->cmd_send_vbell);
 	ntrdma_work_vbell_flush(&dev->cmd_recv_vbell);
-	ntc_dma_flush(dev->dma_chan);
 	ntrdma_vbell_enable(&dev->cmd_recv_vbell);
 	ntrdma_vbell_enable(&dev->cmd_send_vbell);
 
@@ -588,45 +586,40 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			off = start * sizeof(union ntrdma_cmd);
 			len = (pos - start) * sizeof(union ntrdma_cmd);
-			rc = ntc_request_memcpy_fenced(dev->dma_chan,
-						&dev->peer_cmd_recv_buf, off,
-						&dev->cmd_send_buf, off,
-						len, NTC_DMA_WAIT);
+			rc = ntc_memcpy(&dev->peer_cmd_recv_buf, off,
+					&dev->cmd_send_buf, off, len);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_memcpy failed. rc=%d", rc);
+					"ntc_memcpy failed. rc=%d", rc);
 				goto dma_err;
 			}
 
 			/* update the producer index on the peer */
-			rc = ntc_request_imm32(dev->dma_chan,
-					&dev->peer_cmd_recv_buf,
-					dev->peer_recv_prod_shift,
-					dev->cmd_send_prod, true, NULL, NULL);
+			rc = ntc_imm32(&dev->peer_cmd_recv_buf,
+				dev->peer_recv_prod_shift,
+				dev->cmd_send_prod);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_imm32 failed. rc=%d", rc);
+					"ntc_imm32 failed. rc=%d", rc);
 				goto dma_err;
 			}
 
 			/* update the vbell and signal the peer */
-			rc = ntrdma_dev_vbell_peer(dev, dev->dma_chan,
+			rc = ntrdma_dev_vbell_peer_direct(dev,
 						dev->peer_cmd_recv_vbell_idx);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntrdma_dev_vbell_peer failed. rc=%d",
+					"ntrdma_dev_vbell_peer_direct: rc=%d",
 					rc);
 				goto dma_err;
 			}
 
-			rc = ntc_req_signal(dev->ntc, dev->dma_chan, NULL, NULL,
-					NTB_DEFAULT_VEC(dev->ntc));
+			rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
 			if (unlikely(rc < 0)) {
-				ntrdma_err(dev, "ntc_req_signal failed. rc=%d",
+				ntrdma_err(dev, "ntc_signal failed. rc=%d",
 					rc);
 				goto dma_err;
 			}
-			ntc_req_submit(dev->dma_chan);
 
 			TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
 				(pos - start), start,
@@ -1278,48 +1271,42 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 			off = start * sizeof(union ntrdma_rsp);
 			len = (pos - start) * sizeof(union ntrdma_rsp);
-			rc = ntc_request_memcpy_fenced(dev->dma_chan,
-						&dev->peer_cmd_send_rsp_buf,
-						off,
-						&dev->cmd_recv_rsp_buf, off,
-						len, NTC_DMA_WAIT);
+			rc = ntc_memcpy(&dev->peer_cmd_send_rsp_buf, off,
+					&dev->cmd_recv_rsp_buf, off, len);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_memcpy failed. rc=%d", rc);
+					"ntc_memcpy failed. rc=%d", rc);
 				goto dma_err;
 			}
 
 			/* update the producer index on the peer */
-			rc = ntc_request_imm32(dev->dma_chan,
-					&dev->peer_cmd_send_rsp_buf,
-					dev->peer_send_cons_shift,
-					dev->cmd_recv_cons, true, NULL, NULL);
+			rc = ntc_imm32(&dev->peer_cmd_send_rsp_buf,
+				dev->peer_send_cons_shift,
+				dev->cmd_recv_cons);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_imm32 failed. rc=%d", rc);
+					"ntc_imm32 failed. rc=%d", rc);
 				goto dma_err;
 			}
 
 			/* update the vbell and signal the peer */
 
-			rc = ntrdma_dev_vbell_peer(dev, dev->dma_chan,
+			rc = ntrdma_dev_vbell_peer_direct(dev,
 						dev->peer_cmd_send_vbell_idx);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntrdma_dev_vbell_peer failed. rc=%d",
+					"ntrdma_dev_vbell_peer_direct: rc=%d",
 					rc);
 				goto dma_err;
 			}
 
-			rc = ntc_req_signal(dev->ntc, dev->dma_chan, NULL, NULL,
-					NTB_DEFAULT_VEC(dev->ntc));
+			rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
 			if (unlikely(rc < 0)) {
-				ntrdma_err(dev, "ntc_req_signal failed. rc=%d",
+				ntrdma_err(dev, "ntc_signal failed. rc=%d",
 					rc);
 				goto dma_err;
 			}
 
-			ntc_req_submit(dev->dma_chan);
 			ntrdma_vbell_trigger(&dev->cmd_recv_vbell);
 		} else
 			ntrdma_vbell_readd(&dev->cmd_recv_vbell);
