@@ -44,6 +44,7 @@
 #include "ntrdma_qp.h"
 #include "ntrdma_cq.h"
 #include "ntrdma_zip.h"
+#include "ntrdma-trace.h"
 
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
@@ -2026,10 +2027,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		}
 
 		if (wqe.flags & IB_SEND_SIGNALED) {
-			TRACE_DATA(
-				"OPCODE %d: flags %x, addr %llx QP %d num sges %d wrid %llu status %d",
-				wqe.op_code, wqe.flags, wqe.rdma_sge.addr, qp->res.key,
-				wqe.sg_count, cqe->ulp_handle, cqe->op_status);
+			trace_rqp_work(wqe.op_code, wqe.flags,
+				wqe.rdma_sge.addr, qp->res.key, wqe.sg_count,
+				cqe->ulp_handle, cqe->op_status);
 		}
 		if (recv_pos == recv_end) {
 			ntrdma_qp_recv_cons_put(qp, recv_pos, recv_base);
@@ -2099,7 +2099,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			goto err_memcpy;
 		}
 
-		TRACE_DATA(
+		TRACE_DEBUG(
 				"Signal QP %d RQP %d cons %u start %u pos %u peer vbell idx %d\n",
 				qp->res.key, qp->rqp_key,
 				rqp->send_cons,
@@ -2208,7 +2208,6 @@ void ntrdma_free_rqp(struct ntrdma_rqp *rqp)
 	kmem_cache_free(rqp_slab, rqp);
 }
 
-
 int __init ntrdma_qp_module_init(void)
 {
 	if (!((rqp_slab = KMEM_CACHE(ntrdma_rqp, 0)) &&
@@ -2218,7 +2217,6 @@ int __init ntrdma_qp_module_init(void)
 		pr_err("%s rqp_slab invalid", __func__);
 		return -ENOMEM;
 	}
-
 	return 0;
 }
 

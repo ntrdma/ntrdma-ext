@@ -39,7 +39,7 @@
 #include <linux/smp.h>
 
 #define TRACE_EN
-#define TRACE_DATA_ENABLE
+/* #define TRACE_DEBUG_ENABLE */
 
 #ifdef TRACE_EN
 #define TRACE(fmt, ...) do {						\
@@ -56,10 +56,10 @@
 #define TRACE(...) do {} while (0)
 #endif
 
-#ifdef TRACE_DATA_ENABLE
-#define TRACE_DATA(...) TRACE(__VA_ARGS__)
+#ifdef TRACE_DEBUG_ENABLE
+#define TRACE_DEBUG(...) TRACE(__VA_ARGS__)
 #else
-#define TRACE_DATA(...) do {} while (0)
+#define TRACE_DEBUG(...) do {} while (0)
 #endif
 
 #ifdef TRACE_DBG_ENABLE
