@@ -228,7 +228,7 @@ int ntrdma_dev_vbell_peer(struct ntrdma_dev *dev,
 	struct ntrdma_peer_vbell *peer_vbell = &dev->peer_vbell[idx];
 	int rc = 0;
 
-	TRACE_DATA("vbell peer idx %d\n", idx);
+	TRACE_DEBUG("vbell peer idx %d\n", idx);
 
 	spin_lock_bh(&peer_vbell->lock);
 

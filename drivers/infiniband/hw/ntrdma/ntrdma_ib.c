@@ -52,6 +52,7 @@
 #include "ntrdma_qp.h"
 #include "ntrdma_wr.h"
 #include "ntrdma_eth.h"
+#include "ntrdma-trace.h"
 
 #define NTRDMA_PKEY_DEFAULT 0xffff
 #define NTRDMA_GIB_TBL_LEN 1
@@ -675,11 +676,9 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 					(cqe.flags & IB_SEND_SIGNALED)) {
 				/* transform the entry into the work completion */
 				ntrdma_ib_wc_from_cqe(&ibwc[count], qp, &cqe);
-				TRACE_DATA(
-						"OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u flags %d\n",
+				trace_poll_cq(ibwc[count].wr_id,
 						ibwc[count].opcode,
 						cqe.op_code,
-						ibwc[count].wr_id,
 						qp->res.key,
 						ibwc[count].status,
 						pos,
@@ -808,11 +807,10 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 					(cqe.flags & IB_SEND_SIGNALED)) {
 				/* transform the entry into work completion */
 				ntrdma_wc_from_cqe(&wc[count], qp, &cqe);
-				TRACE_DATA(
-					"OPCODE %d(%d): wrid %llu QP %d status %d pos %u end %u flags %d\n",
+				trace_poll_ioctl(
+					wc[count].wr_id,
 					wc[count].opcode,
 					cqe.op_code,
-					wc[count].wr_id,
 					qp->res.key,
 					wc[count].status,
 					pos,

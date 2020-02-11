@@ -34,6 +34,8 @@
 #include "ntrdma_wr.h"
 #include "ntrdma_mr.h"
 #include "ntrdma_zip.h"
+#define CREATE_TRACE_POINTS
+#include "ntrdma-trace.h"
 
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
@@ -463,16 +465,12 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 						rcv_buf, rcv->next_io_off,
 						snd->mr_sge, snd->next_io_off,
 						len);
-		TRACE_DATA(
-				"wrid 0x%llx src phy 0x%llx src vir 0x%llx, dst phy 0x%llx dst vir 0x%llx, len 0x%llx, rc %d",
-				wrid,
-				snd->snd_sge->addr + snd->next_io_off,
+		trace_dma_cpy(wrid, snd->snd_sge->addr + snd->next_io_off,
 				(u64)snd->mr_sge->dma_addr + snd->next_io_off,
 				rcv->rcv_sge->exp_buf_desc.chan_addr.value +
 					rcv->next_io_off,
 				(u64)rcv_buf->dma_addr + rcv->next_io_off,
-				len,
-				rc);
+				len, rc);
 	} else {
 		TRACE("DMA copy %#lx bytes from %#lx offset %#lx\n",
 			(long)len, (long)snd->snd_sge->addr,
@@ -484,16 +482,12 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 		rc = ntc_request_memcpy_fenced(chan, rcv_buf, rcv->next_io_off,
 					&snd_dma_buf,
 					snd->next_io_off, len);
-		TRACE_DATA(
-				"wrid 0x%llx src vir 0x%llx src phy 0x%llx, dst phy 0x%llx dst vir 0x%llx, len 0x%llx, rc %d",
-				wrid,
+		trace_dma_cpy(wrid, (u64)snd_dma_buf.ptr + snd->next_io_off,
 				snd->snd_sge->addr + snd->next_io_off,
-				(u64)snd_dma_buf.ptr + snd->next_io_off,
 				rcv->rcv_sge->exp_buf_desc.chan_addr.value +
 					rcv->next_io_off,
 				(u64)rcv_buf->dma_addr + rcv->next_io_off,
-				len,
-				rc);
+				len, rc);
 	}
 
 	if (!rcv->rmr)
@@ -613,15 +607,11 @@ static inline s64 ntrdma_cursor_next_imm_io(struct ntrdma_dev *dev,
 	rc = ntc_mr_request_memcpy_unfenced_imm(chan, rcv_buf, rcv->next_io_off,
 						snd_data, len, wrid);
 
-	TRACE_DATA(
-			"wrid 0x%llx snd data 0x%llx, dst phy 0x%llx dst vir 0x%llx, len 0x%llx, rc %d",
-			wrid,
-			*((u64 *)snd_data),
+	trace_imm_dma_cpy(wrid, *((u64 *)snd_data),
 			rcv->rcv_sge->exp_buf_desc.chan_addr.value +
 				rcv->next_io_off,
 			(u64)rcv_buf->dma_addr + rcv->next_io_off,
-			len,
-			rc);
+			len, rc);
 	if (!rcv->rmr)
 		ntc_remote_buf_unmap(&remote, ntc);
 
