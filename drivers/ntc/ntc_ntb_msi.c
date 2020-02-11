@@ -49,6 +49,8 @@
 #include <asm/e820/api.h>
 
 #include "ntc_internal.h"
+#define CREATE_TRACE_POINTS
+#include "ntc-trace.h"
 
 #define DRIVER_NAME			"ntc_ntb"
 #define DRIVER_DESCRIPTION		"NTC Non Transparent Bridge"
@@ -1057,11 +1059,9 @@ static void ntc_req_imm_cb(void *ctx, const struct dmaengine_result *result)
 	}
 	if (imm->data_trace) {
 		WARN_ON(result == NULL);
-		TRACE_DATA(
-			"Completion of wrid %#llx addr %#llx len %zu, result %d, residue %d",
-			imm->wrid, imm->dma_addr, imm->data_len,
-			result ? result->result : -1,
-			result ? result->residue : -1);
+		trace_dma_completion(imm->wrid, imm->dma_addr, imm->data_len,
+				result ? result->result : -1,
+				result ? result->residue : -1);
 	}
 	kmem_cache_free(imm_slab, imm);
 }
