@@ -769,10 +769,10 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	switch (dev->link_state) {
 	case NTC_NTB_LINK_QUIESCE:
 		ntc_ntb_quiesce(dev);
-		/* no break */
+		/* fall through */
 	case NTC_NTB_LINK_RESET:
 		ntc_ntb_reset(dev);
-		/* no break */
+		/* fall through */
 	case NTC_NTB_LINK_START:
 		switch (link_event) {
 		default:
@@ -784,6 +784,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		if (dev->link_state != NTC_NTB_LINK_VER_SENT)
 			goto out;
+		/* fall through */
 
 	case NTC_NTB_LINK_VER_SENT:
 		switch (link_event) {
@@ -798,6 +799,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		if (dev->link_state != NTC_NTB_LINK_VER_CHOSEN)
 			goto out;
+		/* fall through */
 
 	case NTC_NTB_LINK_VER_CHOSEN:
 		switch (link_event) {
@@ -813,6 +815,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		if (dev->link_state != NTC_NTB_LINK_DB_CONFIGURED)
 			goto out;
+		/* fall through */
 
 	case NTC_NTB_LINK_DB_CONFIGURED:
 		switch (link_event) {
@@ -827,6 +830,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		if (dev->link_state != NTC_NTB_LINK_COMMITTED)
 			goto out;
+		/* fall through */
 
 	case NTC_NTB_LINK_COMMITTED:
 		switch (link_event) {
@@ -875,6 +879,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 		switch (link_event - dev->link_state) {
 		default:
 			ntc_ntb_error(dev);
+			/* fall through */
 		case -1:
 			dev_dbg(&dev->ntc.dev, "peer is not done hello\n");
 			goto out;
