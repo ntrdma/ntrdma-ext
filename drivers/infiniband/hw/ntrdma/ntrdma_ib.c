@@ -61,6 +61,24 @@
 #define DELL_VENDOR_ID 0x1028
 #define NOT_SUPPORTED 0
 
+
+#define NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT 400 
+#define NTRDMA_IB_PERF_INIT unsigned long ___ts_ = 0; \
+				unsigned long ___tt_ = 0; \
+				unsigned ___perf_ = 0
+#define NTRDMA_IB_PERF_START ___ts_ = jiffies
+#define NTRDMA_IB_PERF_END(method_name) do {\
+					___tt_ = jiffies - ___ts_; \
+					___perf_ = jiffies_to_msecs(___tt_);\
+					if(___perf_ >= NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT) { \
+							TRACE(\
+							"performance time of method %s: %u miliseconds", \
+							#method_name, \
+							___perf_); \
+						} \
+					} while (0)
+
+
 static int ntrdma_qp_file_release(struct inode *inode, struct file *filp);
 static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
 				unsigned long arg);
@@ -363,6 +381,9 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	int flags;
 	int rc;
 
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
+
 	if (atomic_inc_return(&dev->cq_num) >= NTRDMA_DEV_MAX_CQ) {
 		ntrdma_err(dev, "cq beyond supported number %d\n",
 				NTRDMA_DEV_MAX_CQ);
@@ -442,6 +463,8 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 				PTR_ERR(file));
 			ntrdma_cq_put(cq); /* The initial ref */
 			put_unused_fd(outbuf.cqfd);
+
+			NTRDMA_IB_PERF_END(ntrdma_create_cq);
 			return (void *)file;
 		}
 		/*
@@ -483,12 +506,15 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		&cq->ibcq, vbell_idx);
 
 	cq->ibcq_valid = true;
-
+	
+	NTRDMA_IB_PERF_END(ntrdma_create_cq);
 	return &cq->ibcq;
 
 err_cq:
 	atomic_dec(&dev->cq_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
+
+	NTRDMA_IB_PERF_END(ntrdma_create_cq);
 	return ERR_PTR(rc);
 }
 
@@ -513,6 +539,9 @@ static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
 	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
 
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
+
 	spin_lock_bh(&cq->arm_lock);
 	cq->ibcq_valid = false;
 	spin_unlock_bh(&cq->arm_lock);
@@ -529,6 +558,8 @@ static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 
 	ntrdma_cq_put(cq);
 
+
+	NTRDMA_IB_PERF_END(ntrdma_destroy_cq);
 	return 0;
 }
 
@@ -654,6 +685,9 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	int count_s = 0, count_ns = 0, count_gsi = 0, rc = 0;
 	int count = 0;
 
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
+
 	/* lock for completions */
 	mutex_lock(&cq->poll_lock);
 
@@ -715,11 +749,18 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	if (count) {
 		this_cpu_add(dev_cnt.cqes_polled_s, count_s);
 		this_cpu_add(dev_cnt.cqes_polled_ns, count_ns);
+		
+		NTRDMA_IB_PERF_END(ntrdma_poll_cq);
 		return (count);
 	}
-	if ((rc == -EAGAIN) || (rc > 0))
+	if ((rc == -EAGAIN) || (rc > 0)) {
+		NTRDMA_IB_PERF_END(ntrdma_poll_cq);	
 		return 0;
+	}	
+
 	ntrdma_cq_err(cq, "rc %d", rc);
+
+	NTRDMA_IB_PERF_END(ntrdma_poll_cq);
 	return rc;
 }
 
@@ -727,8 +768,13 @@ static int ntrdma_req_notify_cq(struct ib_cq *ibcq,
 				enum ib_cq_notify_flags flags)
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
+	
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
 
 	ntrdma_cq_arm(cq);
+
+	NTRDMA_IB_PERF_END(ntrdma_req_notify_cq);
 
 	return 0;
 }
@@ -888,6 +934,9 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	struct ntrdma_pd *pd;
 	int rc;
 
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
+
 	ntrdma_vdbg(dev, "called\n");
 
 	if (atomic_inc_return(&dev->pd_num) >= NTRDMA_DEV_MAX_PD) {
@@ -915,12 +964,16 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	mutex_unlock(&dev->res_lock);
 
 	ntrdma_dbg(dev, "added pd key=%d", pd->key);
+	
 
+	NTRDMA_IB_PERF_END(ntrdma_alloc_pd);
 	return &pd->ibpd;
 
 err_pd:
 	atomic_dec(&dev->pd_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
+
+	NTRDMA_IB_PERF_END(ntrdma_alloc_pd);
 	return ERR_PTR(rc);
 }
 static void ntrdma_pd_release(struct kref *kref)
@@ -937,13 +990,18 @@ static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 {
 	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
+	
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
 
 	mutex_lock(&dev->res_lock);
 	list_del(&pd->obj.dev_entry);
 	mutex_unlock(&dev->res_lock);
 
 	ntrdma_pd_put(pd);
+	
 
+	NTRDMA_IB_PERF_END(ntrdma_dealloc_pd);
 	return 0;
 }
 
@@ -968,6 +1026,9 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	struct ntrdma_qp_cmd_cb qpcb;
 	int flags;
 	int rc;
+
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
 
 	if (atomic_inc_return(&dev->qp_num) >= NTRDMA_DEV_MAX_QP) {
 		ntrdma_err(dev, "beyond supported number %d\n",
@@ -1045,6 +1106,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		if (copy_from_user(&inbuf, ibudata->inbuf, sizeof(inbuf))) {
 			ntrdma_qp_err(qp, "copy_from_user failed");
 			ntrdma_qp_put(qp); /* The initial ref */
+
+			NTRDMA_IB_PERF_END(ntrdma_create_qp);
 			return ERR_PTR(-EFAULT);
 		}
 
@@ -1056,6 +1119,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		if (!inbuf.send_page_ptr) {
 			ntrdma_qp_err(qp, "inbuf.send_page_ptr is NULL");
 			ntrdma_qp_put(qp); /* The initial ref */
+
+			NTRDMA_IB_PERF_END(ntrdma_create_qp);
 			return ERR_PTR(-EINVAL);
 		}
 
@@ -1064,6 +1129,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		if (rc < 0) {
 			ntrdma_qp_err(qp, "get_user_pages_fast failed: %d", rc);
 			ntrdma_qp_put(qp); /* The initial ref */
+
+			NTRDMA_IB_PERF_END(ntrdma_create_qp);
 			return ERR_PTR(rc);
 		}
 	}
@@ -1079,6 +1146,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			ntrdma_qp_err(qp, "get_unused_fd_flags failed: %d",
 				outbuf.qpfd);
 			ntrdma_qp_put(qp); /* The initial ref */
+
+			NTRDMA_IB_PERF_END(ntrdma_create_qp);
 			return ERR_PTR(outbuf.qpfd);
 		}
 
@@ -1089,6 +1158,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 				PTR_ERR(file));
 			ntrdma_qp_put(qp); /* The initial ref */
 			put_unused_fd(outbuf.qpfd);
+
+			NTRDMA_IB_PERF_END(ntrdma_create_qp);
 			return (void *)file;
 		}
 		/*
@@ -1101,6 +1172,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			fput(file); /* Close the file. */
 			ntrdma_qp_put(qp); /* The initial ref */
 			put_unused_fd(outbuf.qpfd);
+
+			NTRDMA_IB_PERF_END(ntrdma_create_qp);
 			return ERR_PTR(-EFAULT);
 		}
 
@@ -1113,7 +1186,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	ntrdma_qp_dbg(qp, "added QP %d type %d",
 			qp->res.key, ibqp_attr->qp_type);
-
+	
+	NTRDMA_IB_PERF_END(ntrdma_create_qp);
 	return &qp->ibqp;
 
 err_add:
@@ -1123,6 +1197,8 @@ err_init:
 err_qp:
 	atomic_dec(&dev->qp_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
+
+	NTRDMA_IB_PERF_END(ntrdma_create_qp);
 	return ERR_PTR(rc);
 }
 
@@ -1311,6 +1387,10 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	int rc, cur_state, new_state;
 	bool success = true;
+		
+
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;	
 
 	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask, ibudata);
 	ntrdma_res_lock(&qp->res);
@@ -1407,6 +1487,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 
 unlock_exit:
 	ntrdma_res_unlock(&qp->res);
+	NTRDMA_IB_PERF_END(ntrdma_modify_qp);
 	return rc;
 }
 
@@ -1415,6 +1496,9 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_qp_cmd_cb qpcb;
+
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
 
 	TRACE("qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
 
@@ -1434,7 +1518,8 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	ntc_dma_flush(qp->dma_chan);
 
 	ntrdma_qp_put(qp);
-
+	
+	NTRDMA_IB_PERF_END(ntrdma_destroy_qp);
 	return 0;
 }
 
@@ -1986,6 +2071,9 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	struct ntrdma_mr_cmd_cb mrcb;
 	int rc, i, count;
 
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
+
 	ntrdma_info(dev, "called user addr %llx len %lld: (%d/%d)",
 		virt_addr, length, atomic_read(&dev->mr_num),
 		NTRDMA_DEV_MAX_MR);
@@ -2079,6 +2167,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	if (rc < 0) {
 		ntrdma_mr_put(mr);
 		ntrdma_err(dev, "reg_user_mr failed on ntrdma_res_add %d", rc);
+
+		NTRDMA_IB_PERF_END(ntrdma_reg_user_mr);
 		return ERR_PTR(rc);
 	}
 
@@ -2096,7 +2186,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	}
 
 	ntrdma_debugfs_mr_add(mr);
-
+	
+	NTRDMA_IB_PERF_END(ntrdma_reg_user_mr);
 	return &mr->ibmr;
 
 	// ntrdma_mr_del(mr);
@@ -2109,6 +2200,8 @@ err_umem:
 	atomic_dec(&dev->mr_num);
 err_len:
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
+
+	NTRDMA_IB_PERF_END(ntrdma_reg_user_mr);
 	return ERR_PTR(rc);
 }
 
@@ -2148,6 +2241,10 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	struct ntrdma_mr_cmd_cb mrcb;
 	struct completion done;
 
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
+
+
 	ntrdma_debugfs_mr_del(mr);
 
 	memset(&mrcb, 0, sizeof(mrcb));
@@ -2161,7 +2258,9 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 
 	wait_for_completion(&done);
 	ntc_flush_dma_channels(dev->ntc);
+	
 
+	NTRDMA_IB_PERF_END(ntrdma_dereg_mr);
 	return 0;
 }
 
