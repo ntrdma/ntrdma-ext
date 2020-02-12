@@ -67,16 +67,16 @@
 				unsigned long ___tt_ = 0; \
 				unsigned ___perf_ = 0
 #define NTRDMA_IB_PERF_START ___ts_ = jiffies
-#define NTRDMA_IB_PERF_END(method_name) do {\
-					___tt_ = jiffies - ___ts_; \
-					___perf_ = jiffies_to_msecs(___tt_);\
-					if(___perf_ >= NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT) { \
-							TRACE(\
-							"performance time of method %s: %u miliseconds", \
-							#method_name, \
-							___perf_); \
-						} \
-					} while (0)
+#define NTRDMA_IB_PERF_END do {\
+			___tt_ = jiffies - ___ts_; \
+			___perf_ = jiffies_to_msecs(___tt_);\
+			if(___perf_ >= NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT) { \
+					TRACE(\
+					"performance time of method %s: %u miliseconds", \
+					__func__, \
+					___perf_); \
+				} \
+			} while (0)
 
 
 static int ntrdma_qp_file_release(struct inode *inode, struct file *filp);
@@ -464,7 +464,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 			ntrdma_cq_put(cq); /* The initial ref */
 			put_unused_fd(outbuf.cqfd);
 
-			NTRDMA_IB_PERF_END(ntrdma_create_cq);
+			NTRDMA_IB_PERF_END;
 			return (void *)file;
 		}
 		/*
@@ -507,14 +507,14 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
 	cq->ibcq_valid = true;
 	
-	NTRDMA_IB_PERF_END(ntrdma_create_cq);
+	NTRDMA_IB_PERF_END;
 	return &cq->ibcq;
 
 err_cq:
 	atomic_dec(&dev->cq_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
 
-	NTRDMA_IB_PERF_END(ntrdma_create_cq);
+	NTRDMA_IB_PERF_END;
 	return ERR_PTR(rc);
 }
 
@@ -559,7 +559,7 @@ static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 	ntrdma_cq_put(cq);
 
 
-	NTRDMA_IB_PERF_END(ntrdma_destroy_cq);
+	NTRDMA_IB_PERF_END;
 	return 0;
 }
 
@@ -750,17 +750,17 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 		this_cpu_add(dev_cnt.cqes_polled_s, count_s);
 		this_cpu_add(dev_cnt.cqes_polled_ns, count_ns);
 		
-		NTRDMA_IB_PERF_END(ntrdma_poll_cq);
+		NTRDMA_IB_PERF_END;
 		return (count);
 	}
 	if ((rc == -EAGAIN) || (rc > 0)) {
-		NTRDMA_IB_PERF_END(ntrdma_poll_cq);	
+		NTRDMA_IB_PERF_END;
 		return 0;
 	}	
 
 	ntrdma_cq_err(cq, "rc %d", rc);
 
-	NTRDMA_IB_PERF_END(ntrdma_poll_cq);
+	NTRDMA_IB_PERF_END;
 	return rc;
 }
 
@@ -774,7 +774,7 @@ static int ntrdma_req_notify_cq(struct ib_cq *ibcq,
 
 	ntrdma_cq_arm(cq);
 
-	NTRDMA_IB_PERF_END(ntrdma_req_notify_cq);
+	NTRDMA_IB_PERF_END;
 
 	return 0;
 }
@@ -966,14 +966,14 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	ntrdma_dbg(dev, "added pd key=%d", pd->key);
 	
 
-	NTRDMA_IB_PERF_END(ntrdma_alloc_pd);
+	NTRDMA_IB_PERF_END;
 	return &pd->ibpd;
 
 err_pd:
 	atomic_dec(&dev->pd_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
 
-	NTRDMA_IB_PERF_END(ntrdma_alloc_pd);
+	NTRDMA_IB_PERF_END;
 	return ERR_PTR(rc);
 }
 static void ntrdma_pd_release(struct kref *kref)
@@ -1001,7 +1001,7 @@ static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 	ntrdma_pd_put(pd);
 	
 
-	NTRDMA_IB_PERF_END(ntrdma_dealloc_pd);
+	NTRDMA_IB_PERF_END;
 	return 0;
 }
 
@@ -1107,7 +1107,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			ntrdma_qp_err(qp, "copy_from_user failed");
 			ntrdma_qp_put(qp); /* The initial ref */
 
-			NTRDMA_IB_PERF_END(ntrdma_create_qp);
+			NTRDMA_IB_PERF_END;			
 			return ERR_PTR(-EFAULT);
 		}
 
@@ -1120,7 +1120,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			ntrdma_qp_err(qp, "inbuf.send_page_ptr is NULL");
 			ntrdma_qp_put(qp); /* The initial ref */
 
-			NTRDMA_IB_PERF_END(ntrdma_create_qp);
+			NTRDMA_IB_PERF_END;
 			return ERR_PTR(-EINVAL);
 		}
 
@@ -1130,7 +1130,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			ntrdma_qp_err(qp, "get_user_pages_fast failed: %d", rc);
 			ntrdma_qp_put(qp); /* The initial ref */
 
-			NTRDMA_IB_PERF_END(ntrdma_create_qp);
+			NTRDMA_IB_PERF_END;
 			return ERR_PTR(rc);
 		}
 	}
@@ -1147,7 +1147,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 				outbuf.qpfd);
 			ntrdma_qp_put(qp); /* The initial ref */
 
-			NTRDMA_IB_PERF_END(ntrdma_create_qp);
+			NTRDMA_IB_PERF_END;
 			return ERR_PTR(outbuf.qpfd);
 		}
 
@@ -1159,7 +1159,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			ntrdma_qp_put(qp); /* The initial ref */
 			put_unused_fd(outbuf.qpfd);
 
-			NTRDMA_IB_PERF_END(ntrdma_create_qp);
+			NTRDMA_IB_PERF_END;
 			return (void *)file;
 		}
 		/*
@@ -1173,7 +1173,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			ntrdma_qp_put(qp); /* The initial ref */
 			put_unused_fd(outbuf.qpfd);
 
-			NTRDMA_IB_PERF_END(ntrdma_create_qp);
+			NTRDMA_IB_PERF_END;
 			return ERR_PTR(-EFAULT);
 		}
 
@@ -1187,7 +1187,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	ntrdma_qp_dbg(qp, "added QP %d type %d",
 			qp->res.key, ibqp_attr->qp_type);
 	
-	NTRDMA_IB_PERF_END(ntrdma_create_qp);
+	NTRDMA_IB_PERF_END;
 	return &qp->ibqp;
 
 err_add:
@@ -1198,7 +1198,7 @@ err_qp:
 	atomic_dec(&dev->qp_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
 
-	NTRDMA_IB_PERF_END(ntrdma_create_qp);
+	NTRDMA_IB_PERF_END;
 	return ERR_PTR(rc);
 }
 
@@ -1487,7 +1487,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 
 unlock_exit:
 	ntrdma_res_unlock(&qp->res);
-	NTRDMA_IB_PERF_END(ntrdma_modify_qp);
+	NTRDMA_IB_PERF_END;
 	return rc;
 }
 
@@ -1519,7 +1519,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 
 	ntrdma_qp_put(qp);
 	
-	NTRDMA_IB_PERF_END(ntrdma_destroy_qp);
+	NTRDMA_IB_PERF_END;
 	return 0;
 }
 
@@ -2168,7 +2168,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		ntrdma_mr_put(mr);
 		ntrdma_err(dev, "reg_user_mr failed on ntrdma_res_add %d", rc);
 
-		NTRDMA_IB_PERF_END(ntrdma_reg_user_mr);
+		NTRDMA_IB_PERF_END;
 		return ERR_PTR(rc);
 	}
 
@@ -2187,7 +2187,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	ntrdma_debugfs_mr_add(mr);
 	
-	NTRDMA_IB_PERF_END(ntrdma_reg_user_mr);
+	NTRDMA_IB_PERF_END;
 	return &mr->ibmr;
 
 	// ntrdma_mr_del(mr);
@@ -2201,7 +2201,7 @@ err_umem:
 err_len:
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
 
-	NTRDMA_IB_PERF_END(ntrdma_reg_user_mr);
+	NTRDMA_IB_PERF_END;
 	return ERR_PTR(rc);
 }
 
@@ -2260,7 +2260,7 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	ntc_flush_dma_channels(dev->ntc);
 	
 
-	NTRDMA_IB_PERF_END(ntrdma_dereg_mr);
+	NTRDMA_IB_PERF_END;
 	return 0;
 }
 
