@@ -528,7 +528,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			ntrdma_vdbg(dev, "rsp cmpl pos %d cmd_id %d", pos,
 				cmd_id);
 
-			TRACE("CMD: respond received for %ps pos %u\n",
+			TRACE("CMD: respond received for %p (func) pos %u\n",
 				cb->rsp_cmpl, pos);
 
 			rc = cb->rsp_cmpl(cb, &cmd_send_rsp_buf[pos]);
@@ -560,7 +560,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			ntrdma_vdbg(dev, "cmd prep pos %d\n", pos);
 
-			TRACE("CMD: post cmd by %ps pos %u\n",
+			TRACE("CMD: post cmd by %p (func) pos %u\n",
 				cb->cmd_prep, pos);
 
 			cmd_send_buf[pos].hdr.cmd_id = pos;

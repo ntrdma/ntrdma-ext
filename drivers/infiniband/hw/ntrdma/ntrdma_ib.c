@@ -1679,7 +1679,7 @@ static inline int ntrdma_init_grh(struct ntrdma_qp *qp,
 
 out:
 	dev_put(sgid_attr.ndev);
-	TRACE("ntrdma_init_grh: sgid=%pI6, dgid=%pI6\n",grh->sgid.raw, grh->dgid.raw);
+	TRACE("ntrdma_init_grh: QP %d rc %d\n",qp->res.key, rc);
 	return rc;
 }
 
