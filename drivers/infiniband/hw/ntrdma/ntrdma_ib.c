@@ -70,7 +70,7 @@
 #define NTRDMA_IB_PERF_END do {\
 			___tt_ = jiffies - ___ts_; \
 			___perf_ = jiffies_to_msecs(___tt_);\
-			if(___perf_ >= NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT) { \
+			if(time_after(jiffies,___ts_ + NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT)) { \
 					TRACE(\
 					"performance time of method %s: %u miliseconds", \
 					__func__, \
