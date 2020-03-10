@@ -1,3 +1,4 @@
+
 /*
  * Copyright (c) 2014, 2015 EMC Corporation.  All rights reserved.
  *
@@ -123,9 +124,10 @@ static struct dentry *ntc_dbgfs;
 #define NTC_NTB_PING_PONG_MEM		BIT(2)
 #define NTC_NTB_PING_POLL_MEM		BIT(3)
 
+
 #define NTC_NTB_PING_PONG_PERIOD	msecs_to_jiffies(100)
-#define NTC_NTB_PING_POLL_PERIOD	msecs_to_jiffies(257)
-#define NTC_NTB_PING_MISS_THRESHOLD	1000
+#define NTC_NTB_PING_POLL_PERIOD	msecs_to_jiffies(240)
+#define NTC_NTB_PING_MISS_THRESHOLD	10
 
 #define NTC_CTX_BUF_SIZE 1024
 
@@ -168,6 +170,12 @@ struct ntc_ntb_info {
 	u8	ctx_buf[NTC_CTX_BUF_SIZE];
 };
 
+enum PINGPONG_CB_ID {
+	PINGPONG_CB_ID_FROM_INSIDE_MODULE = 0,
+	PINGPONG_CB_ID_FROM_TIMER_CB = 1
+};
+
+
 struct ntc_ntb_dev {
 	struct ntc_dev			ntc;
 
@@ -187,9 +195,11 @@ struct ntc_ntb_dev {
 	u16				ping_msg;
 	u32				poll_val;
 	u16				poll_msg;
-	struct timer_list		ping_pong;
+	cpumask_t			timer_cpu_mask;
+	struct timer_list		ping_pong[NR_CPUS];
 	struct timer_list		ping_poll;
 	spinlock_t			ping_lock;
+	unsigned long		last_ping_trigger_time;
 
 	/* link state machine */
 	int				link_state;
@@ -378,12 +388,17 @@ static inline u16 ntc_ntb_ping_msg(u32 val)
 	return (u16)(val >> 16);
 }
 
-static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev)
+static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev,
+				enum PINGPONG_CB_ID pingpong_caller_id)
 {
 	struct ntc_ntb_info __iomem *self_info;
 	int ping_flags, poison_flags;
 	u32 ping_val, tmp_jiffies;
 	static u32 last_ping;
+	int cpu, this_cpu;
+	int is_correct_cpu = 0;
+	unsigned long timer_next_trigger =
+			dev->last_ping_trigger_time + NTC_NTB_PING_PONG_PERIOD;
 
 	if (!dev->ping_run)
 		return;
@@ -396,7 +411,21 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev)
 	}
 	last_ping = tmp_jiffies;
 
-	mod_timer(&dev->ping_pong, jiffies + NTC_NTB_PING_PONG_PERIOD);
+	if (pingpong_caller_id == PINGPONG_CB_ID_FROM_TIMER_CB) {
+		this_cpu = smp_processor_id();
+		for_each_cpu(cpu, &dev->timer_cpu_mask) {
+			if (cpu == this_cpu) {
+				is_correct_cpu = 1;
+				break;
+			}
+		}
+		if (is_correct_cpu) {
+			del_timer(&dev->ping_pong[cpu]);
+			dev->ping_pong[cpu].expires = timer_next_trigger;
+			dev->last_ping_trigger_time = timer_next_trigger;
+			add_timer_on(&dev->ping_pong[cpu], cpu);
+		}
+	}
 
 	ping_flags = ntc_ntb_ping_flags(dev->ping_msg);
 	poison_flags = dev->ping_flags & ~ping_flags;
@@ -420,7 +449,7 @@ static void ntc_ntb_ping_pong_cb(unsigned long ptrhld)
 	unsigned long irqflags;
 
 	spin_lock_irqsave(&dev->ping_lock, irqflags);
-	ntc_ntb_ping_pong(dev);
+	ntc_ntb_ping_pong(dev, PINGPONG_CB_ID_FROM_TIMER_CB);
 	spin_unlock_irqrestore(&dev->ping_lock, irqflags);
 }
 
@@ -486,14 +515,16 @@ static void ntc_ntb_ping_send(struct ntc_ntb_dev *dev, int msg)
 
 	spin_lock_irqsave(&dev->ping_lock, irqflags);
 	dev->ping_msg = msg;
-	ntc_ntb_ping_pong(dev);
+	ntc_ntb_ping_pong(dev, PINGPONG_CB_ID_FROM_INSIDE_MODULE);
 	spin_unlock_irqrestore(&dev->ping_lock, irqflags);
 }
 
 static int ntc_ntb_ping_start(struct ntc_ntb_dev *dev)
 {
 	unsigned long irqflags;
+	unsigned long timer_next_trigger;
 	int msg;
+	int cpu;
 
 	ntc_ntb_dev_dbg(dev, "ping start");
 
@@ -501,9 +532,19 @@ static int ntc_ntb_ping_start(struct ntc_ntb_dev *dev)
 	if (!dev->ping_run) {
 		dev->ping_run = true;
 		dev->ping_miss = NTC_NTB_PING_MISS_THRESHOLD;
-		ntc_ntb_ping_pong(dev);
+		ntc_ntb_ping_pong(dev, PINGPONG_CB_ID_FROM_INSIDE_MODULE);
 		ntc_ntb_ping_poll(dev);
 		dev->poll_msg = NTC_NTB_LINK_QUIESCE;
+
+		timer_next_trigger = jiffies;
+
+		for_each_cpu(cpu, &dev->timer_cpu_mask) {
+			timer_next_trigger += NTC_NTB_PING_PONG_PERIOD;
+			del_timer(&dev->ping_pong[cpu]);
+			dev->ping_pong[cpu].expires = timer_next_trigger;
+			add_timer_on(&(dev->ping_pong[cpu]), cpu);
+		}
+		dev->last_ping_trigger_time = timer_next_trigger;
 	}
 	msg = dev->poll_msg;
 	spin_unlock_irqrestore(&dev->ping_lock, irqflags);
@@ -516,6 +557,7 @@ static int ntc_ntb_ping_start(struct ntc_ntb_dev *dev)
 static void ntc_ntb_ping_stop(struct ntc_ntb_dev *dev)
 {
 	unsigned long irqflags;
+	int cpu;
 
 	ntc_ntb_dev_dbg(dev, "ping stop");
 
@@ -523,7 +565,10 @@ static void ntc_ntb_ping_stop(struct ntc_ntb_dev *dev)
 	dev->ping_run = false;
 	spin_unlock_irqrestore(&dev->ping_lock, irqflags);
 
-	del_timer_sync(&dev->ping_pong);
+	for_each_cpu(cpu, &dev->timer_cpu_mask) {
+		del_timer_sync(&(dev->ping_pong[cpu]));
+	}
+
 	del_timer_sync(&dev->ping_poll);
 }
 
@@ -1507,6 +1552,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 {
 	int rc, mw_count;
 	struct ntc_dev *ntc = &dev->ntc;
+	int cpu;
 
 	/* inherit ntb device name and configuration */
 	dev_set_name(&ntc->dev, "%s", dev_name(&dev->ntb->dev));
@@ -1564,10 +1610,13 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->ping_msg = NTC_NTB_LINK_START;
 	dev->poll_val = 0;
 	dev->poll_msg = NTC_NTB_LINK_QUIESCE;
+	dev->timer_cpu_mask = *cpu_online_mask;
 
-	setup_timer(&dev->ping_pong,
-		    ntc_ntb_ping_pong_cb,
-		    ntc_ntb_to_ptrhld(dev));
+	for_each_online_cpu(cpu) {
+		setup_timer(&dev->ping_pong[cpu],
+		ntc_ntb_ping_pong_cb,
+		ntc_ntb_to_ptrhld(dev));
+	}
 
 	setup_timer(&dev->ping_poll,
 		    ntc_ntb_ping_poll_cb,
