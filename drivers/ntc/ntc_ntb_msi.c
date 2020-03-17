@@ -395,8 +395,7 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev,
 	int ping_flags, poison_flags;
 	u32 ping_val, tmp_jiffies;
 	static u32 last_ping;
-	int cpu, this_cpu;
-	int is_correct_cpu = 0;
+	int cpu;	
 	unsigned long timer_next_trigger =
 			dev->last_ping_trigger_time + NTC_NTB_PING_PONG_PERIOD;
 
@@ -412,19 +411,12 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev,
 	last_ping = tmp_jiffies;
 
 	if (pingpong_caller_id == PINGPONG_CB_ID_FROM_TIMER_CB) {
-		this_cpu = smp_processor_id();
-		for_each_cpu(cpu, &dev->timer_cpu_mask) {
-			if (cpu == this_cpu) {
-				is_correct_cpu = 1;
-				break;
-			}
-		}
-		if (is_correct_cpu) {
-			del_timer(&dev->ping_pong[cpu]);
-			dev->ping_pong[cpu].expires = timer_next_trigger;
-			dev->last_ping_trigger_time = timer_next_trigger;
-			add_timer_on(&dev->ping_pong[cpu], cpu);
-		}
+		cpu = smp_processor_id();		
+		del_timer(&dev->ping_pong[cpu]);
+		dev->ping_pong[cpu].expires = timer_next_trigger;
+		dev->last_ping_trigger_time = timer_next_trigger;
+		add_timer_on(&dev->ping_pong[cpu], cpu);
+		
 	}
 
 	ping_flags = ntc_ntb_ping_flags(dev->ping_msg);
@@ -1617,7 +1609,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->poll_msg = NTC_NTB_LINK_QUIESCE;
 	dev->timer_cpu_mask = *cpu_online_mask;
 
-	for_each_online_cpu(cpu) {
+	for_each_possible_cpu(cpu) {
 		setup_timer(&dev->ping_pong[cpu],
 		ntc_ntb_ping_pong_cb,
 		ntc_ntb_to_ptrhld(dev));
