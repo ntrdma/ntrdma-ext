@@ -1968,7 +1968,7 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 			"Allocating rcv %s buffer size %#x @DMA %#llx",
 			ntrdma_ib_sge_reserved(sg_list) ?
 			"DMA" : "MR", sg_list->length,
-			shadow->exp_buf.dma_addr);
+			(dma_addr_t)shadow->exp_buf.dma_addr);
 	}
 
 	return 0;

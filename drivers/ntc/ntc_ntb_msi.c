@@ -92,7 +92,6 @@ struct ntc_own_mw_data {
 	bool reserved;
 	bool reserved_used;
 	bool coherent_used;
-	bool flat_used;
 	bool mm_inited;
 } own_mw_data[2];
 
@@ -103,9 +102,11 @@ static struct dentry *ntc_dbgfs;
 /* Protocol version for backwards compatibility */
 #define NTC_NTB_VERSION_NONE		0
 #define NTC_NTB_VERSION_FIRST		2
+#define NTC_NTB_VERSION_CORONA		3
 
 #define NTC_NTB_VERSION_BAD_MAGIC	U32_C(~0)
-#define NTC_NTB_VERSION_MAGIC_2		U32_C(0x2250cb1c)
+#define NTC_NTB_VERSION_MAGIC_FIRST	U32_C(0x2250cb1c)
+#define NTC_NTB_VERSION_MAGIC_CORONA	U32_C(0x2251cb1c)
 
 #define NTC_NTB_SPAD_PING		0
 #define NTC_NTB_SPAD_VERSION		1
@@ -144,6 +145,14 @@ static struct dentry *ntc_dbgfs;
 	} while (0)
 		
 
+#define warn(fmt, ...) do {						\
+		pr_warn(DRIVER_NAME ":%s: " fmt, __func__, ##__VA_ARGS__); \
+	} while (0)
+
+#define errmsg(fmt, ...) do {						\
+		pr_err(DRIVER_NAME ":%s: " fmt, __func__, ##__VA_ARGS__); \
+	} while (0)
+
 struct ntc_ntb_imm {
 	char				data_buf[sizeof(u64)];
 	size_t				data_len;
@@ -161,12 +170,19 @@ struct multi_version_support {
 	u32 versions[MAX_SUPPORTED_VERSIONS];
 };
 
+struct ntc_ntb_mw_info {
+	u64 dead_zone_size;
+	u64 trans_len;
+};
+
 struct ntc_ntb_info {
 	struct multi_version_support	versions;
 	u32				magic;
 	u32				ping;
 
-	u32			done;
+	u32				done;
+
+	struct ntc_ntb_mw_info		mw_info[NTC_MAX_NUM_MWS];
 
 	/* ctx buf for use by the client */
 	u8	ctx_buf[NTC_CTX_BUF_SIZE];
@@ -205,7 +221,7 @@ struct ntc_ntb_dev {
 	struct ntc_timer_list		ping_pong[NR_CPUS];
 	struct timer_list		ping_poll;
 	spinlock_t			ping_lock;
-	unsigned long		last_ping_trigger_time;
+	unsigned long			last_ping_trigger_time;
 
 	/* link state machine */
 	int				link_state;
@@ -250,7 +266,7 @@ struct ntc_ntb_dev {
 	ntc_vdbg(&(__dev)->ntc, ##__VA_ARGS__)
 
 static u32 supported_versions[] = {
-		NTC_NTB_VERSION_FIRST
+	NTC_NTB_VERSION_CORONA, /* The last is preferred. */
 };
 
 static bool ntc_check_reserved(unsigned long start, unsigned long end)
@@ -354,8 +370,10 @@ static inline u32 ntc_ntb_version_matching(struct ntc_dev *ntc,
 static inline u32 ntc_ntb_version_magic(int version)
 {
 	switch (version) {
-	case 2:
-		return NTC_NTB_VERSION_MAGIC_2;
+	case NTC_NTB_VERSION_FIRST:
+		return NTC_NTB_VERSION_MAGIC_FIRST;
+	case NTC_NTB_VERSION_CORONA:
+		return NTC_NTB_VERSION_MAGIC_CORONA;
 	}
 	return NTC_NTB_VERSION_BAD_MAGIC;
 }
@@ -363,8 +381,10 @@ static inline u32 ntc_ntb_version_magic(int version)
 static inline u32 ntc_ntb_version_check_magic(int version, u32 magic)
 {
 	switch (version) {
-	case 2:
-		return magic == NTC_NTB_VERSION_MAGIC_2;
+	case NTC_NTB_VERSION_FIRST:
+		return magic == NTC_NTB_VERSION_MAGIC_FIRST;
+	case NTC_NTB_VERSION_CORONA:
+		return magic == NTC_NTB_VERSION_MAGIC_CORONA;
 	}
 	return false;
 }
@@ -669,7 +689,42 @@ static inline void ntc_ntb_send_version(struct ntc_ntb_dev *dev)
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_VER_SENT);
 }
 
-static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
+static inline void ntc_ntb_send_addr(struct ntc_ntb_dev *dev)
+{
+	struct ntc_dev *ntc = &dev->ntc;
+	struct ntc_own_mw *own_mw;
+	struct ntc_ntb_info __iomem *self_info;
+	struct ntc_ntb_mw_info __iomem *self_mw_info;
+	int i;
+
+	self_info = ntc_ntb_self_info(dev);
+	for (i = 0; i < NTC_MAX_NUM_MWS; i++) {
+		own_mw = &ntc->own_mws[i];
+		self_mw_info = &self_info->mw_info[i];
+		iowrite64(own_mw->dead_zone_size,
+			&self_mw_info->dead_zone_size);
+		iowrite64(own_mw->trans_len, &self_mw_info->trans_len);
+	}
+}
+
+static inline void ntc_ntb_recv_addr(struct ntc_ntb_dev *dev)
+{
+	struct ntc_dev *ntc = &dev->ntc;
+	struct ntc_peer_mw *peer_mw;
+	const struct ntc_ntb_info *peer_info;
+	struct ntc_ntb_mw_info mw_info;
+	int i;
+
+	peer_info = ntc_ntb_peer_info(dev);
+	for (i = 0; i < NTC_MAX_NUM_MWS; i++) {
+		peer_mw = &ntc->peer_mws[i];
+		mw_info = READ_ONCE(peer_info->mw_info[i]);
+		peer_mw->dead_zone_size = mw_info.dead_zone_size;
+		peer_mw->trans_len = mw_info.trans_len;
+	}
+}
+
+static inline void ntc_ntb_choose_version_and_send_addr(struct ntc_ntb_dev *dev)
 {
 	struct ntc_dev *ntc = &dev->ntc;
 	struct ntc_ntb_info __iomem *self_info;
@@ -699,6 +754,8 @@ static inline void ntc_ntb_choose_version(struct ntc_ntb_dev *dev)
 
 	ntc_ntb_dev_info(dev, "Agree on version %d", ntc->version);
 
+	ntc_ntb_send_addr(dev);
+
 	self_info = ntc_ntb_self_info(dev);
 	iowrite32(ntc_ntb_version_magic(ntc->version), &self_info->magic);
 	iowrite32(0, &self_info->done);
@@ -713,7 +770,7 @@ err:
 
 static bool ntc_request_dma(struct ntc_dev *ntc);
 
-static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
+static inline int ntc_ntb_db_config_and_recv_addr(struct ntc_ntb_dev *dev)
 {
 	int rc;
 	int i;
@@ -728,6 +785,8 @@ static inline int ntc_ntb_db_config(struct ntc_ntb_dev *dev)
 		ntc_ntb_dev_err(dev, "no dma");
 		return -ENODEV;
 	}
+
+	ntc_ntb_recv_addr(dev);
 
 	ntc->peer_irq_num = 0;
 
@@ -878,7 +937,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 			goto out;
 		case NTC_NTB_LINK_VER_SENT:
 		case NTC_NTB_LINK_VER_CHOSEN:
-			ntc_ntb_choose_version(dev);
+			ntc_ntb_choose_version_and_send_addr(dev);
 		}
 
 		if (dev->link_state != NTC_NTB_LINK_VER_CHOSEN)
@@ -897,9 +956,8 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 			goto out;
 		case NTC_NTB_LINK_VER_CHOSEN:
 		case NTC_NTB_LINK_DB_CONFIGURED:
-			if (ntc_ntb_db_config(dev)) {
-				ntc_ntb_dev_err(dev,
-						"ntc_ntb_db_config failed");
+			if (ntc_ntb_db_config_and_recv_addr(dev)) {
+				ntc_ntb_dev_err(dev, "DB configuration failed");
 				ntc_ntb_error(dev);
 			}
 		}
@@ -1294,6 +1352,7 @@ static int ntc_ntb_init_peer(struct ntc_ntb_dev *dev, int mw_idx,
 	peer_mw->mw_idx = mw_idx;
 	peer_mw->ntc = ntc;
 	peer_mw->base_ptr = NULL;
+	peer_mw->dead_zone_size = 0;
 
 	if ((peer_mw->size < deref_size) || !peer_mw->base) {
 		pr_debug("Not enough peer memory for %#lx bytes.", deref_size);
@@ -1330,11 +1389,9 @@ static int ntc_ntb_init_own_mw_flat(struct ntc_ntb_dev *dev, int mw_idx)
 	own_mw->size = data->size_max;
 
 	if (!own_mw->size) {
-		info("size_max for MW %d is %#llx", mw_idx, data->size_max);
+		errmsg("size_max for MW %d is %#llx", mw_idx, data->size_max);
 		return -EINVAL;
 	}
-
-	own_mw->is_flat = true;
 
 	info("OWN MW: FLAT base %#llx size %#llx", own_mw->base, own_mw->size);
 
@@ -1370,7 +1427,7 @@ static int ntc_ntb_init_own_mw_coherent(struct ntc_ntb_dev *dev, int mw_idx)
 	buffer->ptr = dma_alloc_coherent(ntc_ntb_dma_dev(dev), alloc_size,
 					&buffer->dma_addr, GFP_KERNEL);
 	if (!buffer->ptr) {
-		info("OWN INFO MW: cannot alloc. Actual size %#llx.",
+		errmsg("OWN INFO MW: cannot alloc. Actual size %#llx.",
 			buffer->size);
 		return -ENOMEM;
 	}
@@ -1409,7 +1466,7 @@ static int ntc_ntb_init_own_mw_reserved(struct ntc_ntb_dev *dev, int mw_idx)
 		own_mw->base_ptr =
 			memremap(data->base_addr, data->mm_len, MEMREMAP_WB);
 		if (!own_mw->base_ptr) {
-			info("OWN MW: cannot memremap. Start %#lx. Size %#lx.",
+			errmsg("OWN MW: cannot memremap. MW @%#lx len=%#lx.",
 				data->base_addr, data->mm_len);
 			return -EIO;
 		}
@@ -1457,11 +1514,6 @@ static void ntc_ntb_deinit_own(struct ntc_ntb_dev *dev, int mw_idx)
 		ntc_ntb_deinit_own_coherent(dev, mw_idx);
 		data->coherent_used = false;
 	}
-
-	if (data->flat_used) {
-		own_mw->is_flat = false;
-		data->flat_used = false;
-	}
 }
 
 static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
@@ -1469,16 +1521,19 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 	struct ntc_dev *ntc = &dev->ntc;
 	struct ntc_own_mw_data *data = &own_mw_data[mw_idx];
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
+	u64 addr_misalignment;
+	u64 actual_base_addr;
+	u64 actual_len;
+	u64 trans_base_addr;
+	u64 trans_len;
 	int rc;
 
 	own_mw->mw_idx = mw_idx;
 	own_mw->ntc = ntc;
 	own_mw->ntb_dev = ntc->ntb_dev;
-	own_mw->is_flat = false;
 
 	data->reserved_used = false;
 	data->coherent_used = false;
-	data->flat_used = false;
 	data->len = PAGE_ALIGN(data->len);
 	data->mm_len = PAGE_ALIGN(data->mm_len);
 
@@ -1488,34 +1543,46 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 			&data->addr_align, &data->size_align, &data->size_max);
 
 	if (data->mm_len > data->len) {
-		info("Requested MM of length %#lx in MW of length %#lx",
+		errmsg("Requested MM of length %#lx in MW of length %#lx",
 			data->mm_len, data->len);
 		return -EINVAL;
 	}
 
 	if (data->mm_prealloc > data->mm_len) {
-		info("Requested preallocation %#lx in MM of length %#lx",
+		errmsg("Requested preallocation %#lx in MM of length %#lx",
 			data->mm_prealloc, data->mm_len);
 		return -EINVAL;
 	}
 
+	if (data->addr_align)
+		addr_misalignment = data->base_addr & (data->addr_align - 1);
+	else
+		addr_misalignment = 0;
+	actual_base_addr = data->base_addr - addr_misalignment;
+	actual_len = data->len + addr_misalignment;
+	if (!actual_base_addr && (actual_len < data->addr_align))
+		actual_len = data->addr_align;
+
+	if (addr_misalignment) {
+		warn("Requested MW @%#lx of len %#lx, but alignment is %#llx",
+			data->base_addr, data->len, data->addr_align);
+		warn("Fixing alignment: actual MW @%#llx of len %#llx",
+			actual_base_addr, actual_len);
+	}
+
+	if (actual_len < data->len) {
+		errmsg("Cannot fix alignment: length overflow");
+		return -EINVAL;
+	}
+
+	if (addr_misalignment && data->mm_len) {
+		errmsg("Cannot fix alignment: request memory map in window");
+		return -EINVAL;
+	}
+
 	if (data->len > data->size_max) {
-		info("Requested MW of length %#lx, but max_size is %#llx",
+		errmsg("Requested MW of length %#lx, but max_size is %#llx",
 			data->len, data->size_max);
-		return -EINVAL;
-	}
-
-	if (data->size_align &&
-		(data->len & (data->size_align - 1))) {
-		info("Requested MW of length %#lx, but alignment is %#llx",
-			data->len, data->size_align);
-		return -EINVAL;
-	}
-
-	if (data->addr_align &&
-		(data->base_addr & (data->addr_align - 1))) {
-		info("Requested MW @%#lx, but alignment is %#llx",
-			data->base_addr, data->addr_align);
 		return -EINVAL;
 	}
 
@@ -1531,7 +1598,6 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 		rc = ntc_ntb_init_own_mw_flat(dev, mw_idx);
 		if (rc < 0)
 			goto err;
-		data->flat_used = true;
 		goto init_mm;
 	}
 
@@ -1546,19 +1612,34 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 	rc = ntc_mm_init(&own_mw->mm, own_mw->base_ptr + data->mm_prealloc,
 			data->mm_len - data->mm_prealloc);
 	if (rc < 0) {
-		info("ntc_mm_init failed mm_len=%#lx mm_prealloc=%#lx",
+		errmsg("ntc_mm_init failed mm_len=%#lx mm_prealloc=%#lx",
 			data->mm_len, data->mm_prealloc);
 		goto err;
 	}
 	data->mm_inited = true;
 
+	if (addr_misalignment) {
+		trans_base_addr = actual_base_addr;
+		trans_len = actual_len;
+	} else {
+		trans_base_addr = own_mw->base;
+		trans_len = own_mw->size;
+	}
+
+	info("logical MW%d @%#llx len=%#llx",
+		mw_idx, own_mw->base, own_mw->size);
+	info("ntb_mw_set_trans actual MW%d @%#llx len=%#llx",
+		mw_idx, trans_base_addr, trans_len);
+
 	rc = ntb_mw_set_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
-			own_mw->base, own_mw->size);
+			trans_base_addr, trans_len);
 	if (rc < 0) {
-		info("ntb_mw_set_trans failed idx %d base %#llx size %#llx",
-			mw_idx, own_mw->base, own_mw->size);
+		errmsg("ntb_mw_set_trans failed rc=%d", rc);
 		goto err;
 	}
+
+	own_mw->dead_zone_size = addr_misalignment;
+	own_mw->trans_len = trans_len;
 
 	return rc;
 
@@ -1613,8 +1694,8 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 		goto err_init_peer_info;
 
 	/* haven't negotiated the version */
-	ntc->version = 0;
-	ntc->latest_version = 0;
+	ntc->version = NTC_NTB_VERSION_NONE;
+	ntc->latest_version = NTC_NTB_VERSION_NONE;
 
 	/* haven't negotiated peer_irq_data */
 	ntc->peer_irq_num = 0;
