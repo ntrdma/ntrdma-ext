@@ -143,7 +143,8 @@ static inline int ntc_ctx_ops_is_valid(const struct ntc_ctx_ops *ops)
 
 union ntc_chan_addr {
 	struct {
-		u64 offset:62;
+		u64 offset:61;
+		u8  is_flat:1;
 		u8  mw_idx:1;
 		u8  one:1;
 	};
@@ -156,18 +157,21 @@ struct ntc_own_mw {
 	dma_addr_t base;
 	void *base_ptr;
 	resource_size_t size;
+	u64 dead_zone_size;	/* dead zone before base. */
+	u64 trans_len;
 	struct ntc_mm mm;
 	u8 mw_idx;
-	bool is_flat;
-};
+} ____cacheline_aligned_in_smp;
 
 struct ntc_peer_mw {
 	struct ntc_dev *ntc;
 	phys_addr_t base;
 	resource_size_t size;
 	void __iomem *base_ptr;
+	u64 dead_zone_size;	/* dead zone starts at base. */
+	u64 trans_len;
 	u8 mw_idx;
-};
+} ____cacheline_aligned_in_smp;
 
 struct ntc_local_buf {
 	u64 size:62;
@@ -181,7 +185,8 @@ struct ntc_export_buf {
 	u64 size;
 	void *ptr;
 	struct ntc_own_mw *own_mw;
-	dma_addr_t dma_addr;
+	dma_addr_t dma_addr:63;
+	u8 is_flat:1;
 };
 
 struct ntc_mr_buf {
@@ -487,9 +492,19 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 	if (unlikely(!peer_mw))
 		return 0;
 
-	if (unlikely(offset >= peer_mw->size)) {
-		ntc_err(ntc, "offset %#llx is beyond memory size %#llx",
-			offset, peer_mw->size);
+	if (!chan_addr->is_flat) {
+		offset += peer_mw->dead_zone_size;
+
+		if (unlikely(offset >= peer_mw->size)) {
+			ntc_err(ntc, "offset %#llx is beyond memory size %#llx",
+				offset, peer_mw->size);
+			return 0;
+		}
+	}
+
+	if (unlikely(offset >= peer_mw->trans_len)) {
+		ntc_err(ntc, "offset %#llx is beyond memory len %#llx",
+			offset, peer_mw->trans_len);
 		return 0;
 	}
 
@@ -1295,7 +1310,8 @@ static inline int _ntc_export_buf_alloc(const char *caller, int line,
 {
 	int rc;
 	dma_addr_t dma_addr;
-	bool is_flat = ntc->own_mws[NTC_DRAM_MW_IDX].is_flat;
+	struct ntc_own_mw *own_mw_dram = &ntc->own_mws[NTC_DRAM_MW_IDX];
+	bool is_flat = (own_mw_dram->base == own_mw_dram->dead_zone_size);
 
 	buf->ptr = NULL;
 	buf->dma_addr = 0;
@@ -1304,6 +1320,7 @@ static inline int _ntc_export_buf_alloc(const char *caller, int line,
 
 	if (!is_flat) {
 		buf->own_mw = &ntc->own_mws[NTC_INFO_MW_IDX];
+		buf->is_flat = 0;
 		buf->ptr = ntc_mm_alloc(caller, line,
 					&buf->own_mw->mm, size, gfp);
 		if (unlikely(IS_ERR(buf->ptr))) {
@@ -1316,14 +1333,20 @@ static inline int _ntc_export_buf_alloc(const char *caller, int line,
 			(buf->ptr - buf->own_mw->base_ptr);
 	} else {
 		buf->own_mw = &ntc->own_mws[NTC_DRAM_MW_IDX];
+		buf->is_flat = 1;
 		buf->ptr = kmalloc_node(size, gfp, dev_to_node(&ntc->dev));
-		if (unlikely(!buf->ptr))
+		if (unlikely(!buf->ptr)) {
+			pr_info("%s failed to allocate %ld bytes gfp=%d",
+				__func__, (long)size, (int)gfp);
 			return -ENOMEM;
+		}
 
 		dma_addr = dma_map_single(ntc->ntb_dev, buf->ptr, size,
 					DMA_FROM_DEVICE);
 		if (unlikely(dma_mapping_error(ntc->ntb_dev, dma_addr))) {
 			kfree(buf->ptr);
+			pr_info("%s failed to DMA map %ld bytes",
+				__func__, (long)size);
 			return -EIO;
 		}
 	}
@@ -1451,7 +1474,9 @@ static inline int _ntc_export_buf_zalloc_init(const char *caller, int line,
  */
 static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
 {
-	bool is_flat = buf->own_mw->ntc->own_mws[NTC_DRAM_MW_IDX].is_flat;
+	struct ntc_own_mw *own_mw_dram =
+		&buf->own_mw->ntc->own_mws[NTC_DRAM_MW_IDX];
+	bool is_flat = (own_mw_dram->base == own_mw_dram->dead_zone_size);
 
 	if (buf->dma_addr && is_flat)
 		dma_unmap_single(buf->own_mw->ntb_dev, buf->dma_addr,
@@ -1474,12 +1499,17 @@ static inline void ntc_export_buf_free(struct ntc_export_buf *buf)
  * @buf:	Export buffer.
  */
 static inline void ntc_export_buf_make_desc(struct ntc_remote_buf_desc *desc,
-					struct ntc_export_buf *buf)
+					const struct ntc_export_buf *buf)
 {
 	if (buf->dma_addr) {
 		desc->chan_addr.mw_idx = buf->own_mw->mw_idx;
 		desc->chan_addr.one = 1;
-		desc->chan_addr.offset = buf->dma_addr - buf->own_mw->base;
+		desc->chan_addr.is_flat = buf->is_flat;
+		if (buf->is_flat)
+			desc->chan_addr.offset = buf->dma_addr;
+		else
+			desc->chan_addr.offset =
+				buf->dma_addr - buf->own_mw->base;
 		desc->size = buf->size;
 	} else
 		memset(desc, 0, sizeof(*desc));
@@ -1504,9 +1534,8 @@ ntc_export_buf_make_partial_desc(struct ntc_remote_buf_desc *desc,
 	if (unlikely(!ntc_segment_valid(buf->size, offset, len)))
 		return -EINVAL;
 
-	desc->chan_addr.mw_idx = buf->own_mw->mw_idx;
-	desc->chan_addr.one = 1;
-	desc->chan_addr.offset = buf->dma_addr - buf->own_mw->base + offset;
+	ntc_export_buf_make_desc(desc, buf);
+	desc->chan_addr.offset += offset;
 	desc->size = len;
 
 	return 0;
@@ -1529,7 +1558,11 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 {
 	s64 soffset;
 
-	soffset = desc->chan_addr.offset - (buf->dma_addr - buf->own_mw->base);
+	if (desc->chan_addr.is_flat)
+		soffset = desc->chan_addr.offset - buf->dma_addr;
+	else
+		soffset = desc->chan_addr.offset -
+			(buf->dma_addr - buf->own_mw->base);
 
 	*offset = soffset;
 	*len = desc->size;
@@ -1544,6 +1577,9 @@ ntc_export_buf_get_part_params(const struct ntc_export_buf *buf,
 		return -EINVAL;
 
 	if (unlikely(buf->own_mw->mw_idx != desc->chan_addr.mw_idx))
+		return -EINVAL;
+
+	if (unlikely(buf->is_flat != desc->chan_addr.is_flat))
 		return -EINVAL;
 
 	return 0;
@@ -1721,6 +1757,7 @@ static inline void ntc_mr_buf_make_desc(struct ntc_remote_buf_desc *desc,
 		goto empty;
 
 	desc->chan_addr.mw_idx = buf->own_mw->mw_idx;
+	desc->chan_addr.is_flat = 0;
 	desc->chan_addr.one = 1;
 	desc->chan_addr.offset = buf->dma_addr - buf->own_mw->base;
 
