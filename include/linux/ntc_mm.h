@@ -266,8 +266,13 @@ static inline void *ntc_mm_alloc(const char *caller, int line,
 	size = _ntc_mm_chunk_size(size);
 
 	fixed = _ntc_mm_get_fixed(mm, size, gfp);
-	if (unlikely(IS_ERR(fixed)))
+	if (unlikely(IS_ERR(fixed))) {
+		TRACE("mm %p from %s:%d: failed to add %d bytes. No fixed mm",
+			mm, caller, line, size);
+		pr_info("mm %p from %s:%d: failed to add %d bytes. No fixed mm",
+			mm, caller, line, size);
 		return fixed;
+	}
 
 	ptr = ntc_mm_fixed_alloc(fixed);
 	if (likely(!IS_ERR(ptr))) {
@@ -277,15 +282,20 @@ static inline void *ntc_mm_alloc(const char *caller, int line,
 	}
 
 	ptr = ntc_mm_sbrk(mm, size);
-	if (unlikely(IS_ERR(ptr)))
+	if (unlikely(IS_ERR(ptr))) {
+		TRACE("mm %p from %s:%d: failed to add %d bytes. brk is %ld",
+			mm, caller, line, size, mm->brk - mm->memory);
+		pr_info("mm %p from %s:%d: failed to add %d bytes. brk is %ld",
+			mm, caller, line, size, mm->brk - mm->memory);
 		return ptr;
+	}
 
 	if (gfp & __GFP_ZERO)
 		memset(ptr, 0, size);
 
-	TRACE("mm %p called from %s:%d: added buffer of size %d. brk is %ld",
+	TRACE("mm %p from %s:%d: added buffer of size %d. brk is %ld",
 		mm, caller, line, size, mm->brk - mm->memory);
-	pr_info("mm %p called from %s:%d: added buffer of size %d. brk is %ld",
+	pr_info("mm %p from %s:%d: added buffer of size %d. brk is %ld",
 		mm, caller, line, size, mm->brk - mm->memory);
 
 	return ptr;
