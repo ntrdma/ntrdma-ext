@@ -38,7 +38,9 @@
 #include <linux/random.h>
 #include <linux/file.h>
 #include <linux/anon_inodes.h>
+#include <linux/version.h>
 
+#include <rdma/ib_cache.h>
 #include <rdma/ib_user_verbs.h>
 #include <rdma/ib_mad.h>
 #include <rdma/ib_verbs.h>
@@ -275,7 +277,12 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 	 * or Receive Work Request, in a QP other than RD,
 	 * supported by this device
 	 */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 	ibattr->max_sge = NTRDMA_DEV_MAX_SGE;
+#else
+    ibattr->max_recv_sge = NTRDMA_DEV_MAX_SGE;
+    ibattr->max_send_sge = NTRDMA_DEV_MAX_SGE;
+#endif
 
 	/* Maximum number of CQs supported by this device */
 	ibattr->max_cq = NTRDMA_DEV_MAX_CQ;
@@ -1587,7 +1594,11 @@ static inline bool ntrdma_send_opcode_is_rdma(int opcode)
 
 static inline int ntrdma_ib_send_to_wqe(struct ntrdma_qp *qp,
 					struct ntrdma_send_wqe *wqe,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 					struct ib_send_wr *ibwr)
+#else
+					const struct ib_send_wr *ibwr)
+#endif
 {
 	bool is_rdma = ntrdma_send_opcode_is_rdma(ibwr->opcode);
 	bool from_user;
@@ -1743,16 +1754,28 @@ static inline struct ntrdma_ah *ntrdma_ah(struct ib_ah *ibah)
 
 
 static inline int ntrdma_init_grh(struct ntrdma_qp *qp,
-					struct ib_send_wr *ibwr, struct ib_grh *grh)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+					struct ib_send_wr *ibwr,
+#else
+			const struct ib_send_wr *ibwr,
+#endif
+			struct ib_grh *grh)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 	struct ib_gid_attr sgid_attr;
+#endif
 	union ib_gid sgid;
 	int rc = 0;
 	struct rdma_ah_attr *ah_attr = &ntrdma_ah(ud_wr(ibwr)->ah)->attr;
 	const struct ib_global_route *global_route = rdma_ah_read_grh(ah_attr);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 	rc = ib_query_gid(qp->ibqp.device, rdma_ah_get_port_num(ah_attr),
 			global_route->sgid_index, &sgid, &sgid_attr);
+#else
+	rc = rdma_query_gid(qp->ibqp.device, rdma_ah_get_port_num(ah_attr),
+			global_route->sgid_index, &sgid);
+#endif
 	if (rc) {
 		ntrdma_qp_err(qp, "ntrdma_post_send: qp %d failed to query GID (port=%d, ix=%d), rc=%d\n",
 				qp->res.key, rdma_ah_get_port_num(ah_attr),
@@ -1770,14 +1793,21 @@ static inline int ntrdma_init_grh(struct ntrdma_qp *qp,
 	grh->paylen = 0; // will get real value before send
 
 out:
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 	dev_put(sgid_attr.ndev);
+#endif
 	TRACE("ntrdma_init_grh: QP %d rc %d\n",qp->res.key, rc);
 	return rc;
 }
 
 static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 					struct ib_send_wr *ibwr,
 					struct ib_send_wr **bad,
+#else
+					const struct ib_send_wr *ibwr,
+					const struct ib_send_wr **bad,
+#endif
 					bool *had_immediate_work,
 					bool *has_deferred_work)
 {
@@ -1869,8 +1899,13 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 }
 
 static int ntrdma_post_send(struct ib_qp *ibqp,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 			struct ib_send_wr *ibwr,
 			struct ib_send_wr **bad)
+#else
+			const struct ib_send_wr *ibwr,
+			const struct ib_send_wr **bad)
+#endif
 {
 	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 20);
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
@@ -1901,7 +1936,11 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 				struct ntrdma_recv_wqe *wqe,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 				struct ib_recv_wr *ibwr,
+#else
+				const struct ib_recv_wr *ibwr,
+#endif
 				int sg_cap)
 {
 	int i;
@@ -1988,8 +2027,13 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 }
 
 static int ntrdma_post_recv(struct ib_qp *ibqp,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 			    struct ib_recv_wr *ibwr,
 			    struct ib_recv_wr **bad)
+#else
+			    const struct ib_recv_wr *ibwr,
+			    const struct ib_recv_wr **bad)
+#endif
 {
 	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 10);
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
@@ -2309,15 +2353,23 @@ enum rdma_link_layer	ntrdma_get_link_layer(struct ib_device *device,
 	return IB_LINK_LAYER_ETHERNET;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 int ntrdma_add_gid(struct ib_device *device, u8 port_num,
 		unsigned int index, const union ib_gid *gid,
 		const struct ib_gid_attr *attr, void **context)
+#else
+int ntrdma_add_gid(const struct ib_gid_attr *attr, void **context)
+#endif
 {
 	return 0;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 int ntrdma_del_gid(struct ib_device *device, u8 port_num,
 		unsigned int index, void **context)
+#else
+int ntrdma_del_gid(const struct ib_gid_attr *attr, void **context)
+#endif
 {
 	return 0;
 }
