@@ -247,12 +247,6 @@ struct ntc_ntb_dev {
 #define ntc_ntb_of_link_work(__ws) \
 	container_of(__ws, struct ntc_ntb_dev, link_work)
 
-#define ntc_ntb_of_ptrhld(__ptrhld) \
-	((void *)(unsigned long)(__ptrhld))
-
-#define ntc_ntb_to_ptrhld(__ptr) \
-	((unsigned long)(void *)(__ptr))
-
 #define ntc_ntb_dma_dev(__dev) \
 	(&(__dev)->ntb->pdev->dev)
 
