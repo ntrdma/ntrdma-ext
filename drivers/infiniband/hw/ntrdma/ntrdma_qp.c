@@ -1599,7 +1599,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* sending requires a connected rqp */
 	rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 	if (!rqp) {
-		ntrdma_qp_err(qp, "QP %d: ntrdma_dev_rqp_look failed key %d",
+		ntrdma_qp_info_ratelimited(qp, "QP %d: ntrdma_dev_rqp_look failed key %d",
 			qp->res.key, qp->rqp_key);
 		goto err_rqp;
 	}
@@ -1817,7 +1817,7 @@ err_rqp:
 	} else
 		spin_unlock_bh(&qp->send_prod_lock);
 
-	ntrdma_qp_err(qp, "err_rqp QP %d aborting = %d qp %p, cq %p end %d\n",
+	ntrdma_qp_info_ratelimited(qp, "err_rqp QP %d aborting = %d qp %p, cq %p end %d\n",
 		qp->send_aborting, qp->res.key, qp, qp->send_cq, end);
 
  out:
