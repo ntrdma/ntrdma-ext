@@ -74,6 +74,7 @@ struct ntrdma_rsp_hdr {
 struct ntrdma_cmd_hdr {
 	u32				op;
 	u32				cmd_id;
+	u64				cb_p;
 };
 
 /* Create memory region command */
