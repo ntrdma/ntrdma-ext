@@ -506,7 +506,7 @@ static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 
 	rc = 0;
 
- out:
+out:
 	complete_all(&cb->cmds_done);
 
 	return rc;
@@ -654,7 +654,7 @@ static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	ntrdma_qp_recv_work(qp);
 	rc = 0;
 
- out:
+out:
 	complete_all(&cb->cmds_done);
 
 	return rc;
