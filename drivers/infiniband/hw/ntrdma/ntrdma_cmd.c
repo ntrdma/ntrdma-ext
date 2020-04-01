@@ -567,6 +567,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				cb->cmd_prep, pos);
 
 			cmd_send_buf[pos].hdr.cmd_id = pos;
+			cmd_send_buf[pos].hdr.cb_p = (u64)cb;
 			rc = cb->cmd_prep(cb, &cmd_send_buf[pos]);
 			if (rc)
 				ntrdma_err(dev,
@@ -1188,7 +1189,7 @@ static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
 
 	op = READ_ONCE(cmd->hdr.op);
 
-	TRACE("CMD: received: op %d\n", op);
+	TRACE("CMD: received: op %d cb %p\n", op, (void *)cmd->hdr.cb_p);
 
 	switch (op) {
 	case NTRDMA_CMD_NONE:
@@ -1323,7 +1324,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 		} else
 			ntrdma_vbell_readd(&dev->cmd_recv_vbell);
 
-	 dma_err:
+	dma_err:
 		if (unlikely(rc < 0))
 			ntrdma_unrecoverable_err(dev);
 	}

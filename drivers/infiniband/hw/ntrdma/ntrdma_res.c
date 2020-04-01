@@ -167,7 +167,7 @@ inline int ntrdma_res_wait_cmds(struct ntrdma_dev *dev,
 	rc = ntrdma_cmd_cb_wait_out(dev, cb, &timeout);
 
 	if (rc < 0)
-		ntrdma_err(dev, "ntrdma res cmd timeout");
+		ntrdma_err(dev, "ntrdma res cmd timeout %ld id %d cb %p", timeout, cb->cmd_id, cb);
 
 	return rc;
 }
@@ -176,7 +176,7 @@ int ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 {
 	struct ntrdma_qp *qp;
 	struct ntrdma_mr *mr;
-	unsigned long timeout = CMD_TIMEOUT_MSEC;
+	unsigned long timeout = msecs_to_jiffies(CMD_TIMEOUT_MSEC);
 	bool need_unlink;
 	int rc = 0;
 	int r;
@@ -353,8 +353,10 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 
 	if (need_unlink) {
 		if (ntrdma_dev_cmd_submit(dev) >= 0) {
-			ntrdma_vdbg(dev, "wait for commands\n");
+			ntrdma_vdbg(dev, "wait for commands id %d cb %p\n", cb->cmd_id, cb);
 			rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+			if (rc)
+				ntrdma_err(dev, "res %d, timeout %ld cb %p\n", res->key, res->timeout, cb);
 			ntrdma_vdbg(dev, "done waiting\n");
 		} else {
 			ntrdma_vdbg(dev, "won't submit commands\n");
