@@ -77,6 +77,8 @@ static inline void __lame_iowrite64(u64 val, void __iomem *ptr)
 #endif
 #endif
 
+#define MAX_DMA_PREP_RETRIES 100000
+
 enum ntc_dma_chan_type {
 	NTC_DEV_DMA_CHAN,
 	NTC_ETH_DMA_CHAN,
@@ -84,6 +86,10 @@ enum ntc_dma_chan_type {
 	NTC_NUM_DMA_CHAN_TYPES
 };
 
+enum ntc_dma_memcpy_mode {
+	NTC_DMA_DONT_WAIT,
+	NTC_DMA_WAIT
+};
 /**
  * struct ntc_driver_ops - ntc driver operations
  * @probe:		Notify driver of a new device.
@@ -202,6 +208,9 @@ struct ntc_dma_chan {
 	dma_cookie_t last_cookie;
 	dma_cookie_t submit_cookie;
 	u32 submit_counter;
+	atomic_t dma_blocked;
+	atomic_t dma_flush;
+	int idx;
 };
 
 /**
@@ -237,7 +246,16 @@ struct ntc_dev {
 	u32				latest_version;
 
 	bool				link_is_up;
+	atomic_t			dma_warn_count;
 };
+
+#ifdef NTC_COUNTERS
+struct ntc_dev_counters {
+	u64 dma_reject_count;
+};
+
+DECLARE_PER_CPU(struct ntc_dev_counters, ntc_dev_cnt);
+#endif
 
 #define ntc_of_dev(__dev) container_of(__dev, struct ntc_dev, dev)
 
@@ -484,6 +502,7 @@ static inline struct device *ntc_dma_chan_dev(struct ntc_dma_chan *dma_chan)
 	return dma_chan->chan->device->dev;
 }
 
+#define DMA_RING_SIZE (32 * 1024)
 static inline void ntc_dma_chan_tx_status(struct ntc_dma_chan *chan)
 {
 	struct dma_tx_state txstate;
@@ -541,6 +560,7 @@ static inline void ntc_dma_flush(struct ntc_dma_chan *chan)
 }
 
 void ntc_flush_dma_channels(struct ntc_dev *ntc);
+void inc_dma_reject_counter(void);
 
 /**
  * ntc_req_memcpy() - append a buffer to buffer memory copy operation
@@ -578,48 +598,74 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 				dma_addr_t dst, dma_addr_t src, u64 len,
 				bool fence, void (*cb)(void *cb_ctx,
 					const struct dmaengine_result *result),
-				void *cb_ctx, u64 wrid)
+				void *cb_ctx, u64 wrid, int dma_wait)
 {
 	struct dma_async_tx_descriptor *tx;
 	dma_cookie_t last_cookie;
 	int flags = fence ? DMA_PREP_FENCE : 0;
-	static long warn_counter;
+	u32 warn_counter;
+	int retries = 0;
 
 	if (unlikely(!len))
 		return -EINVAL;
+	if (dma_wait == NTC_DMA_DONT_WAIT && atomic_read(&chan->dma_blocked) > 0) {
+		inc_dma_reject_counter();
+		return -EAGAIN;
+	}
+	/* Barrier if DMA is flushed */
+	while (atomic_read(&chan->dma_flush) > 0);
 
 	do { /* not a loop */
 
 		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
 					flags);
 		if (tx)
-			break;
+			goto exit_loop;
 
-		warn_counter++;
-		if ((warn_counter & (warn_counter - 1)) == 0)
-			pr_warn("DMA ring is full (%ld times). taking status.",
-				warn_counter);
+		atomic_inc(&chan->dma_blocked);
+		warn_counter = atomic_inc_return(&chan->ntc->dma_warn_count);
+		if ((warn_counter & (warn_counter - 1)) == 0) {
+			pr_warn("DMA ring %d is full (%d times). taking status.",
+					chan->idx, warn_counter);
+//			ntc_show_dma_reservations(chan, warn_counter);
+		}
 
-		ntc_dma_chan_tx_status(chan);
+		while (retries < MAX_DMA_PREP_RETRIES) {
+			retries++;
+			ntc_dma_chan_tx_status(chan);
 
-		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
+			tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
 					flags);
-		if (tx)
-			break;
+			if (tx)
+				goto exit_loop_dec;
+		}
 
-		pr_warn("DMA ring still full. len %#llx. waiting", len);
+		pr_warn(
+			"DMA ring %d still full. len %#llx. waiting retries %d, dma_blocked %d",
+			chan->idx, len, retries,
+			atomic_read(&chan->dma_blocked));
+
 		/* Busy waiting */
+		atomic_inc(&chan->dma_flush);
 		ntc_dma_flush(chan);
+		atomic_dec(&chan->dma_flush);
 
 		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
 					flags);
 		if (tx)
-			break;
+			goto exit_loop_dec;
 
 		pr_err("DMA ring still full. len %#llx. Give up.", len);
+		pr_err(
+			"DMA ring %d still full. len %#llx. Give up. dma_flush %d",
+			chan->idx, len, atomic_read(&chan->dma_flush));
+		atomic_dec(&chan->dma_blocked);
+		inc_dma_reject_counter();
 		return -ENOMEM;
 	} while (false);
-
+exit_loop_dec:
+	atomic_dec(&chan->dma_blocked);
+exit_loop:
 	tx->callback_result = cb;
 	WARN_ON(tx->callback);
 	tx->callback = NULL;
@@ -628,8 +674,10 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 	this_cpu_add(chan->chan->local->bytes_transferred, len);
 	this_cpu_inc(chan->chan->local->memcpy_count);
 
-	if (dma_submit_error(last_cookie = dmaengine_submit(tx)))
+	if (dma_submit_error(last_cookie = dmaengine_submit(tx))) {
+		inc_dma_reject_counter();
 		return -EIO;
+	}
 
 	WRITE_ONCE(chan->last_cookie, last_cookie);
 
@@ -654,12 +702,12 @@ int _ntc_request_memcpy(struct ntc_dma_chan *chan,
 			dma_addr_t src_start, u64 src_size, u64 src_offset,
 			u64 len, bool fence,
 			void (*cb)(void *cb_ctx,
-					const struct dmaengine_result *result),
-			void *cb_ctx)
+				const struct dmaengine_result *result),
+			void *cb_ctx, int dma_wait)
 {
 	return ntc_req_memcpy(chan,
 			dst_start + dst_offset, src_start + src_offset, len,
-			fence, cb, cb_ctx, 0);
+			fence, cb, cb_ctx, 0, dma_wait);
 }
 
 static inline
@@ -677,7 +725,7 @@ static inline int ntc_request_memcpy_with_cb(struct ntc_dma_chan *chan,
 					u64 len,
 					void (*cb)(void *cb_ctx,
 					const struct dmaengine_result *result),
-					void *cb_ctx)
+					void *cb_ctx, bool dma_wait)
 {
 	if (unlikely(len == 0))
 		return 0;
@@ -693,7 +741,7 @@ static inline int ntc_request_memcpy_with_cb(struct ntc_dma_chan *chan,
 	return _ntc_request_memcpy(chan,
 				dst->dma_addr, dst->size, dst_offset,
 				src->dma_addr, src->size, src_offset,
-				len, false, cb, cb_ctx);
+				len, false, cb, cb_ctx, dma_wait);
 }
 
 static inline int ntc_request_memcpy(struct ntc_dma_chan *chan,
@@ -701,7 +749,7 @@ static inline int ntc_request_memcpy(struct ntc_dma_chan *chan,
 				u64 dst_offset,
 				const struct ntc_local_buf *src,
 				u64 src_offset,
-				u64 len, bool fence)
+				u64 len, bool fence, int dma_wait)
 {
 	if (unlikely(!ntc_segment_valid(src->size, src_offset, len)))
 		return -EINVAL;
@@ -714,7 +762,7 @@ static inline int ntc_request_memcpy(struct ntc_dma_chan *chan,
 	return _ntc_request_memcpy(chan,
 				dst->dma_addr, dst->size, dst_offset,
 				src->dma_addr, src->size, src_offset,
-				len, fence, NULL, NULL);
+				len, fence, NULL, NULL, dma_wait);
 }
 
 static inline int ntc_request_memcpy_fenced(struct ntc_dma_chan *chan,
@@ -722,10 +770,10 @@ static inline int ntc_request_memcpy_fenced(struct ntc_dma_chan *chan,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
 					u64 src_offset,
-					u64 len)
+					u64 len, int dma_wait)
 {
 	return ntc_request_memcpy(chan, dst, dst_offset, src, src_offset, len,
-				true);
+				true, dma_wait);
 }
 
 static inline int ntc_request_memcpy_unfenced(struct ntc_dma_chan *chan,
@@ -733,10 +781,10 @@ static inline int ntc_request_memcpy_unfenced(struct ntc_dma_chan *chan,
 					u64 dst_offset,
 					const struct ntc_local_buf *src,
 					u64 src_offset,
-					u64 len)
+					u64 len, int dma_wait)
 {
 	return ntc_request_memcpy(chan, dst, dst_offset, src, src_offset, len,
-				false);
+				false, dma_wait);
 }
 
 static inline
@@ -745,7 +793,7 @@ int ntc_mr_request_memcpy_unfenced(struct ntc_dma_chan *chan,
 				u64 dst_offset,
 				const struct ntc_mr_buf *src,
 				u64 src_offset,
-				u64 len)
+				u64 len, int dma_wait)
 {
 	if (unlikely(!ntc_segment_valid(src->size, src_offset, len)))
 		return -EINVAL;
@@ -758,7 +806,7 @@ int ntc_mr_request_memcpy_unfenced(struct ntc_dma_chan *chan,
 	return _ntc_request_memcpy(chan,
 				dst->dma_addr, dst->size, dst_offset,
 				src->dma_addr, src->size, src_offset,
-				len, false, NULL, NULL);
+				len, false, NULL, NULL, dma_wait);
 }
 
 int ntc_req_imm(struct ntc_dma_chan *chan,

@@ -430,7 +430,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 					struct ntrdma_rcv_cursor *rcv,
 					struct ntrdma_snd_cursor *snd,
 					struct ntc_dma_chan *chan,
-					u64 wrid)
+					u64 wrid, int dma_wait)
 {
 	s64 len = min_t(u64, ntrdma_snd_cursor_next_io_size(snd),
 			ntrdma_rcv_cursor_next_io_size(rcv));
@@ -464,7 +464,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 		rc = ntc_mr_request_memcpy_unfenced(chan,
 						rcv_buf, rcv->next_io_off,
 						snd->mr_sge, snd->next_io_off,
-						len);
+						len, dma_wait);
 		trace_dma_cpy(wrid, snd->snd_sge->addr + snd->next_io_off,
 				(u64)snd->mr_sge->dma_addr + snd->next_io_off,
 				rcv->rcv_sge->exp_buf_desc.chan_addr.value +
@@ -481,7 +481,7 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 
 		rc = ntc_request_memcpy_fenced(chan, rcv_buf, rcv->next_io_off,
 					&snd_dma_buf,
-					snd->next_io_off, len);
+					snd->next_io_off, len, dma_wait);
 		trace_dma_cpy(wrid, (u64)snd_dma_buf.ptr + snd->next_io_off,
 				snd->snd_sge->addr + snd->next_io_off,
 				rcv->rcv_sge->exp_buf_desc.chan_addr.value +
@@ -494,10 +494,12 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 		ntc_remote_buf_unmap(&remote, ntc);
 
 	if (unlikely(rc < 0)) {
-		ntrdma_err(snd->dev,
-			"ntc_request_memcpy (len=%lu) error %d\n",
-			(long)len, -rc);
-		ntrdma_unrecoverable_err(snd->dev);
+		if (rc != -EAGAIN) {
+			ntrdma_err(snd->dev,
+					"ntc_request_memcpy (len=%lu) error %d\n",
+					(long)len, -rc);
+			ntrdma_unrecoverable_err(snd->dev);
+		}
 		return rc;
 	} else
 		return len;
@@ -521,7 +523,7 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 		const struct ntrdma_wr_rcv_sge *rcv_sg_list,
 		const struct ib_sge *snd_sg_list,
 		u32 rcv_sg_count, u32 snd_sg_count, u32 rcv_start_offset,
-		u64 wrid)
+		u64 wrid, int  dma_wait)
 {
 	u32 total_len = 0;
 	s64 len;
@@ -539,7 +541,7 @@ int ntrdma_zip_rdma(struct ntrdma_dev *dev, struct ntc_dma_chan *chan,
 
 	do {
 		len = ntrdma_cursor_next_io(dev, &rcv_cursor, &snd_cursor,
-				chan, wrid);
+				chan, wrid, dma_wait);
 		if (len < 0) {
 			rc = len;
 			break;
