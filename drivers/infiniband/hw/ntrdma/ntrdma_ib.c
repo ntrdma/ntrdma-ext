@@ -2482,7 +2482,7 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 			if (!(wqe->flags & IB_SEND_SIGNALED) &&
 				(wqe->op_code == IB_WR_RDMA_WRITE)) {
 				rc = ntrdma_qp_rdma_write(qp, wqe);
-				if (unlikely(rc < 0)) {
+				if (unlikely(rc < 0 && rc != -EAGAIN)) {
 					ntrdma_qp_err(qp,
 						"ntrdma_qp_rdma_write returned %d, QP %d pos %d wrid 0x%llx flags %x opcode %d",
 						rc, qp->res.key, pos,
@@ -2505,7 +2505,8 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 	}
 
 	if (rc < 0) {
-		ntrdma_qp_err(qp, "rc %d, QP %d", rc, qp->res.key);
+		if (rc != -EAGAIN)
+			ntrdma_qp_err(qp, "rc %d, QP %d", rc, qp->res.key);
 		*(u32 volatile *)_uptr = i;
 	} else
 		rc = 0;

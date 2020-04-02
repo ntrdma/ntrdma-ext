@@ -591,7 +591,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			rc = ntc_request_memcpy_fenced(dev->dma_chan,
 						&dev->peer_cmd_recv_buf, off,
 						&dev->cmd_send_buf, off,
-						len);
+						len, NTC_DMA_WAIT);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
 					"ntc_request_memcpy failed. rc=%d", rc);
@@ -1282,7 +1282,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 						&dev->peer_cmd_send_rsp_buf,
 						off,
 						&dev->cmd_recv_rsp_buf, off,
-						len);
+						len, NTC_DMA_WAIT);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
 					"ntc_request_memcpy failed. rc=%d", rc);

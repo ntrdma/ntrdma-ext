@@ -34,6 +34,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 
+#define NTC_COUNTERS
 #include "ntc.h"
 #include <linux/scatterlist.h>
 #include <rdma/ib_umem.h>
@@ -52,6 +53,15 @@ MODULE_LICENSE(DRIVER_LICENSE);
 MODULE_VERSION(DRIVER_VERSION);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESCRIPTION);
+
+DEFINE_PER_CPU(struct ntc_dev_counters, ntc_dev_cnt);
+EXPORT_PER_CPU_SYMBOL(ntc_dev_cnt);
+
+void inc_dma_reject_counter(void)
+{
+	this_cpu_inc(ntc_dev_cnt.dma_reject_count);
+}
+EXPORT_SYMBOL(inc_dma_reject_counter);
 
 void ntc_flush_dma_channels(struct ntc_dev *ntc)
 {
@@ -211,6 +221,8 @@ EXPORT_SYMBOL(ntc_init_dma_chan);
 static int __init ntc_driver_init(void)
 {
 	int rc;
+	int i;
+	int num_cpus;
 
 	pr_info("%s: %s %s init\n", DRIVER_NAME,
 		DRIVER_DESCRIPTION, DRIVER_VERSION);
@@ -219,6 +231,10 @@ static int __init ntc_driver_init(void)
 		return rc;
 
 	rc = ntc_init();
+	num_cpus = num_online_cpus();
+	for (i = 0; i < num_cpus; i++)
+		memset(per_cpu_ptr(&ntc_dev_cnt, i), 0,
+				sizeof(struct ntc_dev_counters));
 	if (rc < 0)
 		bus_unregister(&ntc_bus);
 

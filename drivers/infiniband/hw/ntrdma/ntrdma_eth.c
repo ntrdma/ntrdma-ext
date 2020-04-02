@@ -540,7 +540,7 @@ more:
 		rc = ntc_request_memcpy_fenced(eth->dma_chan,
 					&eth->peer_tx_wqe_buf, off,
 					&eth->rx_wqe_buf, off,
-					len);
+					len, NTC_DMA_WAIT);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
 				"ntc_request_memcpy failed. rc=%d", rc);
@@ -802,7 +802,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 						&skb_ctx->dst, 0,
 						&skb_ctx->src, off - tx_off,
 						len + tx_off,
-						ntrdma_eth_dma_cb, skb);
+						ntrdma_eth_dma_cb, skb, NTC_DMA_WAIT);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
 				"ntc_request_memcpy failed. rc=%d", rc);
@@ -837,7 +837,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 			rc = ntc_request_memcpy_fenced(eth->dma_chan,
 						&eth->peer_rx_cqe_buf, off,
 						&eth->tx_cqe_buf, off,
-						len);
+						len, NTC_DMA_WAIT);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
 					"ntc_request_memcpy failed. rc=%d", rc);

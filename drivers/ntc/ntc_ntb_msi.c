@@ -45,6 +45,7 @@
 #include <linux/cpumask.h>
 #include <linux/slab.h>
 
+#define NTC_COUNTERS
 #include "ntc.h"
 
 #include <asm/e820/api.h>
@@ -1152,7 +1153,7 @@ int ntc_req_imm(struct ntc_dma_chan *chan,
 	imm->data_trace = need_trace_data;
 
 	rc = ntc_req_memcpy(chan, dst, imm->dma_addr, imm->data_len,
-			fence, ntc_req_imm_cb, imm, wrid);
+			fence, ntc_req_imm_cb, imm, wrid, NTC_DMA_WAIT);
 	if (unlikely(rc < 0))
 		goto err_memcpy;
 
@@ -1683,8 +1684,10 @@ void ntc_init_dma(struct ntc_dev *ntc)
 	int j;
 
 	memset(&ntc->dma_chan, 0, sizeof(ntc->dma_chan));
-	for (j = 0; j < ARRAY_SIZE(ntc->dma_chan); j++)
+	for (j = 0; j < ARRAY_SIZE(ntc->dma_chan); j++) {
+		ntc->dma_chan[j].idx = j;
 		ntc->dma_chan[j].ntc = ntc;
+	}
 }
 
 static bool ntc_request_dma(struct ntc_dev *ntc)
@@ -1742,6 +1745,7 @@ static int ntc_debugfs_read(struct seq_file *s, void *v)
 	struct ntc_dev *ntc = &dev->ntc;
 	const struct ntc_ntb_info *peer_info;
 	int i;
+	int num_cpus = num_online_cpus();
 
 	peer_info = ntc_ntb_peer_info(dev);
 
@@ -1784,6 +1788,10 @@ static int ntc_debugfs_read(struct seq_file *s, void *v)
 		   ntc->link_is_up);
 	seq_printf(s, "link_state %d\n",
 		   dev->link_state);
+	for (i = 0; i < num_cpus; i++) {
+		seq_printf(s, "cpu %d dma channel rejects %lld\n", i,
+				per_cpu(ntc_dev_cnt.dma_reject_count, i));
+	}
 
 	return 0;
 }
@@ -1876,6 +1884,7 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	for (type = 0; type < NTC_NUM_DMA_CHAN_TYPES; type++)
 		atomic_set(&dev->ntc.dma_chan_rr_index[type], 0);
 
+	atomic_set(&dev->ntc.dma_warn_count, 0);
 	get_device(&ntb->dev);
 	dev->ntb = ntb;
 

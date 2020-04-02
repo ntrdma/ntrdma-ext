@@ -1460,7 +1460,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 		rc = ntc_request_memcpy_fenced(qp->dma_chan,
 					&qp->peer_recv_wqe_buf, off,
 					&qp->recv_wqe_buf, off,
-					len);
+					len, NTC_DMA_WAIT);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
 				"QP %d: ntc_request_memcpy failed. rc=%d",
@@ -1513,6 +1513,7 @@ inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
 	struct ntrdma_wr_rcv_sge rdma_sge;
 	u32 rdma_len;
 	int rc;
+	int dma_wait = (wqe->flags & IB_SEND_SIGNALED) ? NTC_DMA_WAIT : NTC_DMA_DONT_WAIT;
 
 	if (unlikely(ntrdma_ib_sge_reserved(&wqe->rdma_sge))) {
 		ntrdma_qp_err(qp, "ntrdma_ib_sge_reserved failed, QP %d",
@@ -1529,27 +1530,31 @@ inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
 		rc = ntrdma_zip_rdma_imm(dev, qp->dma_chan, &rdma_sge,
 					wqe + 1, 1, wqe->inline_len, 0,
 					wqe->ulp_handle);
-		if (rc < 0) {
+		if (rc < 0 && rc != -EAGAIN) {
 			ntrdma_qp_err(qp,
-				"QP %d wrid 0x%llx failed on ntrdma_zip_rdma_imm",
-				qp->res.key, wqe->ulp_handle);
+					"QP %d wrid 0x%llx flags %u failed on ntrdma_zip_rdma_imm",
+					qp->res.key, wqe->ulp_handle,
+					(unsigned int)wqe->flags);
 		}
 	} else {
 		rc = ntrdma_zip_rdma(dev, qp->dma_chan, &rdma_len, &rdma_sge,
 				const_snd_sg_list(0, wqe), 1, wqe->sg_count, 0,
-				wqe->ulp_handle);
-		if (rc < 0)
+				wqe->ulp_handle, dma_wait);
+		if (rc < 0 && rc != -EAGAIN)
 			ntrdma_qp_err(qp,
-				"QP %d wrid 0x%llx failed on ntrdma_zip_rdma",
-				qp->res.key, wqe->ulp_handle);
+					"QP %d wrid 0x%llx flags %u failed on ntrdma_zip_rdma",
+					qp->res.key, wqe->ulp_handle,
+					(unsigned int)wqe->flags);
 	}
 	if (likely(rc >= 0))
 		wqe->rdma_sge.length = rdma_len;
 	else {
-		ntrdma_qp_err(qp,
+		if (rc != -EAGAIN) {
+			ntrdma_qp_err(qp,
 				"QP %d wrid 0x%llx flags %u failed on ntrdma_zip_rdma",
 				qp->res.key, wqe->ulp_handle,
 				(unsigned int)wqe->flags);
+		}
 	}
 
 	return rc;
@@ -1692,7 +1697,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						recv_wqe.sg_count,
 						wqe->sg_count,
 						rcv_start_offset,
-						wqe->ulp_handle);
+						wqe->ulp_handle, NTC_DMA_WAIT);
 				if (rc >= 0) {
 					wqe->rdma_sge.length = rdma_len;
 
@@ -1713,7 +1718,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 									recv_wqe.sg_count,
 									1,
 									0,
-									wqe->ulp_handle);
+									wqe->ulp_handle, NTC_DMA_WAIT);
 					}
 				}
 			} else {
@@ -1727,8 +1732,12 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 					"ntrdma_zip_rdma failed %d QP %d wrid 0x%llx",
 					rc, qp->res.key, wqe->ulp_handle);
 
-				wqe->op_status = NTRDMA_WC_ERR_RDMA_RANGE;
-				abort = true;
+				if (rc == -EAGAIN) {
+					wqe->op_status = NTRDMA_WC_ERR_LOC_PORT;
+				} else {
+					wqe->op_status = NTRDMA_WC_ERR_RDMA_RANGE;
+					abort = true;
+				}
 				break;
 			}
 		}
@@ -1756,12 +1765,14 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	len = (pos - start) * qp->send_wqe_size;
 	rc = ntc_request_memcpy_fenced(qp->dma_chan,
 				&qp->peer_send_wqe_buf, off,
-				&qp->send_wqe_buf, off, len);
+				&qp->send_wqe_buf, off, len, NTC_DMA_WAIT);
 	if (unlikely(rc < 0)) {
 		ntrdma_qp_err(qp, "QP %d ntc_request_memcpy failed. rc=%d",
 				qp->res.key, rc);
-		abort = true;
-		goto err_memcpy;
+		if (rc != -EAGAIN) {
+			abort = true;
+			goto err_memcpy;
+		}
 	}
 
 	this_cpu_add(dev_cnt.qp_send_work_bytes, len);
@@ -2066,7 +2077,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	len = (pos - start) * sizeof(struct ntrdma_cqe);
 	rc = ntc_request_memcpy_fenced(qp->dma_chan,
 				&rqp->peer_send_cqe_buf, off,
-				&rqp->send_cqe_buf, off, len);
+				&rqp->send_cqe_buf, off, len, NTC_DMA_WAIT);
 	if (unlikely(rc < 0)) {
 		ntrdma_err(dev, "QP %d ntc_request_memcpy failed. rc=%d",
 				qp->res.key, rc);
@@ -2169,17 +2180,18 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
 
 		spin_lock_bh(&qp->send_prod_lock);
 
-		if (!ntrdma_qp_is_send_ready(qp))
-			ntrdma_qp_vdbg(qp, "QP %d state %d",
+		if (!ntrdma_qp_is_send_ready(qp)) {
+			spin_unlock_bh(&qp->send_prod_lock);
+			ntrdma_qp_info(qp, "QP %d state %d",
 				qp->res.key, atomic_read(&qp->state));
-		else {
+		} else {
 			move_to_err_state(qp);
 			qp->send_aborting = true;
 			qp->recv_aborting = true;
+			spin_unlock_bh(&qp->send_prod_lock);
 			TRACE("QP %d - aborting\n", qp->res.key);
 		}
 
-		spin_unlock_bh(&qp->send_prod_lock);
 	}
 	if (!rqp)
 		return;
