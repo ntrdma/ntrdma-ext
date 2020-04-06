@@ -59,12 +59,12 @@ void ntc_flush_dma_channels(struct ntc_dev *ntc)
 
 	for (i = 0; i < ARRAY_SIZE(ntc->dma_chan); i++)
 		if (ntc->dma_chan[i].chan) {
-			ntc_info(ntc, "flushing DMA channel %d", i);
+			ntc_vdbg(ntc, "flushing DMA channel %d", i);
 			ntc_dma_flush(&ntc->dma_chan[i]);
 		} else
 			break;
 
-	ntc_info(ntc, "All DMA channels flushed");
+	ntc_vdbg(ntc, "All DMA channels flushed");
 }
 EXPORT_SYMBOL(ntc_flush_dma_channels);
 
@@ -196,7 +196,7 @@ struct ntc_dma_chan *ntc_req_rr(struct ntc_dev *ntc,
 	} while (atomic_cmpxchg(&ntc->dma_chan_rr_index[type], old_index, i) !=
 		old_index);
 
-	ntc_info(ntc, "ntc_req_rr for type %d returns dma_chan #%d", type, i);
+	ntc_vdbg(ntc, "ntc_req_rr for type %d returns dma_chan #%d", type, i);
 
 	return &ntc->dma_chan[i];
 }

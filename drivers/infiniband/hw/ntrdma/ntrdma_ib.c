@@ -168,9 +168,9 @@ static int ntrdma_query_gid(struct ib_device *ibdev,
 	struct in6_addr *addr = (void *)ibgid->raw;
 
 	ntrdma_dbg(dev, "query gid port %u idx %d\n", port_num, index);
-	ntrdma_dbg(dev, "cap eth ah? %d\n",
+	ntrdma_vdbg(dev, "cap eth ah? %d\n",
 		   rdma_cap_eth_ah(ibdev, port_num));
-	ntrdma_dbg(dev, "imm core cap flags %#x",
+	ntrdma_vdbg(dev, "imm core cap flags %#x",
 		   ibdev->port_immutable[port_num].core_cap_flags);
 
 	/* Everything is "link local" since we don't have an interface */
@@ -500,7 +500,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
 	ntrdma_debugfs_cq_add(cq);
 
-	ntrdma_dbg(dev,
+	ntrdma_vdbg(dev,
 		"added cq %p (%d/%d) ib cq %p vbell idx %d c\n",
 		cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
 		&cq->ibcq, vbell_idx);
@@ -963,7 +963,7 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	list_add_tail(&pd->obj.dev_entry, &dev->pd_list);
 	mutex_unlock(&dev->res_lock);
 
-	ntrdma_dbg(dev, "added pd key=%d", pd->key);
+	ntrdma_vdbg(dev, "added pd key=%d", pd->key);
 	
 
 	NTRDMA_IB_PERF_END;
@@ -1067,7 +1067,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	else
 		qp_attr.send_wqe_inline_cap = ibqp_attr->cap.max_inline_data;
 
-	ntrdma_dbg(dev, "max inline data was set to %d\n",
+	ntrdma_vdbg(dev, "max inline data was set to %d\n",
 			qp_attr.send_wqe_inline_cap);
 	if (qp_attr.recv_wqe_cap > NTRDMA_DEV_MAX_QP_WR ||
 		qp_attr.send_wqe_cap > NTRDMA_DEV_MAX_QP_WR ||
@@ -1134,7 +1134,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			return ERR_PTR(rc);
 		}
 	}
-	ntrdma_info(dev, "added QP %d type %d (%d/%d)\n",
+	ntrdma_vdbg(dev, "added QP %d type %d (%d/%d)\n",
 			qp->res.key, ibqp_attr->qp_type,
 			atomic_read(&dev->qp_num), NTRDMA_DEV_MAX_QP);
 
@@ -1184,7 +1184,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
  bad_ntrdma_ioctl_if:
 	ntrdma_debugfs_qp_add(qp);
 
-	ntrdma_qp_dbg(qp, "added QP %d type %d",
+	ntrdma_qp_vdbg(qp, "added QP %d type %d",
 			qp->res.key, ibqp_attr->qp_type);
 	
 	NTRDMA_IB_PERF_END;
@@ -1399,7 +1399,7 @@ static int ntrdma_modify_qp(struct ib_qp *ibqp,
 		new_state = ibqp_mask & IB_QP_STATE ?
 				ibqp_attr->qp_state : cur_state;
 
-		ntrdma_info(dev, "QP %d state %d (%d) -> %d (ibqp_mask 0x%x)\n",
+		ntrdma_vdbg(dev, "QP %d state %d (%d) -> %d (ibqp_mask 0x%x)\n",
 				qp->res.key, cur_state,
 				atomic_read(&qp->state), new_state, ibqp_mask);
 
@@ -1964,7 +1964,7 @@ static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 		}
 		ntc_export_buf_make_desc(&rcv_sge->exp_buf_desc,
 					&shadow->exp_buf);
-		ntrdma_info(dev,
+		ntrdma_vdbg(dev,
 			"Allocating rcv %s buffer size %#x @DMA %#llx",
 			ntrdma_ib_sge_reserved(sg_list) ?
 			"DMA" : "MR", sg_list->length,
@@ -2074,7 +2074,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
-	ntrdma_info(dev, "called user addr %llx len %lld: (%d/%d)",
+	ntrdma_vdbg(dev, "called user addr %llx len %lld: (%d/%d)",
 		virt_addr, length, atomic_read(&dev->mr_num),
 		NTRDMA_DEV_MAX_MR);
 
@@ -2105,7 +2105,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	if ((rc >= 0) && (dma_len >= length)) {
 		ib_umem = NULL;
 		count = 1;
-		ntrdma_info(dev, "MAPPED ADDR %#llx TO DMA %#lx LEN %#llx",
+		ntrdma_vdbg(dev, "MAPPED ADDR %#llx TO DMA %#lx LEN %#llx",
 			start, dma_addr, length);
 	} else {
 		ib_umem = ib_umem_get(pd->ibpd.uobject->context, start, length,
@@ -2174,10 +2174,10 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	mr->ibmr.lkey = mr->ibmr.rkey = mr->res.key;
 
-	ntrdma_dbg(dev, "added mr%d\n", mr->res.key);
-	ntrdma_dbg(dev, "addr %llx\n", mr->addr);
-	ntrdma_dbg(dev, "access %x\n", mr->access);
-	ntrdma_dbg(dev, "count %x\n", mr->sg_count);
+	ntrdma_vdbg(dev, "added mr%d\n", mr->res.key);
+	ntrdma_vdbg(dev, "addr %llx\n", mr->addr);
+	ntrdma_vdbg(dev, "access %x\n", mr->access);
+	ntrdma_vdbg(dev, "count %x\n", mr->sg_count);
 
 	for (i = 0; i < count; ++i) {
 		ntrdma_vdbg(dev, "sgl[%d] dma_addr %llx len %#llx\n", i,
