@@ -532,7 +532,10 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 				cb->rsp_cmpl, pos);
 
 			rc = cb->rsp_cmpl(cb, &cmd_send_rsp_buf[pos]);
-			WARN(rc, "%ps failed rc = %d", cb->rsp_cmpl, rc);
+			if (rc)
+				ntrdma_err(dev,
+						"%ps failed rc = %d", cb->rsp_cmpl,
+						rc);
 			/* FIXME: command failed, now what? */
 		}
 
@@ -565,7 +568,10 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 			cmd_send_buf[pos].hdr.cmd_id = pos;
 			rc = cb->cmd_prep(cb, &cmd_send_buf[pos]);
-			WARN(rc, "%ps failed rc = %d", cb->cmd_prep, rc);
+			if (rc)
+				ntrdma_err(dev,
+						"%ps failed rc = %d", cb->cmd_prep,
+						rc);
 			/* FIXME: command failed, now what? */
 		}
 
@@ -1249,7 +1255,11 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			rc = ntrdma_cmd_recv(dev,
 					&cmd_recv_buf[pos],
 					&cmd_recv_rsp_buf[pos]);
-			WARN(rc, "ntrdma_cmd_recv failed and unhandled FIXME\n");
+			if (rc)
+				ntrdma_err(dev,
+						"ntrdma_cmd_recv failed rc %d op %d, cmd id %d\n",
+						rc, cmd_recv_buf[pos].hdr.op,
+						cmd_recv_buf[pos].hdr.cmd_id);
 		}
 
 		rc = 0;

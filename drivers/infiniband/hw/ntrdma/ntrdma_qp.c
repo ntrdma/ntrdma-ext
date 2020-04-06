@@ -1934,7 +1934,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			}
 
 			if (recv_pos == recv_end) {
-				if (WARN_ON(!wqe.op_status))
+				if (!wqe.op_status)
 					ntrdma_send_fail(cqe, &wqe, NTRDMA_WC_ERR_RECV_MISSING);
 				else
 					ntrdma_send_fail(cqe, &wqe, wqe.op_status);
@@ -1952,7 +1952,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			recv_wqe = ntrdma_qp_recv_wqe(qp, recv_pos++);
 
 			if (recv_wqe->op_status) {
-				if (WARN_ON(!wqe.op_status))
+				if (!wqe.op_status)
 					ntrdma_send_fail(cqe, &wqe, recv_wqe->op_status);
 				else
 					ntrdma_send_fail(cqe, &wqe, wqe.op_status);
@@ -2001,17 +2001,20 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 						     recv_wqe->sg_count);
 			}
 
-			WARN(rc,
-				"ntrdma_zip_sync failed rc = %d QP %d wrid 0x%llx\n",
-				rc, rqp->qp_key, wqe.ulp_handle);
+			if (rc)
+				ntrdma_err(dev,
+					"ntrdma_zip_sync failed rc = %d QP %d wrid 0x%llx\n",
+					rc, rqp->qp_key, wqe.ulp_handle);
 			/* FIXME: handle send sync error */
 
 			if (ntrdma_wr_code_is_send(wqe.op_code)) {
 				rc = ntrdma_recv_done(dev,
 						recv_cqe, recv_wqe, &wqe);
-				WARN(rc,
-					"QP %d wrid 0x%llx ntrdma_recv_done failed rc = %d",
-					rqp->qp_key, wqe.ulp_handle, rc);
+				if (rc)
+					ntrdma_err(dev,
+						"QP %d wrid 0x%llx ntrdma_recv_done failed rc = %d",
+						rqp->qp_key, wqe.ulp_handle,
+						rc);
 				/* FIXME: handle recv sync error */
 			}
 
