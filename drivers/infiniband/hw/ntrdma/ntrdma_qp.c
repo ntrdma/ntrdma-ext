@@ -219,7 +219,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 
 	qp->send_wqe_sg_cap = attr->send_wqe_sg_cap;
 
-	ntrdma_dbg(dev, "qp init: inline data cap %u\n",
+	ntrdma_vdbg(dev, "qp init: inline data cap %u\n",
 			attr->send_wqe_inline_cap);
 	qp->send_wqe_inline_cap = attr->send_wqe_inline_cap;
 	qp->recv_wqe_sg_cap = attr->recv_wqe_sg_cap;
@@ -772,7 +772,7 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 				qp->send_cap, &start_cmpl, &end, &base);
 		ntrdma_ring_consume(qp->send_post, ntrdma_qp_send_cons(qp),
 				qp->send_cap, &start_cons, &end, &base);
-		ntrdma_info(dev,
+		ntrdma_vdbg(dev,
 				"QP %d, start %d, end %d, base %d: send_abort %d, send_post %d, cons %d, send_cmpl %d, send_prod %d\n",
 				qp->res.key, start_cmpl, end, base,
 				qp->send_abort, qp->send_post,
@@ -1436,7 +1436,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	/* verify the qp state and lock for producing recvs */
 	spin_lock_bh(&qp->recv_prod_lock);
 	if (!is_state_recv_ready(atomic_read(&qp->state))) {
-		ntrdma_qp_info(qp, "QP %d state %d will retry", qp->res.key,
+		ntrdma_qp_vdbg(qp, "QP %d state %d will retry", qp->res.key,
 			atomic_read(&qp->state));
 
 		if (qp->qp_type != IB_QPT_GSI)
@@ -1578,7 +1578,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* get the next producing range in the send ring */
 	ntrdma_qp_send_prod_get(qp, &start, &end, &base);
 	if (qp->qp_type == IB_QPT_GSI)
-		ntrdma_qp_info(qp, "QP %d, start %d, end %d, base %d",
+		ntrdma_qp_vdbg(qp, "QP %d, start %d, end %d, base %d",
 				qp->res.key, start, end, base);
 	/* quit if there is no send work to do */
 	if (start == end)
@@ -1848,7 +1848,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	/* verify the rqp state and lock for consuming sends */
 	spin_lock_bh(&rqp->send_cons_lock);
 	if (!is_state_send_ready(rqp->state)) {
-		ntrdma_rqp_info(rqp, "RQP %d state %d will retry",
+		ntrdma_rqp_vdbg(rqp, "RQP %d state %d will retry",
 			rqp->rres.key, rqp->state);
 		spin_unlock_bh(&rqp->send_cons_lock);
 		return;
@@ -2170,7 +2170,7 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
 		spin_lock_bh(&qp->send_prod_lock);
 
 		if (!ntrdma_qp_is_send_ready(qp))
-			ntrdma_qp_info(qp, "QP %d state %d",
+			ntrdma_qp_vdbg(qp, "QP %d state %d",
 				qp->res.key, atomic_read(&qp->state));
 		else {
 			move_to_err_state(qp);

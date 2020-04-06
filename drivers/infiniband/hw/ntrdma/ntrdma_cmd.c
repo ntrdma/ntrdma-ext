@@ -1086,7 +1086,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 		return 0;
 	}
 
-	ntrdma_info(dev, "stall QP %d\n", qp ? qp->res.key : -1);
+	ntrdma_vdbg(dev, "stall QP %d\n", qp ? qp->res.key : -1);
 	ntrdma_qp_send_stall(qp, rqp);
 	if (qp) {
 		qp->rqp_key = -1;

@@ -40,6 +40,8 @@
 
 #define TRACE_EN
 /* #define TRACE_DEBUG_ENABLE */
+/* #define VERBOSE_DEBUG */
+
 
 #ifdef TRACE_EN
 #define TRACE(fmt, ...) do {						\

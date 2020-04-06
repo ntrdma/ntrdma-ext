@@ -334,8 +334,7 @@ void ntrdma_debugfs_qp_add(struct ntrdma_qp *qp)
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	char buf[NTRDMA_DEBUGFS_NAME_MAX];
 
-	ntrdma_info(dev, "Add QP %d\n", qp->res.key);
-	TRACE("Add QP %d\n", qp->res.key);
+	ntrdma_vdbg(dev, "Add QP %d\n", qp->res.key);
 	ntrdma_debugfs_dev_add(dev);
 	if (!dev->debug) {
 		ntrdma_err(dev,

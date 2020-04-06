@@ -30,8 +30,6 @@
  * SOFTWARE.
  */
 
-#define VERBOSE_DEBUG
-
 #include "ntrdma_dev.h"
 #include "ntrdma_util.h"
 #include "ntrdma_res.h"
@@ -63,7 +61,7 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 			dev->node);
 
 	if (rc) {
-		ntrdma_dbg(dev, "mr vec failed\n");
+		ntrdma_err(dev, "mr vec failed\n");
 		goto err_mr;
 	}
 
@@ -72,7 +70,7 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 			dev->node);
 
 	if (rc) {
-		ntrdma_dbg(dev, "qp vec failed\n");
+		ntrdma_err(dev, "qp vec failed\n");
 		goto err_qp;
 	}
 
@@ -85,7 +83,7 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 			dev->node);
 
 	if (rc) {
-		ntrdma_dbg(dev, "rmr vec failed\n");
+		ntrdma_err(dev, "rmr vec failed\n");
 		goto err_rmr;
 	}
 
@@ -94,7 +92,7 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 			dev->node);
 
 	if (rc) {
-		ntrdma_dbg(dev, "rqp vec failed\n");
+		ntrdma_err(dev, "rqp vec failed\n");
 		goto err_rqp;
 	}
 
@@ -236,7 +234,7 @@ void ntrdma_dev_res_disable(struct ntrdma_dev *dev)
 {
 	struct ntrdma_qp *qp;
 
-	ntrdma_info(dev, "res disable starting ...");
+	ntrdma_vdbg(dev, "res disable starting ...");
 
 	mutex_lock(&dev->res_lock);
 	dev->res_enable = 0;
@@ -246,12 +244,12 @@ void ntrdma_dev_res_disable(struct ntrdma_dev *dev)
 	}
 	mutex_unlock(&dev->res_lock);
 
-	ntrdma_info(dev, "res disable done");
+	ntrdma_vdbg(dev, "res disable done");
 }
 
 void ntrdma_dev_res_reset(struct ntrdma_dev *dev)
 {
-	ntrdma_dbg(dev, "not implemented\n");
+	ntrdma_err(dev, "not implemented\n");
 }
 
 struct ntrdma_res *ntrdma_res_look(struct ntrdma_kvec *vec, u32 key)
