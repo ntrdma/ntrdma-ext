@@ -648,7 +648,7 @@ static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
 			continue;
 		}
 
-		ntrdma_info(dev, "len %lu buf_len %lu rx_len %lu rx_offset %lu",
+		ntrdma_vdbg(dev, "len %lu buf_len %lu rx_len %lu rx_offset %lu",
 			(long)len, (long)buf_len,
 			(long)rx_len, (long)rx_offset);
 		buf = kmalloc(buf_len, GFP_KERNEL);

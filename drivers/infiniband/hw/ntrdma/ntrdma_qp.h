@@ -181,6 +181,9 @@ inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp);
 #define ntrdma_qp_dbg(__qp, __args...)			\
 	ntrdma_dbg(ntrdma_qp_dev(__qp), ## __args)
 
+#define ntrdma_qp_vdbg(__qp, __args...)			\
+	ntrdma_vdbg(ntrdma_qp_dev(__qp), ## __args)
+
 #define ntrdma_qp_err(__qp, __fmt, __args...)			\
 	ntrdma_err(ntrdma_qp_dev(__qp), __fmt, ## __args)
 
@@ -357,6 +360,9 @@ inline u32 ntrdma_rqp_recv_prod(struct ntrdma_rqp *rqp);
 
 #define ntrdma_rqp_dbg(__qp, __args...)			\
 	ntrdma_dbg(ntrdma_rqp_dev(__qp), ## __args)
+
+#define ntrdma_rqp_vdbg(__qp, __args...)			\
+	ntrdma_vdbg(ntrdma_rqp_dev(__qp), ## __args)
 
 #define ntrdma_rqp_err(__qp, __fmt, __args...)			\
 	ntrdma_err(ntrdma_rqp_dev(__qp), __fmt, ## __args)
