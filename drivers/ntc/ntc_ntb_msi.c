@@ -222,6 +222,12 @@ struct ntc_ntb_dev {
 #define ntc_ntb_of_link_work(__ws) \
 	container_of(__ws, struct ntc_ntb_dev, link_work)
 
+#define ntc_ntb_of_ptrhld(__ptrhld) \
+	((void *)(unsigned long)(__ptrhld))
+
+#define ntc_ntb_to_ptrhld(__ptr) \
+	((unsigned long)(void *)(__ptr))
+
 #define ntc_ntb_dma_dev(__dev) \
 	(&(__dev)->ntb->pdev->dev)
 
@@ -429,9 +435,9 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev,
 	dev->ping_flags = ping_flags;
 }
 
-static void ntc_ntb_ping_pong_cb(struct timer_list *ntc_ntb_of_timer)
+static void ntc_ntb_ping_pong_cb(unsigned long ptrhld)
 {
-    struct ntc_ntb_dev *dev = (struct ntc_ntb_dev *)from_timer(dev, ntc_ntb_of_timer, ping_pong[NR_CPUS]);
+	struct ntc_ntb_dev *dev = ntc_ntb_of_ptrhld(ptrhld);
 	unsigned long irqflags;
 
 	spin_lock_irqsave(&dev->ping_lock, irqflags);
@@ -464,9 +470,9 @@ static bool ntc_ntb_ping_poll(struct ntc_ntb_dev *dev)
 	return false;
 }
 
-static void ntc_ntb_ping_poll_cb(struct timer_list *ntc_ntb_of_timer)
+static void ntc_ntb_ping_poll_cb(unsigned long ptrhld)
 {
-	struct ntc_ntb_dev *dev = (struct ntc_ntb_dev *)from_timer(dev, ntc_ntb_of_timer, ping_poll);
+	struct ntc_ntb_dev *dev = ntc_ntb_of_ptrhld(ptrhld);
 	unsigned long irqflags;
 	int poll_msg;
 
@@ -1599,14 +1605,14 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->timer_cpu_mask = *cpu_online_mask;
 
 	for_each_possible_cpu(cpu) {
-		timer_setup(&dev->ping_pong[cpu],
+		setup_timer(&dev->ping_pong[cpu],
 		ntc_ntb_ping_pong_cb,
-		0);
+		ntc_ntb_to_ptrhld(dev));
 	}
 
-	timer_setup(&dev->ping_poll,
+	setup_timer(&dev->ping_poll,
 		    ntc_ntb_ping_poll_cb,
-		    0);
+		    ntc_ntb_to_ptrhld(dev));
 
 	spin_lock_init(&dev->ping_lock);
 
