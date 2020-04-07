@@ -44,7 +44,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/io.h>
 #include <linux/slab.h>
-#include <linux/version.h>
 #include <rdma/ib_verbs.h>
 
 #include "ntc_trace.h"
@@ -64,14 +63,6 @@ struct ntc_dev;
 
 struct ib_ucontext;
 struct ib_umem;
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)
-#undef DEFINE_TIMER
-#define DEFINE_TIMER(_name, _function)					\
-	struct timer_list _name = TIMER_INITIALIZER(			\
-		(void (*)(unsigned long))(unsigned long)(_function), 0,	\
-		(unsigned long)&(_name))
-#endif
 
 #ifndef iowrite64
 #ifdef writeq
