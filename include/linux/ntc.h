@@ -1707,6 +1707,7 @@ static inline int ntc_mr_buf_map_dma(struct ntc_mr_buf *buf,
 
 	for (i = 0; i < NTC_MAX_NUM_MWS; i++) {
 		own_mw = &ntc->own_mws[i];
+		ntc_dbg(ntc, "i=%d own_mw->size=%llu own_mw->base=%llu\n", i, own_mw->size, own_mw->base);
 		if (ntc_segment_valid(own_mw->size,
 					dma_addr - own_mw->base, size))
 			break;
@@ -1718,6 +1719,7 @@ static inline int ntc_mr_buf_map_dma(struct ntc_mr_buf *buf,
 		return 0;
 
 	if (unlikely(i == NTC_MAX_NUM_MWS)) {
+		ntc_err(ntc, "NTC_MAX_NUM_MWS=%d", NTC_MAX_NUM_MWS);
 		ntc_err(ntc, "addr %#llx:%#llx beyond memory windows",
 			dma_addr, dma_addr + size);
 		return -EINVAL;

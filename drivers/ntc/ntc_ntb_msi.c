@@ -44,6 +44,9 @@
 #include <linux/timer.h>
 #include <linux/cpumask.h>
 #include <linux/slab.h>
+#ifdef CONFIG_CMADEVS
+#include <linux/cmadevs.h>
+#endif
 
 #define NTC_COUNTERS
 #include "ntc.h"
@@ -269,6 +272,7 @@ static u32 supported_versions[] = {
 	NTC_NTB_VERSION_CORONA, /* The last is preferred. */
 };
 
+#ifndef CONFIG_CMADEVS
 static bool ntc_check_reserved(unsigned long start, unsigned long end)
 {
 	bool success;
@@ -314,11 +318,17 @@ static bool ntc_check_reserved(unsigned long start, unsigned long end)
 
 	return success;
 }
+#endif
+//TODO add ntc_own_mw_data_check_cma
 
 static inline void ntc_own_mw_data_check_reserved(struct ntc_own_mw_data *data)
 {
+#ifdef CONFIG_CMADEVS
+	data->reserved = true;
+#else
 	data->reserved = ntc_check_reserved(data->base_addr,
 					data->base_addr + data->len);
+#endif
 }
 
 static inline
@@ -1458,8 +1468,13 @@ static int ntc_ntb_init_own_mw_reserved(struct ntc_ntb_dev *dev, int mw_idx)
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
 	if (data->mm_len) {
+#ifdef	CONFIG_CMADEVS
+		own_mw->base_ptr = phys_to_virt(data->base_addr);
+#else
 		own_mw->base_ptr =
 			memremap(data->base_addr, data->mm_len, MEMREMAP_WB);
+#endif
+		info("OWN MW: base_ptr=%p. virtual address", own_mw->base_ptr);
 		if (!own_mw->base_ptr) {
 			errmsg("OWN MW: cannot memremap. MW @%#lx len=%#lx.",
 				data->base_addr, data->mm_len);
@@ -1480,11 +1495,13 @@ static int ntc_ntb_init_own_mw_reserved(struct ntc_ntb_dev *dev, int mw_idx)
 static void ntc_ntb_deinit_own_mw_reserved(struct ntc_ntb_dev *dev,
 					int mw_idx)
 {
+#ifndef	CONFIG_CMADEVS
 	struct ntc_dev *ntc = &dev->ntc;
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
 	if (own_mw->base_ptr)
 		memunmap(own_mw->base_ptr);
+#endif
 }
 
 static void ntc_ntb_deinit_own(struct ntc_ntb_dev *dev, int mw_idx)
@@ -1523,6 +1540,7 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 	u64 trans_len;
 	int rc;
 
+	info("INIT_OWN! mw_idx=%d", mw_idx);
 	own_mw->mw_idx = mw_idx;
 	own_mw->ntc = ntc;
 	own_mw->ntb_dev = ntc->ntb_dev;
@@ -1581,24 +1599,31 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 		return -EINVAL;
 	}
 
+
 	if (data->reserved) {
 		rc = ntc_ntb_init_own_mw_reserved(dev, mw_idx);
-		if (rc < 0)
+		if (rc < 0) {
+			errmsg("failed at calling ntc_ntb_init_own_mw_reserved with index %d\n", mw_idx);
 			goto err;
+		}
 		data->reserved_used = true;
 		goto init_mm;
 	}
 
 	if (mw_idx == NTC_DRAM_MW_IDX) {
 		rc = ntc_ntb_init_own_mw_flat(dev, mw_idx);
-		if (rc < 0)
+		if (rc < 0) {
+			errmsg("failed at calling ntc_ntb_init_own_mw_flat with index %d\n", mw_idx);
 			goto err;
+		}
 		goto init_mm;
 	}
 
 	rc = ntc_ntb_init_own_mw_coherent(dev, mw_idx);
-	if (rc < 0)
+	if (rc < 0) {
+		errmsg("failed at calling ntc_ntb_init_own_mw_coherent with index %d\n", mw_idx);
 		goto err;
+	}
 	data->coherent_used = true;
 
  init_mm:
@@ -2043,6 +2068,14 @@ int __init ntc_init(void)
 	int i;
 	unsigned long mw0_mm_prealloc = sizeof(struct ntc_ntb_info);
 	unsigned long mw0_min_mm_len = 0x100000;
+#ifdef	CONFIG_CMADEVS
+	unsigned int cmadevs_area_count = cmadevs_get_area_count();
+
+	info("input params mw0_base_addr=%lu mw0_len=%lu\n", mw0_base_addr, mw0_len);
+	mw0_base_addr=get_cma_area_base_addr(1);
+	mw0_len=get_cma_area_size(1);
+	info("values from cma: mw0_base_addr=%lu mw0_len=%lu\n", mw0_base_addr, mw0_len);
+#endif
 
 	info("%s %s init", DRIVER_DESCRIPTION, DRIVER_VERSION);
 
@@ -2064,6 +2097,8 @@ int __init ntc_init(void)
 	if (!mw0_len)
 		mw0_len = mw0_mm_len;
 
+	info("mw0_base_addr=%lu mw0_len=%lu", mw0_base_addr, mw0_len);
+
 	own_mw_data[NTC_INFO_MW_IDX].base_addr = mw0_base_addr;
 	own_mw_data[NTC_INFO_MW_IDX].len = mw0_len;
 	own_mw_data[NTC_INFO_MW_IDX].mm_len = mw0_mm_len;
@@ -2071,14 +2106,24 @@ int __init ntc_init(void)
 		mw0_mm_len ? mw0_mm_prealloc : 0;
 	own_mw_data[NTC_INFO_MW_IDX].reserved = false;
 
+#ifdef CONFIG_CMADEVS
+	if (cmadevs_area_count == 0) {
+		ntc_deinit();
+		return -EINVAL;
+	}
+	own_mw_data[NTC_DRAM_MW_IDX].base_addr = get_cma_area_base_addr(0);
+	own_mw_data[NTC_DRAM_MW_IDX].len = get_cma_area_size(0);
+#else
 	own_mw_data[NTC_DRAM_MW_IDX].base_addr = mw1_base_addr;
 	own_mw_data[NTC_DRAM_MW_IDX].len = mw1_len;
+#endif
 	own_mw_data[NTC_DRAM_MW_IDX].mm_len = mw1_mm_len;
 	own_mw_data[NTC_DRAM_MW_IDX].mm_prealloc = 0;
 	own_mw_data[NTC_DRAM_MW_IDX].reserved = false;
 
-	for (i = 0; i < 2; i++)
+	for (i = 0; i < 2; i++) {
 		ntc_own_mw_data_check_reserved(&own_mw_data[i]);
+	}
 
 	if (debugfs_initialized())
 		ntc_dbgfs = debugfs_create_dir(KBUILD_MODNAME, NULL);
