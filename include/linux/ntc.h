@@ -565,11 +565,12 @@ static inline void ntc_req_submit(struct ntc_dma_chan *chan)
 
 static inline void ntc_dma_flush(struct ntc_dma_chan *chan)
 {
-	dma_cookie_t last_cookie = READ_ONCE(chan->last_cookie);
+	dma_cookie_t last_cookie;
 
-	if (!chan->chan)
+	if (!chan || !chan->chan)
 		return;
 
+	last_cookie = READ_ONCE(chan->last_cookie);
 	if (dma_submit_error(last_cookie))
 		return;
 
@@ -1941,5 +1942,6 @@ static inline int ntc_umem_count(struct ntc_dev *ntc, struct ib_umem *ib_umem)
  * Return: 1 for events waiting or 0 for no events.
  */
 int ntc_clear_signal(struct ntc_dev *ntc, int vec);
+unsigned get_num_dma_chan(void);
 
 #endif

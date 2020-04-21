@@ -192,7 +192,13 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 		qp->res.key = rc;
 	}
 
-	ntc_init_dma_chan(&qp->dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
+	if (attr->qp_type == IB_QPT_GSI) {
+		ntc_init_dma_chan(&qp->dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
+		qp->dma_chan_init = true;
+	} else {
+		qp->dma_chan = NULL;
+		qp->dma_chan_init = false;
+	}
 
 	ntrdma_cq_get(recv_cq);
 	qp->recv_cq = recv_cq;
@@ -1432,6 +1438,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	u32 start, end, base;
 	size_t off, len;
 	int rc = 0;
+	struct ntc_dma_chan *dma_chan = NULL;
 
 	/* verify the qp state and lock for producing recvs */
 	spin_lock_bh(&qp->recv_prod_lock);
@@ -1451,13 +1458,17 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	if (start == end)
 		goto out;
 
+	if (unlikely(!qp->dma_chan_init))
+		ntc_init_dma_chan(&dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
+	else
+		dma_chan = READ_ONCE(qp->dma_chan);
 	for (;;) {
 		ntrdma_qp_recv_prod_put(qp, end, base);
 
 		/* send the portion of the ring */
 		off = start * qp->recv_wqe_size;
 		len = (end - start) * qp->recv_wqe_size;
-		rc = ntc_request_memcpy_fenced(qp->dma_chan,
+		rc = ntc_request_memcpy_fenced(dma_chan,
 					&qp->peer_recv_wqe_buf, off,
 					&qp->recv_wqe_buf, off,
 					len, NTC_DMA_WAIT);
@@ -1477,7 +1488,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	}
 
 	/* send the prod idx */
-	rc = ntc_request_imm32(qp->dma_chan,
+	rc = ntc_request_imm32(dma_chan,
 			&qp->peer_recv_wqe_buf, qp->peer_recv_prod_shift,
 			qp->recv_prod, true, NULL, NULL);
 	if (unlikely(rc < 0)) {
@@ -1487,7 +1498,8 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 
 dma_submit:
 	/* submit the request */
-	ntc_req_submit(qp->dma_chan);
+	ntc_req_submit(dma_chan);
+
 out:
 	if (unlikely(rc < 0))
 		ntrdma_unrecoverable_err(dev);
@@ -1524,6 +1536,12 @@ inline int ntrdma_qp_rdma_write(struct ntrdma_qp *qp,
 	rdma_sge.sge = wqe->rdma_sge;
 	rdma_sge.sge.length = ~(u32)0;
 
+	if (unlikely(!qp->dma_chan_init)) {
+		int core = smp_processor_id();
+		ntrdma_qp_vdbg(qp, "QP %d Core %d\n", qp->res.key, core);
+		ntc_init_dma_chan(&qp->dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
+		qp->dma_chan_init = true;
+	}
 	if (wqe->flags & IB_SEND_INLINE) {
 		rdma_len = wqe->inline_len;
 		rc = ntrdma_zip_rdma_imm(dev, qp->dma_chan, &rdma_sge,
@@ -1621,6 +1639,12 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* get the next consuming range in the recv ring */
 	ntrdma_rqp_recv_cons_get(rqp, &recv_pos, &recv_end, &recv_base);
 
+	if (unlikely(!qp->dma_chan_init)) {
+		int core = smp_processor_id();
+		ntrdma_qp_vdbg(qp, "QP %d Core %d\n", qp->res.key, core);
+		ntc_init_dma_chan(&qp->dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
+		qp->dma_chan_init = true;
+	}
 	for (pos = start;;) {
 		wqe = ntrdma_qp_send_wqe(qp, pos++);
 
@@ -1854,6 +1878,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	bool abort = false;
 	bool need_qp_put = false;
 	bool is_unrecoverable_err = false;
+	struct ntc_dma_chan *dma_chan = NULL;
 
 	/* verify the rqp state and lock for consuming sends */
 	spin_lock_bh(&rqp->send_cons_lock);
@@ -1888,8 +1913,12 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	}
 	/* FIXME: need to complete the send with error??? */
 
+	if (unlikely(!qp->dma_chan_init))
+		ntc_init_dma_chan(&dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
+	else
+		dma_chan = READ_ONCE(qp->dma_chan);
 	need_qp_put = true;
-	WRITE_ONCE(rqp->dma_chan, qp->dma_chan);
+	WRITE_ONCE(rqp->dma_chan, dma_chan);
 
 	/* connected qp must be ready to receive */
 	rc = 0;
@@ -2074,7 +2103,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	/* send the portion of the ring */
 	off = start * sizeof(struct ntrdma_cqe);
 	len = (pos - start) * sizeof(struct ntrdma_cqe);
-	rc = ntc_request_memcpy_fenced(qp->dma_chan,
+	rc = ntc_request_memcpy_fenced(dma_chan,
 				&rqp->peer_send_cqe_buf, off,
 				&rqp->send_cqe_buf, off, len, NTC_DMA_WAIT);
 	if (unlikely(rc < 0)) {
@@ -2085,7 +2114,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	this_cpu_add(dev_cnt.tx_cqes, pos - start);
 	/* send the cons idx */
-	rc = ntc_request_imm32(qp->dma_chan,
+	rc = ntc_request_imm32(dma_chan,
 			&rqp->peer_send_cqe_buf, rqp->peer_send_cons_shift,
 			rqp->send_cons, true, NULL, NULL);
 	if (unlikely(rc < 0)) {
@@ -2096,7 +2125,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	if (do_signal) {
 		/* update the vbell and signal the peer */
-		rc = ntrdma_dev_vbell_peer(dev, qp->dma_chan,
+		rc = ntrdma_dev_vbell_peer(dev, dma_chan,
 					rqp->peer_cmpl_vbell_idx);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev, "QP %d ntrdma_dev_vbell_peer failed. rc=%d",
@@ -2104,7 +2133,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			goto err_memcpy;
 		}
 
-		rc = ntc_req_signal(dev->ntc, qp->dma_chan, NULL, NULL,
+		rc = ntc_req_signal(dev->ntc, dma_chan, NULL, NULL,
 				NTB_DEFAULT_VEC(dev->ntc));
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev, "QP %d ntc_req_signal failed. rc=%d",
@@ -2122,7 +2151,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	}
 	/* submit the request */
 	/* TODO: return cpde? */
-	ntc_req_submit(qp->dma_chan);
+	ntc_req_submit(dma_chan);
 
 	/* release lock for state change or consuming later sends */
 	spin_unlock_bh(&rqp->send_cons_lock);

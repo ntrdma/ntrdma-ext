@@ -193,19 +193,12 @@ static
 struct ntc_dma_chan *ntc_req_rr(struct ntc_dev *ntc,
 				enum ntc_dma_chan_type type)
 {
-	int old_index;
 	int i;
 
-	do {
-		old_index = atomic_read(&ntc->dma_chan_rr_index[type]);
-		i = old_index + 1;
-
-		if ((i >= ARRAY_SIZE(ntc->dma_chan)) || !ntc->dma_chan[i].chan)
-			i = 0;
-
-	} while (atomic_cmpxchg(&ntc->dma_chan_rr_index[type], old_index, i) !=
-		old_index);
-
+	i = smp_processor_id() % get_num_dma_chan();
+	if (!ntc->dma_chan[i].chan) {
+		i = 0;
+	}
 	ntc_vdbg(ntc, "ntc_req_rr for type %d returns dma_chan #%d", type, i);
 
 	return &ntc->dma_chan[i];
