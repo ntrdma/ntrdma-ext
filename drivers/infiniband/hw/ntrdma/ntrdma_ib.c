@@ -1719,6 +1719,13 @@ static inline void ntrdma_qp_additional_work(struct ntrdma_qp *qp,
 					bool had_immediate_work) {
 	bool reschedule;
 
+
+	if (unlikely(!qp->dma_chan_init)) {
+		int core = smp_processor_id();
+		ntrdma_qp_vdbg(qp, "QP %d Core %d\n", qp->res.key, core);
+		ntc_init_dma_chan(&qp->dma_chan, ntrdma_qp_dev(qp)->ntc, NTC_QP_DMA_CHAN);
+		qp->dma_chan_init = true;
+	}
 	if (has_deferred_work)
 		do {
 			reschedule = ntrdma_qp_send_work(qp);
