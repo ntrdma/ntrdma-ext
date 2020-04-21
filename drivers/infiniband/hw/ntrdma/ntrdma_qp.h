@@ -164,6 +164,7 @@ struct ntrdma_qp {
 	spinlock_t		recv_prod_lock;
 	spinlock_t		recv_cons_lock;
 	struct mutex	recv_cmpl_lock;
+	bool		dma_chan_init;
 };
 
 inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp);

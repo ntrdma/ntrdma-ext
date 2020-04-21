@@ -2033,6 +2033,11 @@ static void ntc_deinit(void)
 	}
 }
 
+unsigned get_num_dma_chan(void)
+{
+	return num_dma_chan;
+}
+
 int __init ntc_init(void)
 {
 	int i;
