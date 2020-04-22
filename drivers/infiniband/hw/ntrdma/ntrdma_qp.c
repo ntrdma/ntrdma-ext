@@ -1465,7 +1465,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 			ntrdma_err(dev,
 				"QP %d: ntc_request_memcpy failed. rc=%d",
 				qp->res.key, rc);
-			goto out;
+			goto dma_submit;
 		}
 
 		TRACE("QP %d start %u end %u\n",
@@ -1483,12 +1483,11 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	if (unlikely(rc < 0)) {
 		ntrdma_err(dev, "QP %d: ntc_request_imm32 failed. rc=%d",
 				qp->res.key, rc);
-		goto out;
 	}
 
+dma_submit:
 	/* submit the request */
 	ntc_req_submit(qp->dma_chan);
-
 out:
 	if (unlikely(rc < 0))
 		ntrdma_unrecoverable_err(dev);
@@ -2069,7 +2068,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 	if (abort) {
 		ntrdma_err(dev, "QP %d failed to compete\n", rqp->qp_key);
-		goto err_memcpy;
+		goto err_recv;
 	}
 
 	/* send the portion of the ring */
@@ -2131,6 +2130,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	return;
 
 err_memcpy:
+	ntc_req_submit(qp->dma_chan);
 err_recv:
 err_qp:
 	spin_unlock_bh(&rqp->send_cons_lock);
