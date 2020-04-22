@@ -576,9 +576,9 @@ more:
 			ntrdma_err(dev, "ntc_req_signal failed. rc=%d", rc);
 			goto dma_err;
 		}
-		ntc_req_submit(eth->dma_chan);
 
 	 dma_err:
+		ntc_req_submit(eth->dma_chan);
 		if (unlikely(rc < 0))
 			ntrdma_unrecoverable_err(dev);
 	}
@@ -876,6 +876,7 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 	goto done;
 
 err_memcpy:
+	ntc_req_submit(eth->dma_chan);
 	ntrdma_unrecoverable_err(dev);
 	if (skb_ctx_src_alloced)
 		ntc_local_buf_free(&skb_ctx->src, dev->ntc);
