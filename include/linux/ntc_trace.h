@@ -40,6 +40,7 @@
 
 #define TRACE_EN
 /* #define TRACE_DEBUG_ENABLE */
+/* #define TRACE_VDBG_ENABLE */
 /* #define VERBOSE_DEBUG */
 
 
@@ -76,11 +77,11 @@
 #define TRACE_VDBG(...) do {} while (0)
 #endif
 
-#define _ntc_out(__out, __trace, __ntc, __fmt, __args...)		\
-	__out(&(__ntc)->dev, "%s: %d: " __fmt,				\
-		(({__trace("%s: %d: " __fmt,				\
-					__func__, __LINE__, ##__args);}), \
-			__func__), __LINE__, ## __args)
+#define _ntc_out(__out, __trace, __ntc, __fmt, __args...) do {		\
+		__trace("%s: %d: " __fmt, __func__, __LINE__, ##__args);\
+		__out(&(__ntc)->dev, "%s: %d: " __fmt, __func__,	\
+				__LINE__, ## __args);			\
+	} while (0)
 
 #define ntc_out(__out, __dev, __fmt, ...) do {				\
 		char _______FMT[] = __stringify(__fmt);			\
