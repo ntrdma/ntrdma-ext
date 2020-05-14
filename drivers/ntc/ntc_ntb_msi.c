@@ -667,6 +667,88 @@ static inline void reset_peer_irq(struct ntc_ntb_dev *dev)
 	ntc_remote_buf_unmap(&dev->peer_irq_base, &dev->ntc);
 }
 
+static inline int set_memory_windows_on_device(struct ntc_ntb_dev *dev, int mw_idx)
+{
+	int rc;
+	u64 addr_misalignment;
+	u64 actual_base_addr;
+	u64 actual_len;
+	u64 trans_base_addr;
+	u64 trans_len;
+	struct ntc_dev *ntc = &dev->ntc;
+	struct ntc_own_mw_data *data = &own_mw_data[mw_idx];
+	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
+
+	ntb_mw_get_align(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
+			&data->addr_align, &data->size_align, &data->size_max);
+
+	if (data->len > data->size_max) {
+		errmsg("Requested MW of length %#lx, but max_size is %#llx",
+			data->len, data->size_max);
+		rc = -EINVAL;
+		goto err;
+	}
+
+	if (data->addr_align)
+		addr_misalignment = data->base_addr & (data->addr_align - 1);
+	else
+		addr_misalignment = 0;
+	actual_base_addr = data->base_addr - addr_misalignment;
+	actual_len = data->len + addr_misalignment;
+	if (!actual_base_addr && (actual_len < data->addr_align))
+		actual_len = data->addr_align;
+
+	if (addr_misalignment) {
+		warn("Requested MW @%#lx of len %#lx, but alignment is %#llx",
+			data->base_addr, data->len, data->addr_align);
+		warn("Fixing alignment: actual MW @%#llx of len %#llx",
+			actual_base_addr, actual_len);
+	}
+
+	if (actual_len < data->len) {
+		errmsg("Cannot fix alignment: length overflow");
+		return -EINVAL;
+	}
+
+	if (addr_misalignment && data->mm_len) {
+		errmsg("Cannot fix alignment: request memory map in window");
+		return -EINVAL;
+	}
+
+
+	if (addr_misalignment) {
+		trans_base_addr = actual_base_addr;
+		trans_len = actual_len;
+	} else {
+		trans_base_addr = own_mw->base;
+		trans_len = own_mw->size;
+	}
+
+	info("logical MW%d @%#llx len=%#llx",
+		mw_idx, own_mw->base, own_mw->size);
+	info("ntb_mw_set_trans actual MW%d @%#llx len=%#llx",
+		mw_idx, trans_base_addr, trans_len);
+
+	rc = ntb_mw_set_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
+			trans_base_addr, trans_len);
+	if (rc < 0) {
+		errmsg("ntb_mw_set_trans failed rc=%d", rc);
+		goto err;
+	}
+
+	own_mw->dead_zone_size = addr_misalignment;
+	own_mw->trans_len = trans_len;
+
+	return rc;
+
+err:
+	ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx);
+	data->addr_align = 0;
+	data->size_align = 0;
+	data->size_max = 0;
+	return rc;
+}
+
 static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 {
 	ntc_ntb_dev_info(dev, "link reset");
@@ -1080,9 +1162,10 @@ int _ntc_link_disable(struct ntc_dev *ntc, const char *caller)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
 
-	ntc_ntb_dev_err(dev, "link disable by upper layer (%s)", caller);
-
-	ntc_ntb_ping_send(dev, NTC_NTB_LINK_QUIESCE);
+	if (ntc->link_is_up) {
+		ntc_ntb_dev_err(dev, "link disable by upper layer (%s)", caller);
+		ntc_ntb_ping_send(dev, NTC_NTB_LINK_QUIESCE);
+	}
 
 	return ntb_link_disable(dev->ntb);
 }
@@ -1097,11 +1180,22 @@ int _ntc_link_enable(struct ntc_dev *ntc, const char *caller)
 
 	rc = ntb_link_enable(dev->ntb, NTB_SPEED_AUTO, NTB_WIDTH_AUTO);
 
-	if (!rc) {
-		ntc_ntb_ping_send(dev, dev->link_state);
-		ntb_link_event(dev->ntb);
+	if (rc) {
+		goto end;
+	}
+	rc = set_memory_windows_on_device(dev, NTC_DRAM_MW_IDX);
+	if (rc) {
+		goto end;
+	}
+	rc = set_memory_windows_on_device(dev, NTC_INFO_MW_IDX);
+	if (rc) {
+		goto end;
 	}
 
+	ntc_ntb_ping_send(dev, dev->link_state);
+	ntb_link_event(dev->ntb);
+
+end:
 	return rc;
 }
 EXPORT_SYMBOL(_ntc_link_enable);
@@ -1533,11 +1627,7 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 	struct ntc_dev *ntc = &dev->ntc;
 	struct ntc_own_mw_data *data = &own_mw_data[mw_idx];
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
-	u64 addr_misalignment;
-	u64 actual_base_addr;
-	u64 actual_len;
-	u64 trans_base_addr;
-	u64 trans_len;
+
 	int rc;
 
 	info("INIT_OWN! mw_idx=%d", mw_idx);
@@ -1552,9 +1642,6 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 
 	ntb_mw_clear_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx);
 
-	ntb_mw_get_align(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
-			&data->addr_align, &data->size_align, &data->size_max);
-
 	if (data->mm_len > data->len) {
 		errmsg("Requested MM of length %#lx in MW of length %#lx",
 			data->mm_len, data->len);
@@ -1566,39 +1653,6 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 			data->mm_prealloc, data->mm_len);
 		return -EINVAL;
 	}
-
-	if (data->addr_align)
-		addr_misalignment = data->base_addr & (data->addr_align - 1);
-	else
-		addr_misalignment = 0;
-	actual_base_addr = data->base_addr - addr_misalignment;
-	actual_len = data->len + addr_misalignment;
-	if (!actual_base_addr && (actual_len < data->addr_align))
-		actual_len = data->addr_align;
-
-	if (addr_misalignment) {
-		warn("Requested MW @%#lx of len %#lx, but alignment is %#llx",
-			data->base_addr, data->len, data->addr_align);
-		warn("Fixing alignment: actual MW @%#llx of len %#llx",
-			actual_base_addr, actual_len);
-	}
-
-	if (actual_len < data->len) {
-		errmsg("Cannot fix alignment: length overflow");
-		return -EINVAL;
-	}
-
-	if (addr_misalignment && data->mm_len) {
-		errmsg("Cannot fix alignment: request memory map in window");
-		return -EINVAL;
-	}
-
-	if (data->len > data->size_max) {
-		errmsg("Requested MW of length %#lx, but max_size is %#llx",
-			data->len, data->size_max);
-		return -EINVAL;
-	}
-
 
 	if (data->reserved) {
 		rc = ntc_ntb_init_own_mw_reserved(dev, mw_idx);
@@ -1637,29 +1691,6 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 		goto err;
 	}
 	data->mm_inited = true;
-
-	if (addr_misalignment) {
-		trans_base_addr = actual_base_addr;
-		trans_len = actual_len;
-	} else {
-		trans_base_addr = own_mw->base;
-		trans_len = own_mw->size;
-	}
-
-	info("logical MW%d @%#llx len=%#llx",
-		mw_idx, own_mw->base, own_mw->size);
-	info("ntb_mw_set_trans actual MW%d @%#llx len=%#llx",
-		mw_idx, trans_base_addr, trans_len);
-
-	rc = ntb_mw_set_trans(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
-			trans_base_addr, trans_len);
-	if (rc < 0) {
-		errmsg("ntb_mw_set_trans failed rc=%d", rc);
-		goto err;
-	}
-
-	own_mw->dead_zone_size = addr_misalignment;
-	own_mw->trans_len = trans_len;
 
 	return rc;
 
