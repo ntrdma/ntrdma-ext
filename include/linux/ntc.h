@@ -503,8 +503,8 @@ static inline phys_addr_t ntc_peer_addr(struct ntc_dev *ntc,
 	}
 
 	if (unlikely(offset >= peer_mw->trans_len)) {
-		ntc_err(ntc, "offset %#llx is beyond memory len %#llx",
-			offset, peer_mw->trans_len);
+		ntc_err(ntc, "mw %d offset %#llx is beyond memory len %#llx",
+			peer_mw->mw_idx, offset, peer_mw->trans_len);
 		return 0;
 	}
 
