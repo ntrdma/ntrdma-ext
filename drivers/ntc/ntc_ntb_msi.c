@@ -793,12 +793,15 @@ static inline void ntc_ntb_send_addr(struct ntc_ntb_dev *dev)
 	for (i = 0; i < NTC_MAX_NUM_MWS; i++) {
 		own_mw = &ntc->own_mws[i];
 		self_mw_info = &self_info->mw_info[i];
+		info("sending to peer - dead_zone_size=%llu trans_len=%llu",
+			 own_mw->dead_zone_size, own_mw->trans_len);
 		iowrite64(own_mw->dead_zone_size,
 			&self_mw_info->dead_zone_size);
 		iowrite64(own_mw->trans_len, &self_mw_info->trans_len);
 	}
 }
 
+//TODO: the name maybe misleading. is it more receive peer address? or maybe len?
 static inline void ntc_ntb_recv_addr(struct ntc_ntb_dev *dev)
 {
 	struct ntc_dev *ntc = &dev->ntc;
@@ -813,11 +816,14 @@ static inline void ntc_ntb_recv_addr(struct ntc_ntb_dev *dev)
 		mw_info = READ_ONCE(peer_info->mw_info[i]);
 		peer_mw->dead_zone_size = mw_info.dead_zone_size;
 		peer_mw->trans_len = mw_info.trans_len;
+		info("mw %d - dead_zone_size=%llu, trans_len=%llu", i, peer_mw->dead_zone_size,
+			 peer_mw->trans_len);
 	}
 }
 
 static inline void ntc_ntb_choose_version_and_send_addr(struct ntc_ntb_dev *dev)
 {
+	int rc;
 	struct ntc_dev *ntc = &dev->ntc;
 	struct ntc_ntb_info __iomem *self_info;
 	const struct ntc_ntb_info *peer_info;
@@ -845,6 +851,13 @@ static inline void ntc_ntb_choose_version_and_send_addr(struct ntc_ntb_dev *dev)
 	}
 
 	ntc_ntb_dev_info(dev, "Agree on version %d", ntc->version);
+
+	rc = set_memory_windows_on_device(dev, NTC_DRAM_MW_IDX);
+	if (rc) {
+		ntc_ntb_dev_err(dev, "could not set memory window for DRAM. error=%d.",
+						rc);
+		goto err;
+	}
 
 	ntc_ntb_send_addr(dev);
 
@@ -1140,8 +1153,9 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 			goto out;
 		case 0:
 			ntc_ntb_dev_info(dev, "both peers are done hello");
-			link_up = true;
 		}
+
+		link_up = true;
 	}
 
 out:
@@ -1180,10 +1194,6 @@ int _ntc_link_enable(struct ntc_dev *ntc, const char *caller)
 
 	rc = ntb_link_enable(dev->ntb, NTB_SPEED_AUTO, NTB_WIDTH_AUTO);
 
-	if (rc) {
-		goto end;
-	}
-	rc = set_memory_windows_on_device(dev, NTC_DRAM_MW_IDX);
 	if (rc) {
 		goto end;
 	}
