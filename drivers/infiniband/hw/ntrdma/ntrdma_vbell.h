@@ -93,7 +93,7 @@ static inline void ntrdma_vbell_init(struct ntrdma_dev *dev,
 	vbell->idx = idx;
 	vbell->cb_fn = cb_fn;
 	vbell->cb_ctx = cb_ctx;
-	vbell->seq = ~0;
+	vbell->seq = 0;
 	vbell->arm = false;
 	vbell->enabled = true;
 	vbell->alive = true;
