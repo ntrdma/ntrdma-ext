@@ -118,12 +118,13 @@ static struct dentry *ntc_dbgfs;
 
 #define NTC_NTB_LINK_QUIESCE		0
 #define NTC_NTB_LINK_RESET		1
-#define NTC_NTB_LINK_START		2
-#define NTC_NTB_LINK_VER_SENT		3
-#define NTC_NTB_LINK_VER_CHOSEN		4
-#define NTC_NTB_LINK_DB_CONFIGURED	5
-#define NTC_NTB_LINK_COMMITTED		6
-#define NTC_NTB_LINK_HELLO		7
+#define NTC_NTB_LINK_ENABLED	2
+#define NTC_NTB_LINK_START		3
+#define NTC_NTB_LINK_VER_SENT		4
+#define NTC_NTB_LINK_VER_CHOSEN		5
+#define NTC_NTB_LINK_DB_CONFIGURED	6
+#define NTC_NTB_LINK_COMMITTED		7
+#define NTC_NTB_LINK_HELLO		8
 
 #define NTC_NTB_PING_PONG_SPAD		BIT(1)
 #define NTC_NTB_PING_PONG_MEM		BIT(2)
@@ -673,12 +674,16 @@ static inline int set_memory_windows_on_device(struct ntc_ntb_dev *dev, int mw_i
 	struct ntc_own_mw_data *data = &own_mw_data[mw_idx];
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
-	ntb_mw_get_align(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
+	rc = ntb_mw_get_align(dev->ntb, NTB_DEF_PEER_IDX, mw_idx,
 			&data->addr_align, &data->size_align, &data->size_max);
+	if (rc) {
+		errmsg("ntb_mw_get_align failed for MW%d. rc=%d", mw_idx, rc);
+		goto err;
+	}
 
 	if (data->len > data->size_max) {
-		errmsg("Requested MW of length %#lx, but max_size is %#llx",
-			data->len, data->size_max);
+		errmsg("Requested MW%d of length %#lx, but max_size is %#llx",
+			mw_idx, data->len, data->size_max);
 		rc = -EINVAL;
 		goto err;
 	}
@@ -752,8 +757,31 @@ static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 	reset_peer_irq(dev);
 	dev->reset_cnt++;
 	wake_up(&dev->reset_done);
-	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_START);
+	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_ENABLED);
 }
+
+static inline void ntc_ntb_enabled(struct ntc_ntb_dev *dev)
+{
+	int rc;
+
+	ntc_ntb_dev_info(dev, "checking if link is up");
+	if (!ntb_link_is_up(dev->ntb, NULL, NULL))
+		return;
+
+	ntc_ntb_dev_info(dev, "link is up!");
+
+	rc = set_memory_windows_on_device(dev, NTC_INFO_MW_IDX);
+	if (rc) {
+		goto end;
+	}
+
+	ntc_ntb_ping_send(dev, dev->link_state);
+	ntb_link_event(dev->ntb);
+	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_START);
+end:
+	return;
+}
+
 
 static inline void ntc_ntb_send_version(struct ntc_ntb_dev *dev)
 {
@@ -1010,7 +1038,12 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 		/* fall through */
 	case NTC_NTB_LINK_RESET:
 		ntc_ntb_reset(dev);
-		/* fall through */
+		break;
+	case NTC_NTB_LINK_ENABLED:
+		ntc_ntb_enabled(dev);
+		if (dev->link_state != NTC_NTB_LINK_START)
+			goto out;
+		/* no break */
 	case NTC_NTB_LINK_START:
 		switch (link_event) {
 		default:
@@ -1193,18 +1226,6 @@ int _ntc_link_enable(struct ntc_dev *ntc, const char *caller)
 
 	rc = ntb_link_enable(dev->ntb, NTB_SPEED_AUTO, NTB_WIDTH_AUTO);
 
-	if (rc) {
-		goto end;
-	}
-	rc = set_memory_windows_on_device(dev, NTC_INFO_MW_IDX);
-	if (rc) {
-		goto end;
-	}
-
-	ntc_ntb_ping_send(dev, dev->link_state);
-	ntb_link_event(dev->ntb);
-
-end:
 	return rc;
 }
 EXPORT_SYMBOL(_ntc_link_enable);
@@ -1219,10 +1240,10 @@ int _ntc_link_reset(struct ntc_dev *ntc, bool wait, const char *caller)
 	ntc_ntb_dev_info(dev, "link reset requested by %s", caller);
 	mutex_lock(&dev->link_lock);
 
-	if (dev->link_state > NTC_NTB_LINK_START)
+	if (dev->link_state > NTC_NTB_LINK_ENABLED)
 		ntc_ntb_error(dev);
 	if (wait) {
-		if (dev->link_state == NTC_NTB_LINK_START) {
+		if (dev->link_state == NTC_NTB_LINK_ENABLED) {
 			mutex_unlock(&dev->link_lock);
 			ntc_ntb_dev_info(dev, "link reset already done");
 			return 0;
@@ -1767,7 +1788,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 	dev->ping_miss = 0;
 	dev->ping_flags = 0;
 	dev->ping_seq = 0;
-	dev->ping_msg = NTC_NTB_LINK_START;
+	dev->ping_msg = NTC_NTB_LINK_ENABLED;
 	dev->poll_val = 0;
 	dev->poll_msg = NTC_NTB_LINK_QUIESCE;
 	dev->timer_cpu_mask = *cpu_online_mask;
@@ -1787,7 +1808,7 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* init the link state machine */
 	ntc->link_is_up = false;
-	dev->link_state = NTC_NTB_LINK_START;
+	dev->link_state = NTC_NTB_LINK_ENABLED;
 
 	INIT_WORK(&dev->link_work,
 		  ntc_ntb_link_work_cb);
