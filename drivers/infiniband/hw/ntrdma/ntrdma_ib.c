@@ -2711,6 +2711,11 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	ibdev->del_gid			= ntrdma_del_gid;
 	ibdev->process_mad		= ntrdma_process_mad;
 
+	//TODO: change from hard coded to enum based!
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
+	ibdev->driver_id		= 17;
+#endif
+
 	rc = ib_register_device(ibdev, NULL);
 	if (rc)
 		goto err_ib;
