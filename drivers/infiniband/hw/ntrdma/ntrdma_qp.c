@@ -307,7 +307,6 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	ntc_remote_buf_clear(&qp->peer_recv_wqe_buf);
 
 	/* initialize synchronization */
-	mutex_init(&qp->send_post_lock);
 	spin_lock_init(&qp->send_post_slock);
 	spin_lock_init(&qp->send_prod_lock);
 	mutex_init(&qp->send_cmpl_lock);
