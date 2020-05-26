@@ -775,9 +775,8 @@ static inline void ntc_ntb_enabled(struct ntc_ntb_dev *dev)
 		goto end;
 	}
 
-	ntc_ntb_ping_send(dev, dev->link_state);
-	ntb_link_event(dev->ntb);
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_START);
+	ntb_link_event(dev->ntb);
 end:
 	return;
 }
@@ -823,7 +822,7 @@ static inline void ntc_ntb_send_addr(struct ntc_ntb_dev *dev)
 	}
 }
 
-//TODO: the name maybe misleading. is it more receive peer address? or maybe len?
+/* TODO: the name maybe misleading. is it more receive peer address? or maybe len? */
 static inline void ntc_ntb_recv_addr(struct ntc_ntb_dev *dev)
 {
 	struct ntc_dev *ntc = &dev->ntc;
@@ -1185,9 +1184,9 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 			goto out;
 		case 0:
 			ntc_ntb_dev_info(dev, "both peers are done hello");
+			link_up = true;
 		}
 
-		link_up = true;
 	}
 
 out:

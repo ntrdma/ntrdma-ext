@@ -62,7 +62,10 @@
 
 #define DELL_VENDOR_ID 0x1028
 #define NOT_SUPPORTED 0
-
+/* TODO: remove this macro when adding to enum rdma_driver_id
+ * in include/uapi/rdma/rdma_user_ioctl_cmds.h
+ */
+#define RDMA_DRIVER_NTRDMA 17
 
 #define NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT 400 
 #define NTRDMA_IB_PERF_INIT unsigned long ___ts_ = 0; \
@@ -280,8 +283,8 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 	ibattr->max_sge = NTRDMA_DEV_MAX_SGE;
 #else
-    ibattr->max_recv_sge = NTRDMA_DEV_MAX_SGE;
-    ibattr->max_send_sge = NTRDMA_DEV_MAX_SGE;
+	ibattr->max_recv_sge = NTRDMA_DEV_MAX_SGE;
+	ibattr->max_send_sge = NTRDMA_DEV_MAX_SGE;
 #endif
 
 	/* Maximum number of CQs supported by this device */
@@ -1754,11 +1757,7 @@ static inline struct ntrdma_ah *ntrdma_ah(struct ib_ah *ibah)
 
 
 static inline int ntrdma_init_grh(struct ntrdma_qp *qp,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-					struct ib_send_wr *ibwr,
-#else
 			const struct ib_send_wr *ibwr,
-#endif
 			struct ib_grh *grh)
 {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
@@ -1936,11 +1935,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 
 static int ntrdma_ib_recv_to_wqe(struct ntrdma_dev *dev,
 				struct ntrdma_recv_wqe *wqe,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-				struct ib_recv_wr *ibwr,
-#else
 				const struct ib_recv_wr *ibwr,
-#endif
 				int sg_cap)
 {
 	int i;
@@ -2711,9 +2706,8 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	ibdev->del_gid			= ntrdma_del_gid;
 	ibdev->process_mad		= ntrdma_process_mad;
 
-	//TODO: change from hard coded to enum based!
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
-	ibdev->driver_id		= 17;
+	ibdev->driver_id		= RDMA_DRIVER_NTRDMA;
 #endif
 
 	rc = ib_register_device(ibdev, NULL);
