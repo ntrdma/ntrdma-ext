@@ -154,7 +154,6 @@ struct ntrdma_qp {
 	u64				peer_recv_prod_shift;
 
 	/* at most one poster, producer, or completer at a time */
-	struct mutex	send_post_lock;
 	spinlock_t		send_post_slock;
 	spinlock_t		send_prod_lock;
 	struct mutex	send_cmpl_lock;
@@ -252,17 +251,13 @@ static inline void ntrdma_qp_recv_post_put(struct ntrdma_qp *qp,
 
 static inline void ntrdma_qp_send_post_lock(struct ntrdma_qp *qp)
 {
-	if (qp->qp_type != IB_QPT_GSI)
-		mutex_lock(&qp->send_post_lock);
-	else
+	if (qp->qp_type == IB_QPT_GSI)
 		spin_lock_bh(&qp->send_post_slock); /* Potential deadlock? */
 }
 
 static inline void ntrdma_qp_send_post_unlock(struct ntrdma_qp *qp)
 {
-	if (qp->qp_type != IB_QPT_GSI)
-		mutex_unlock(&qp->send_post_lock);
-	else
+	if (qp->qp_type == IB_QPT_GSI)
 		spin_unlock_bh(&qp->send_post_slock);
 }
 
