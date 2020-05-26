@@ -1863,6 +1863,7 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	bool has_deferred_work = false;
 	int rc;
 
+	/* Assuming the QP is locked in the rdma-core library */
 	ntrdma_qp_send_post_lock(qp);
 
 	if (likely(ntrdma_qp_is_send_ready(qp))) {
@@ -2533,6 +2534,7 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 	}
 	_uptr = page_address(qp->send_page);
 
+	/* Assuming the QP is locked in the rdma-core library */
 	ntrdma_qp_send_post_lock(qp);
 
 	if (likely(ntrdma_qp_is_send_ready(qp))) {
