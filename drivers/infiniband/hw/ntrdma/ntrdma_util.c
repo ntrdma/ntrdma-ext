@@ -42,31 +42,48 @@
 
 int ntrdma_vec_init(struct ntrdma_vec *vec, u32 cap, int node)
 {
+	struct ntrdma_rcu_vec *rvec;
+
 	if (cap == 0)
 		return -EINVAL;
 
 	if (cap >= MAX_VEC_CAP)
 		return -ENOMEM;
-
-	vec->look = kzalloc_node(cap * sizeof(*vec->look), GFP_KERNEL, node);
-	if (!vec->look)
+	rvec = kzalloc_node(sizeof(*vec->rvec), GFP_KERNEL, node);
+	if (!rvec) {
+		pr_err("Failed to alloc rvec, size %zd\n", sizeof(*vec->rvec));
+		vec->rvec = NULL;
 		return -ENOMEM;
+	}
 
-	vec->cap = cap;
+	rvec->look = kzalloc_node(cap * sizeof(*vec->rvec->look),
+			GFP_KERNEL, node);
+	if (!rvec->look) {
+		pr_err("Failed to alloc rvec->look, cap %d, size %zd\n", cap, sizeof(*vec->rvec->look));
+		kfree(rvec);
+		vec->rvec = NULL;
+		return -ENOMEM;
+	}
 
-	rwlock_init(&vec->lock);
+	rvec->cap = cap;
+	rcu_assign_pointer(vec->rvec, rvec);
+
+	mutex_init(&vec->lock);
 
 	return 0;
 }
 
 void ntrdma_vec_deinit(struct ntrdma_vec *vec)
 {
-	kfree(vec->look);
+	rcu_barrier();
+	kfree(vec->rvec->look);
+	kfree(vec->rvec);
 }
 
-int ntrdma_vec_resize_larger(struct ntrdma_vec *vec, u32 cap, int node)
+int ntrdma_vec_copy_assign(struct ntrdma_vec *vec, u32 cap, int node, u32 key,
+		void *val)
 {
-	void **look;
+	struct ntrdma_rcu_vec *rvec;
 
 	if (cap == 0)
 		return -EINVAL;
@@ -74,20 +91,24 @@ int ntrdma_vec_resize_larger(struct ntrdma_vec *vec, u32 cap, int node)
 	if (cap >= MAX_VEC_CAP)
 		return -ENOMEM;
 
-	look = kzalloc_node(cap * sizeof(*look), GFP_KERNEL, node);
-	if (!look)
+	rvec = kzalloc_node(sizeof(*vec->rvec), GFP_KERNEL, node);
+	if (!rvec) {
 		return -ENOMEM;
+	}
 
-	write_lock_bh(&vec->lock);
-	if (cap > vec->cap) {
-		memcpy(look, vec->look, vec->cap * sizeof(*vec->look));
-		kfree(vec->look);
-		vec->look = look;
+	rvec->look = kzalloc_node(cap * sizeof(*rvec->look), GFP_KERNEL, node);
 
-		vec->cap = cap;
-	} else
-		kfree(look);
-	write_unlock_bh(&vec->lock);
+	if (!rvec->look) {
+		kfree(rvec);
+		return -ENOMEM;
+	}
+
+	memcpy(rvec->look, vec->rvec->look,
+			vec->rvec->cap * sizeof(*vec->rvec->look));
+	rvec->look[key] = val;
+	rvec->cap = cap;
+
+	rcu_assign_pointer(vec->rvec, rvec);
 
 	return 0;
 }
@@ -95,6 +116,7 @@ int ntrdma_vec_resize_larger(struct ntrdma_vec *vec, u32 cap, int node)
 int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, u32 num_reserved_keys,
 		int node)
 {
+	struct ntrdma_rcu_kvec *rkvec;
 	u32 i;
 
 	if (cap == 0)
@@ -106,38 +128,55 @@ int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, u32 num_reserved_keys,
 	if (cap >= MAX_KVEC_CAP)
 		return -ENOMEM;
 
-	vec->keys = kzalloc_node(BITS_TO_LONGS_SIZE(cap), GFP_KERNEL, node);
-	if (!vec->keys)
+	rkvec = kzalloc_node(sizeof(*vec->rkvec), GFP_KERNEL, node);
+	if (!rkvec) {
+		pr_err("Failed to alloc rkvec, size %zd\n", sizeof(*vec->rkvec));
+		vec->rkvec = NULL;
 		return -ENOMEM;
+	}
 
-	vec->look = kzalloc_node(cap * sizeof(*vec->look), GFP_KERNEL, node);
-	if (!vec->look) {
-		kfree(vec->keys);
+	rkvec->keys = kzalloc_node(BITS_TO_LONGS_SIZE(cap), GFP_KERNEL, node);
+	if (!rkvec->keys) {
+		pr_err("Failed to alloc keys, size %zd\n", BITS_TO_LONGS_SIZE(cap));
+		kfree(rkvec);
+		vec->rkvec = NULL;
+		return -ENOMEM;
+	}
+
+	rkvec->look = kzalloc_node(cap * sizeof(*rkvec->look), GFP_KERNEL, node);
+	if (!rkvec->look) {
+		pr_err("Failed to alloc look, size %zd\n", cap * sizeof(*rkvec->look));
+		kfree(rkvec->keys);
+		kfree(rkvec);
+		vec->rkvec = NULL;
 		return -ENOMEM;
 	}
 
 	for (i = 0; i < num_reserved_keys; i++)
-		__set_bit(i, vec->keys);
+		__set_bit(i, rkvec->keys);
 
-	vec->cap = cap;
-	vec->num_reserved_keys = num_reserved_keys;
-	vec->next_key = num_reserved_keys;
+	rkvec->cap = cap;
+	rkvec->num_reserved_keys = num_reserved_keys;
+	rkvec->next_key = num_reserved_keys;
 
-	rwlock_init(&vec->lock);
+	rcu_assign_pointer(vec->rkvec, rkvec);
+	mutex_lock(&vec->lock);
 
 	return 0;
 }
 
 void ntrdma_kvec_deinit(struct ntrdma_kvec *vec)
 {
-	kfree(vec->look);
-	kfree(vec->keys);
+	rcu_barrier();
+	kfree(vec->rkvec->look);
+	kfree(vec->rkvec->keys);
+	kfree(vec->rkvec);
 }
 
-static int ntrdma_kvec_resize_larger(struct ntrdma_kvec *vec, u32 cap, int node)
+int ntrdma_kvec_new_copy(struct ntrdma_kvec *vec, u32 cap,
+		int node, struct ntrdma_rcu_kvec **ret_vec)
 {
-	unsigned long *keys;
-	void **look;
+	struct ntrdma_rcu_kvec *rkvec;
 
 	if (cap == 0)
 		return -EINVAL;
@@ -145,58 +184,68 @@ static int ntrdma_kvec_resize_larger(struct ntrdma_kvec *vec, u32 cap, int node)
 	if (cap >= MAX_KVEC_CAP)
 		return -ENOMEM;
 
-	keys = kzalloc_node(BITS_TO_LONGS_SIZE(cap), GFP_KERNEL, node);
-	if (!keys)
-		return -ENOMEM;
-
-	look = kzalloc_node(cap * sizeof(*look), GFP_KERNEL, node);
-	if (!look) {
-		kfree(keys);
+	rkvec = kzalloc_node(sizeof(*vec->rkvec), GFP_KERNEL, node);
+	if (!rkvec) {
+		pr_err("Failed to alloc rkvec, size %zd\n", sizeof(*vec->rkvec));
 		return -ENOMEM;
 	}
 
-	write_lock_bh(&vec->lock);
-	if (cap > vec->cap) {
-		memcpy(keys, vec->keys, BITS_TO_LONGS_SIZE(vec->cap));
-		kfree(vec->keys);
-		vec->keys = keys;
-
-		memcpy(look, vec->look, vec->cap * sizeof(*vec->look));
-		kfree(vec->look);
-		vec->look = look;
-
-		vec->cap = cap;
-	} else {
-		kfree(keys);
-		kfree(look);
+	rkvec->keys = kzalloc_node(BITS_TO_LONGS_SIZE(cap), GFP_KERNEL, node);
+	if (!rkvec->keys) {
+		pr_err("Failed to alloc keys, size %zd\n", BITS_TO_LONGS_SIZE(cap));
+		kfree(rkvec);
+		return -ENOMEM;
 	}
-	write_unlock_bh(&vec->lock);
 
+	rkvec->look = kzalloc_node(cap * sizeof(*rkvec->look), GFP_KERNEL, node);
+	if (!rkvec->look) {
+		pr_err("Failed to alloc look, size %zd\n", cap * sizeof(*rkvec->look));
+		kfree(rkvec->keys);
+		kfree(rkvec);
+		return -ENOMEM;
+	}
+
+	memcpy(rkvec->keys, vec->rkvec->keys, BITS_TO_LONGS_SIZE(rkvec->cap));
+	memcpy(rkvec->look, vec->rkvec->look, vec->rkvec->cap * sizeof(*rkvec->look));
+	rkvec->cap = cap;
+	rkvec->next_key = vec->rkvec->next_key;
+	rkvec->num_reserved_keys = vec->rkvec->num_reserved_keys;
+
+	*ret_vec = rkvec;
 	return 0;
 }
 
 int ntrdma_kvec_reserve_key(struct ntrdma_kvec *vec, int node)
 {
 	u32 key;
+	u32 cap;
 	int rc;
+	struct ntrdma_rcu_kvec *old_rkvec;
+	struct ntrdma_rcu_kvec *new_rkvec;
 
- again:
-	write_lock_bh(&vec->lock);
+	mutex_lock(&vec->lock);
 
-	key = find_next_zero_bit(vec->keys, vec->cap, vec->next_key);
-	if (key == vec->cap) {
-		write_unlock_bh(&vec->lock);
-		rc = ntrdma_kvec_resize_larger(vec, key << 1, node);
-		if (rc < 0)
-			return rc;
-		goto again;
+	old_rkvec = vec->rkvec;
+	key = find_next_zero_bit(old_rkvec->keys, old_rkvec->cap,
+			old_rkvec->next_key);
+	cap = old_rkvec->cap;
+	if (key >= old_rkvec->cap) {
+		cap = key << 1;
 	}
 
-	__set_bit(key, vec->keys);
+	rc = ntrdma_kvec_new_copy(vec, cap, node, &new_rkvec);
+	if (rc < 0) {
+		key = rc;
+		goto out;
+	}
 
-	vec->next_key = (key + 1 == vec->cap) ? vec->num_reserved_keys : key + 1;
+	__set_bit(key, new_rkvec->keys);
+	new_rkvec->next_key = (key + 1 == new_rkvec->cap) ? new_rkvec->num_reserved_keys : key + 1;
 
-	write_unlock_bh(&vec->lock);
+	rcu_assign_pointer(vec->rkvec, new_rkvec);
+	call_rcu(&old_rkvec->rcu, remove_rcu_kvec);
+out:
+	mutex_unlock(&vec->lock);
 
 	return key;
 }
