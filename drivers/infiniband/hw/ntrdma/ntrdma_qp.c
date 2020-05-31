@@ -1727,8 +1727,9 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		}
 	}
 
+#ifdef NTC_DEBUG
 	this_cpu_add(dev_cnt.qp_send_work_bytes, len);
-
+#endif
 	/* send the prod idx */
 	rc = ntc_request_imm32(qp->dma_chan,
 			&qp->peer_send_wqe_buf, qp->peer_send_prod_shift,

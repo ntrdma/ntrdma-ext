@@ -688,13 +688,14 @@ exit_loop_dec:
 	atomic_dec(&chan->dma_blocked);
 exit_loop:
 	tx->callback_result = cb;
-	WARN_ON(tx->callback);
 	tx->callback = NULL;
 	tx->callback_param = cb_ctx;
 
+#ifdef NTC_DEBUG
+	WARN_ON(tx->callback);
 	this_cpu_add(chan->chan->local->bytes_transferred, len);
 	this_cpu_inc(chan->chan->local->memcpy_count);
-
+#endif
 	if (dma_submit_error(last_cookie = dmaengine_submit(tx))) {
 		inc_dma_reject_counter();
 		return -EIO;
