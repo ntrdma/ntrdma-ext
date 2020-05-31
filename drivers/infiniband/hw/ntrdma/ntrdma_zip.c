@@ -452,10 +452,12 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 					&rcv->rcv_sge->exp_buf_desc);
 		if (rc < 0)
 			return rc;
+#ifdef NTC_DEBUG
 		TRACE("DMA copy %#lx bytes to remote at %#lx offset %#lx\n",
 			(long)len,
 			(long)rcv->rcv_sge->exp_buf_desc.chan_addr.value,
 			(long)rcv->next_io_off);
+#endif
 		rcv_buf = &remote;
 	} else
 		rcv_buf = rcv->rmr_sge;
@@ -465,29 +467,34 @@ static inline s64 ntrdma_cursor_next_io(struct ntrdma_dev *dev,
 						rcv_buf, rcv->next_io_off,
 						snd->mr_sge, snd->next_io_off,
 						len, dma_wait);
+#ifdef NTC_DEBUG
 		trace_dma_cpy(wrid, snd->snd_sge->addr + snd->next_io_off,
 				(u64)snd->mr_sge->dma_addr + snd->next_io_off,
 				rcv->rcv_sge->exp_buf_desc.chan_addr.value +
 					rcv->next_io_off,
 				(u64)rcv_buf->dma_addr + rcv->next_io_off,
 				len, rc);
+#endif
 	} else {
+#ifdef NTC_DEBUG
 		TRACE("DMA copy %#lx bytes from %#lx offset %#lx\n",
 			(long)len, (long)snd->snd_sge->addr,
 			(long)snd->next_io_off);
-
+#endif
 		ntc_local_buf_map_dma(&snd_dma_buf,
 				snd->snd_sge->length, snd->snd_sge->addr);
 
 		rc = ntc_request_memcpy_fenced(chan, rcv_buf, rcv->next_io_off,
 					&snd_dma_buf,
 					snd->next_io_off, len, dma_wait);
+#ifdef NTC_DEBUG
 		trace_dma_cpy(wrid, (u64)snd_dma_buf.ptr + snd->next_io_off,
 				snd->snd_sge->addr + snd->next_io_off,
 				rcv->rcv_sge->exp_buf_desc.chan_addr.value +
 					rcv->next_io_off,
 				(u64)rcv_buf->dma_addr + rcv->next_io_off,
 				len, rc);
+#endif
 	}
 
 	if (!rcv->rmr)
@@ -565,8 +572,9 @@ out:
 	if (!rc)
 		*rdma_len = total_len;
 
+#ifdef NTC_DEBUG
 	this_cpu_add(dev_cnt.qp_send_work_bytes, total_len);
-
+#endif
 	return rc;
 }
 
