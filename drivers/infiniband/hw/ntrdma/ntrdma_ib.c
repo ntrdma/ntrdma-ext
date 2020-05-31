@@ -2556,6 +2556,9 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 	if (unlikely(rc < 0) && (rc != -EAGAIN))
 		ntrdma_qp_err(qp, "rc %d on QP %d",
 				rc, qp->res.key);
+	/* In order to keep API */
+	if (unlikely(rc == -EAGAIN))
+		rc = -ENOMEM;
 
 	return rc;
 }
