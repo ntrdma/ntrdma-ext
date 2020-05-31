@@ -40,12 +40,15 @@
 #include <linux/types.h>
 
 /* Resizable vector */
+struct ntrdma_rcu_vec {
+	u32			cap;
+	void			**look;
+	struct rcu_head		rcu;
+};
+
 struct ntrdma_vec {
-	/* Capacity of the vec */
-	u32				cap;
-	/* Key indexed lookup of elements, cap elements long */
-	void				**look;
-	rwlock_t			lock;
+	struct ntrdma_rcu_vec		*rvec;
+	struct mutex			lock;
 };
 
 /* Allocate an empty vector with a capacity */
@@ -53,35 +56,42 @@ int ntrdma_vec_init(struct ntrdma_vec *vec, u32 cap, int node);
 /* Destroy a vector */
 void ntrdma_vec_deinit(struct ntrdma_vec *vec);
 
-/* Resize a vector if cap is larger than the allocated capacity */
-int ntrdma_vec_resize_larger(struct ntrdma_vec *vec, u32 key, int node);
+int ntrdma_vec_copy_assign(struct ntrdma_vec *vec, u32 cap, int node, u32 key,
+		void *val);
+static void remove_rcu_vec(struct rcu_head *rhp)
+{
+	struct ntrdma_rcu_vec *p = container_of(rhp, struct ntrdma_rcu_vec, rcu);
 
+	kfree(p->look);
+	kfree(p);
+}
 static inline int ntrdma_vec_set(struct ntrdma_vec *vec, u32 key, void *value,
 				int node)
 {
 	int rc;
+	struct ntrdma_rcu_vec *rvec;
+	u32 new_cap;
 
- again:
-	write_lock_bh(&vec->lock);
+	mutex_lock(&vec->lock);
 
-	if (key >= vec->cap) {
-		write_unlock_bh(&vec->lock);
-		rc = ntrdma_vec_resize_larger(vec, roundup_pow_of_two(key + 1),
-					node);
-		if (rc < 0)
-			return rc;
-		goto again;
+	new_cap = vec->rvec->cap;
+	if (key >= vec->rvec->cap)
+		new_cap = roundup_pow_of_two(key + 1);
+	rvec = vec->rvec;
+	rc = ntrdma_vec_copy_assign(vec, new_cap, node, key, value);
+	if (rc < 0) {
+		spin_unlock_bh(&vec->lock);
+		return rc;
 	}
 
-	vec->look[key] = value;
-
-	write_unlock_bh(&vec->lock);
+	call_rcu(&rvec->rcu, remove_rcu_vec);
+	mutex_unlock_bh(&vec->lock);
 
 	return 0;
 }
 
 /* Resizable vector with key reservation */
-struct ntrdma_kvec {
+struct ntrdma_rcu_kvec {
 	/* Capacity of the vec */
 	u32				cap;
 	/* Preallocated and never deallocated */
@@ -92,7 +102,12 @@ struct ntrdma_kvec {
 	unsigned long			*keys;
 	/* Key indexed lookup of elements, cap elements long */
 	void				**look;
-	rwlock_t			lock;
+	struct rcu_head			rcu;
+};
+
+struct ntrdma_kvec {
+	struct ntrdma_rcu_kvec		*rkvec;
+	struct mutex			lock;
 };
 
 /* Allocate an empty vector with a capacity */
@@ -102,26 +117,63 @@ int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, u32 num_reserved_keys,
 void ntrdma_kvec_deinit(struct ntrdma_kvec *vec);
 /* Reserve the next available key */
 int ntrdma_kvec_reserve_key(struct ntrdma_kvec *vec, int node);
+int ntrdma_kvec_new_copy(struct ntrdma_kvec *vec, u32 cap,
+		int node, struct ntrdma_rcu_kvec **ret_vac);
+static void remove_rcu_kvec(struct rcu_head *rhp)
+{
+	struct ntrdma_rcu_kvec *p = container_of(rhp, struct ntrdma_rcu_kvec, rcu);
+
+	kfree(p->look);
+	kfree(p);
+}
 
 /* Dispose a key that no longer needs to be reserved */
-static inline void ntrdma_kvec_dispose_key(struct ntrdma_kvec *vec, u32 key)
+static inline void ntrdma_kvec_dispose_key(int node,
+		struct ntrdma_kvec *vec, u32 key)
 {
-	write_lock_bh(&vec->lock);
+	struct ntrdma_rcu_kvec *old_rkvec;
+	struct ntrdma_rcu_kvec *new_rkvec;
+	int rc;
 
-	if (key < vec->num_reserved_keys)
+	mutex_lock(&vec->lock);
+
+	old_rkvec = vec->rkvec;
+	if (key < old_rkvec->num_reserved_keys)
 		goto out;
 
-	__clear_bit(key, vec->keys);
- out:
-	write_unlock_bh(&vec->lock);
+	rc = ntrdma_kvec_new_copy(vec, old_rkvec->cap, node, &new_rkvec);
+	if (rc < 0)
+		goto out;
+
+
+	__clear_bit(key, new_rkvec->keys);
+	rcu_assign_pointer(vec->rkvec, new_rkvec);
+	call_rcu(&old_rkvec->rcu, remove_rcu_kvec);
+out:
+	mutex_unlock(&vec->lock);
 }
 
 static inline
-void ntrdma_kvec_set_key(struct ntrdma_kvec *vec, u32 key, void *value)
+void ntrdma_kvec_set_key(int node, struct ntrdma_kvec *vec,
+		u32 key, void *value)
 {
-	write_lock_bh(&vec->lock);
-	vec->look[key] = value;
-	write_unlock_bh(&vec->lock);
+	struct ntrdma_rcu_kvec *old_rkvec;
+	struct ntrdma_rcu_kvec *new_rkvec;
+	int rc;
+
+	mutex_lock(&vec->lock);
+
+	old_rkvec = vec->rkvec;
+	rc = ntrdma_kvec_new_copy(vec, old_rkvec->cap, node, &new_rkvec);
+	if (rc < 0)
+		goto out;
+
+	new_rkvec->look[key] = value;
+
+	rcu_assign_pointer(vec->rkvec, new_rkvec);
+	call_rcu(&old_rkvec->rcu, remove_rcu_kvec);
+out:
+	mutex_unlock(&vec->lock);
 }
 
 static inline void ntrdma_deinit_slab(struct kmem_cache **pslab)

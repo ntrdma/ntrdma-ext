@@ -343,7 +343,7 @@ err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
 	ntrdma_cq_put(qp->recv_cq);
 err_res:
-	ntrdma_kvec_dispose_key(&dev->res.qp_vec, qp->res.key);
+	ntrdma_kvec_dispose_key(dev->node, &dev->res.qp_vec, qp->res.key);
 	if (qp->send_page) {
 		put_page(qp->send_page);
 		qp->send_page = NULL;
