@@ -681,12 +681,6 @@ static inline int set_memory_windows_on_device(struct ntc_ntb_dev *dev, int mw_i
 		goto err;
 	}
 
-	if (data->len > data->size_max) {
-		errmsg("Requested MW%d of length %#lx, but max_size is %#llx",
-			mw_idx, data->len, data->size_max);
-		rc = -EINVAL;
-		goto err;
-	}
 
 	if (data->addr_align)
 		addr_misalignment = data->base_addr & (data->addr_align - 1);
@@ -714,6 +708,12 @@ static inline int set_memory_windows_on_device(struct ntc_ntb_dev *dev, int mw_i
 		return -EINVAL;
 	}
 
+	if (data->len > data->size_max) {
+		errmsg("Requested MW%d of length %#lx, but max_size is %#llx",
+			mw_idx, data->len, data->size_max);
+		rc = -EINVAL;
+		goto err;
+	}
 
 	if (addr_misalignment) {
 		trans_base_addr = actual_base_addr;
@@ -780,7 +780,6 @@ static inline void ntc_ntb_enabled(struct ntc_ntb_dev *dev)
 end:
 	return;
 }
-
 
 static inline void ntc_ntb_send_version(struct ntc_ntb_dev *dev)
 {
@@ -1186,7 +1185,6 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 			ntc_ntb_dev_info(dev, "both peers are done hello");
 			link_up = true;
 		}
-
 	}
 
 out:
@@ -1656,7 +1654,6 @@ static int ntc_ntb_init_own(struct ntc_ntb_dev *dev, int mw_idx)
 	struct ntc_dev *ntc = &dev->ntc;
 	struct ntc_own_mw_data *data = &own_mw_data[mw_idx];
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
-
 	int rc;
 
 	info("INIT_OWN! mw_idx=%d", mw_idx);
