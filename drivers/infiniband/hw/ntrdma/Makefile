@@ -1,4 +1,5 @@
 obj-$(CONFIG_NTRDMA) += ntrdma.o
+CFLAGS_ntrdma_zip.o = -I$(src)
 
 ntrdma-y += ntrdma_cmd.o
 ntrdma-y += ntrdma_cq.o
