@@ -1597,7 +1597,11 @@ static inline bool ntrdma_send_opcode_is_rdma(int opcode)
 
 static inline int ntrdma_ib_send_to_wqe(struct ntrdma_qp *qp,
 					struct ntrdma_send_wqe *wqe,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+					struct ib_send_wr *ibwr)
+#else
 					const struct ib_send_wr *ibwr)
+#endif
 {
 	bool is_rdma = ntrdma_send_opcode_is_rdma(ibwr->opcode);
 	bool from_user;
@@ -1753,7 +1757,11 @@ static inline struct ntrdma_ah *ntrdma_ah(struct ib_ah *ibah)
 
 
 static inline int ntrdma_init_grh(struct ntrdma_qp *qp,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+			struct ib_send_wr *ibwr,
+#else
 			const struct ib_send_wr *ibwr,
+#endif
 			struct ib_grh *grh)
 {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
@@ -1796,8 +1804,13 @@ out:
 }
 
 static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
+					struct ib_send_wr *ibwr,
+					struct ib_send_wr **bad,
+#else
 					const struct ib_send_wr *ibwr,
 					const struct ib_send_wr **bad,
+#endif
 					bool *had_immediate_work,
 					bool *has_deferred_work)
 {
