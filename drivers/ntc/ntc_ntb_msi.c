@@ -147,7 +147,7 @@ static struct dentry *ntc_dbgfs;
 #define info(fmt, ...) do {						\
 		pr_info(DRIVER_NAME ":%s: " fmt, __func__, ##__VA_ARGS__); \
 	} while (0)
-		
+
 
 #define warn(fmt, ...) do {						\
 		pr_warn(DRIVER_NAME ":%s: " fmt, __func__, ##__VA_ARGS__); \
@@ -426,7 +426,7 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev,
 	int ping_flags, poison_flags;
 	u32 ping_val, tmp_jiffies;
 	static u32 last_ping;
-	int cpu;	
+	int cpu;
 	unsigned long timer_next_trigger =
 			dev->last_ping_trigger_time + NTC_NTB_PING_PONG_PERIOD;
 
@@ -442,12 +442,12 @@ static void ntc_ntb_ping_pong(struct ntc_ntb_dev *dev,
 	last_ping = tmp_jiffies;
 
 	if (pingpong_caller_id == PINGPONG_CB_ID_FROM_TIMER_CB) {
-		cpu = smp_processor_id();		
+		cpu = smp_processor_id();
 		del_timer(&dev->ping_pong[cpu].tmr);
 		dev->ping_pong[cpu].tmr.expires = timer_next_trigger;
 		dev->last_ping_trigger_time = timer_next_trigger;
 		add_timer_on(&dev->ping_pong[cpu].tmr, cpu);
-		
+
 	}
 
 	ping_flags = ntc_ntb_ping_flags(dev->ping_msg);

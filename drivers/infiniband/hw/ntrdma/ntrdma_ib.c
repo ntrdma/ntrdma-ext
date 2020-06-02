@@ -55,6 +55,7 @@
 #include "ntrdma_wr.h"
 #include "ntrdma_eth.h"
 #include "ntrdma-trace.h"
+#include "ntrdma_cm.h"
 
 #define NTRDMA_PKEY_DEFAULT 0xffff
 #define NTRDMA_GIB_TBL_LEN 1
@@ -67,7 +68,7 @@
  */
 #define RDMA_DRIVER_NTRDMA 17
 
-#define NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT 400 
+#define NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT 400
 #define NTRDMA_IB_PERF_INIT unsigned long ___ts_ = 0; \
 				unsigned long ___tt_ = 0; \
 				unsigned ___perf_ = 0
@@ -82,6 +83,16 @@
 					___perf_); \
 				} \
 			} while (0)
+
+#define qp_enum_to_string(QP_ENUM) \
+						QP_ENUM == IB_QPS_RESET ? "IB_QPS_RESET" :\
+						QP_ENUM == IB_QPS_INIT ? "IB_QPS_INIT" :\
+						QP_ENUM == IB_QPS_RTR ? "IB_QPS_RTR" :\
+						QP_ENUM == IB_QPS_RTS ? "IB_QPS_RTS" :\
+						QP_ENUM == IB_QPS_SQD ? "IB_QPS_SQD" :\
+						QP_ENUM == IB_QPS_SQE ? "IB_QPS_SQE" :\
+						QP_ENUM == IB_QPS_ERR ? "IB_QPS_ERR" :\
+						"Undefined state number"\
 
 
 static int ntrdma_qp_file_release(struct inode *inode, struct file *filp);
@@ -137,19 +148,17 @@ static int ntrdma_get_port_immutable(struct ib_device *ibdev,
 {
 	imm->pkey_tbl_len = NTRDMA_PKEY_TBL_LEN;
 	imm->gid_tbl_len = 8;
-	imm->core_cap_flags =
-			RDMA_CORE_CAP_PROT_ROCE |
-			RDMA_CORE_PORT_IBA_ROCE_UDP_ENCAP;
-	imm->max_mad_size = IB_MGMT_MAD_SIZE;
+	imm->core_cap_flags = RDMA_CORE_PORT_IWARP;
+	imm->max_mad_size = 0;
 
 	return 0;
 }
 
 /* not implemented / not required? */
 static int ntrdma_query_pkey(struct ib_device *ibdev,
-			     u8 port_num,
-			     u16 index,
-			     u16 *pkey)
+		u8 port_num,
+		u16 index,
+		u16 *pkey)
 {
 	if (index > NTRDMA_PKEY_TBL_LEN) {
 		ntrdma_err(ntrdma_ib_dev(ibdev),
@@ -165,24 +174,16 @@ static int ntrdma_query_pkey(struct ib_device *ibdev,
 
 /* not implemented / not required? */
 static int ntrdma_query_gid(struct ib_device *ibdev,
-			    u8 port_num,
-			    int index,
-			    union ib_gid *ibgid)
+		u8 port_num,
+		int index,
+		union ib_gid *ibgid)
 {
 	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
-	struct in6_addr *addr = (void *)ibgid->raw;
-
-	ntrdma_dbg(dev, "query gid port %u idx %d\n", port_num, index);
-	ntrdma_vdbg(dev, "cap eth ah? %d\n",
-		   rdma_cap_eth_ah(ibdev, port_num));
-	ntrdma_vdbg(dev, "imm core cap flags %#x",
-		   ibdev->port_immutable[port_num].core_cap_flags);
+	struct net_device *ndev = ntrdma_get_net(dev);
 
 	/* Everything is "link local" since we don't have an interface */
-	addr->s6_addr32[0] = htonl(0xfe800000);
-	addr->s6_addr32[1] = 0;
-	addr->s6_addr32[2] = 0;
-	addr->s6_addr32[3] = 0;
+	memset(ibgid->raw, 0, sizeof(ibgid->raw));
+	ether_addr_copy(ibgid->raw, ndev->dev_addr);
 
 	return 0;
 }
@@ -516,7 +517,7 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		&cq->ibcq, vbell_idx);
 
 	cq->ibcq_valid = true;
-	
+
 	NTRDMA_IB_PERF_END;
 	return &cq->ibcq;
 
@@ -759,14 +760,14 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	if (count) {
 		this_cpu_add(dev_cnt.cqes_polled_s, count_s);
 		this_cpu_add(dev_cnt.cqes_polled_ns, count_ns);
-		
+
 		NTRDMA_IB_PERF_END;
 		return (count);
 	}
 	if ((rc == -EAGAIN) || (rc > 0)) {
 		NTRDMA_IB_PERF_END;
 		return 0;
-	}	
+	}
 
 	ntrdma_cq_err(cq, "rc %d", rc);
 
@@ -778,7 +779,7 @@ static int ntrdma_req_notify_cq(struct ib_cq *ibcq,
 				enum ib_cq_notify_flags flags)
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
-	
+
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
@@ -974,7 +975,6 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	mutex_unlock(&dev->res_lock);
 
 	ntrdma_vdbg(dev, "added pd key=%d", pd->key);
-	
 
 	NTRDMA_IB_PERF_END;
 	return &pd->ibpd;
@@ -1000,7 +1000,7 @@ static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 {
 	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
-	
+
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
@@ -1009,7 +1009,7 @@ static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 	mutex_unlock(&dev->res_lock);
 
 	ntrdma_pd_put(pd);
-	
+
 
 	NTRDMA_IB_PERF_END;
 	return 0;
@@ -1117,7 +1117,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			ntrdma_qp_err(qp, "copy_from_user failed");
 			ntrdma_qp_put(qp); /* The initial ref */
 
-			NTRDMA_IB_PERF_END;			
+			NTRDMA_IB_PERF_END;
 			return ERR_PTR(-EFAULT);
 		}
 
@@ -1194,9 +1194,9 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
  bad_ntrdma_ioctl_if:
 	ntrdma_debugfs_qp_add(qp);
 
-	ntrdma_qp_vdbg(qp, "added QP %d type %d",
+	ntrdma_qp_dbg(qp, "added QP %d type %d",
 			qp->res.key, ibqp_attr->qp_type);
-	
+
 	NTRDMA_IB_PERF_END;
 	return &qp->ibqp;
 
@@ -1388,116 +1388,156 @@ static void ntrdma_modify_qp_debug(struct ib_qp *ibqp,
 	}
 }
 
-static int ntrdma_modify_qp(struct ib_qp *ibqp,
+static inline
+int modify_qp_state(struct ntrdma_qp *qp, int cur_state, int new_state)
+{
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	int real_cur_state =
+
+	real_cur_state = atomic_cmpxchg(&qp->state, cur_state,
+			new_state);
+
+	ntrdma_dbg(dev,
+			"try QP %d move from state %d to state %d real_curr_state %d, s_a %d, s_aing %d, r_a %d, r_aing %d\n",
+			qp->res.key, cur_state, new_state, real_cur_state,
+			qp->send_abort, qp->send_aborting,
+			qp->recv_abort, qp->recv_aborting);
+
+	if (real_cur_state != cur_state)
+		return -EINVAL;
+
+	if (!is_state_error(new_state)) {
+		qp->send_aborting = false;
+		qp->send_abort = false;
+	}
+
+	qp->recv_aborting = false;
+	qp->recv_abort = false;
+
+	if (new_state > IB_QPS_RTS && qp->cm_id) {
+		ntrdma_dbg(dev,
+				"QP %d modified to %d we should generate disconnect event\n",
+				qp->res.key, new_state);
+		ntrdma_cm_kill(qp);
+	}
+
+	return 0;
+}
+
+int ntrdma_modify_qp_internal(struct ib_qp *ibqp,
 		struct ib_qp_attr *ibqp_attr,
 		int ibqp_mask,
-		struct ib_udata *ibudata)
+		struct ib_udata *ibudata,
+		bool is_modify_remote, const char *caller)
 {
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	int rc, cur_state, new_state;
-	bool success = true;
-		
-
-	NTRDMA_IB_PERF_INIT;
-	NTRDMA_IB_PERF_START;	
+	int cur_state, new_state;
+	int rc = 0;
 
 	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask, ibudata);
+
 	ntrdma_res_lock(&qp->res);
-	do {
-		cur_state = atomic_read(&qp->state);
-		new_state = ibqp_mask & IB_QP_STATE ?
-				ibqp_attr->qp_state : cur_state;
 
-		ntrdma_vdbg(dev, "QP %d state %d (%d) -> %d (ibqp_mask 0x%x)\n",
+	cur_state = atomic_read(&qp->state);
+	new_state = ibqp_mask & IB_QP_STATE ?
+			ibqp_attr->qp_state : cur_state;
+
+	ntrdma_dbg(dev, "QP %d state %d %s (%d) -> %d %s (ibqp_mask 0x%x) by %s\n",
+			qp->res.key, cur_state,
+			qp_enum_to_string(cur_state),
+			atomic_read(&qp->state), new_state,
+			qp_enum_to_string(new_state), ibqp_mask, caller);
+
+
+	if ((ibqp_mask & IB_QP_CUR_STATE) &&
+			(ibqp_attr->cur_qp_state !=
+					cur_state)) {
+		ntrdma_err(dev,
+				"QP %d: unexpected current state %d %d - this could cause a lockup in cm\n",
 				qp->res.key, cur_state,
-				atomic_read(&qp->state), new_state, ibqp_mask);
+				atomic_read(&qp->state));
+		rc = -EINVAL;
+		goto unlock_exit;
+	}
 
-		if ((ibqp_mask & IB_QP_CUR_STATE) &&
-				(ibqp_attr->cur_qp_state !=
-						atomic_read(&qp->state))) {
-			ntrdma_err(dev,
-					"QP %d: unexpected current state %d %d\n",
-					qp->res.key, cur_state,
-					atomic_read(&qp->state));
-			rc = -EINVAL;
+	if (ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED) {
+		ntrdma_err(dev, "unsupported QP mask %x - this could cause a lockup in cm\n",
+				ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED);
+		rc = -EINVAL;
+		goto unlock_exit;
+	}
+
+	if (ibqp_mask & IB_QP_STATE) {
+		if (new_state == IB_QPS_SQD && cur_state == IB_QPS_ERR) {
+			rc = 0;
 			goto unlock_exit;
 		}
 
-		if (ibqp_mask & ~NTRDMA_IBQP_MASK_SUPPORTED) {
-			ntrdma_err(dev, "%s: unsupported QP mask %x\n",
-					__func__, ibqp_mask &
-					~NTRDMA_IBQP_MASK_SUPPORTED);
-			rc = -EINVAL;
+		if (new_state == cur_state) {
+			rc = 0;
 			goto unlock_exit;
 		}
 
-		rc = ib_modify_qp_is_ok(cur_state, new_state,
-				ibqp->qp_type, ibqp_mask,
-				IB_LINK_LAYER_UNSPECIFIED);
-
-		if (!rc) {
-			ntrdma_err(dev,
-					"QP %d: ib_modify_qp_is_ok failed, cur_state %d, new_state %d, type %d, mask 0x%x\n",
-					qp->res.key, cur_state, new_state,
-					ibqp->qp_type, ibqp_mask);
-			rc = -EINVAL;
+		rc = modify_qp_state(qp, cur_state, new_state);
+		if (WARN(rc, "modify_qp_state failed rc %d\n", rc))
 			goto unlock_exit;
-		}
-
-		if ((ibqp->qp_type != IB_QPT_GSI) && !ntc_is_link_up(dev->ntc)
-				&& is_state_send_ready(new_state)) {
-			ntrdma_err(dev,
-					"link is not up, cannot move to ready QP %d\n",
-					qp->res.key);
-			rc = -EAGAIN;
-			goto unlock_exit;
-		}
-
-		if (ibqp_mask & IB_QP_STATE) {
-			ntrdma_vdbg(dev, "qp %p state %d -> %d\n",
-					qp, cur_state, new_state);
-
-			success =
-				atomic_cmpxchg(&qp->state, cur_state,
-					new_state) == cur_state;
-			TRACE(
-				"try QP %d move from state %d to state %d (success %d), s_a %d, s_aing %d, r_a %d, r_aing %d\n",
-				qp->res.key, cur_state, new_state, success,
-				qp->send_abort, qp->send_aborting,
-				qp->recv_abort, qp->recv_aborting);
-			if (success) {
-				if (!is_state_error(new_state)) {
-					qp->send_aborting = false;
-					qp->send_abort = false;
-				}
-				if (new_state != IB_QPS_ERR) {
-					qp->recv_aborting = false;
-					qp->recv_abort = false;
-				}
-			}
-		}
-	} while (!success);
+	}
 
 	if (ibqp_mask & IB_QP_ACCESS_FLAGS)
 		qp->access = ibqp_attr->qp_access_flags;
 
-	if (ibqp_mask & IB_QP_DEST_QPN)
+	if (ibqp_mask & IB_QP_DEST_QPN) {
 		qp->rqp_key = ibqp_attr->dest_qp_num;
+		ntrdma_dbg(dev, "QP %d matched with RQP %d\n",
+				qp->res.key, qp->rqp_key);
+	}
 
-	/* For GSI and MSI QPs we used reserved key 1 and 2 */
-	if (ibqp->qp_type == IB_QPT_GSI || ibqp->qp_type == IB_QPT_SMI)
-		qp->rqp_key = ibqp->qp_type;
-
-	rc = ntrdma_qp_modify(qp);
+	if (is_modify_remote) {
+		ntrdma_res_unlock(&qp->res);
+		rc = ntrdma_qp_modify(qp);
+		ntrdma_res_lock(&qp->res);
+	} else
+		rc = 0;
 
 	if (unlikely(rc))
 		ntrdma_err(dev, "QP %d: ntrdma_qp_modify: failed rc = %d",
 				qp->res.key, rc);
 
 unlock_exit:
+	if (rc) {
+		ntrdma_info(dev, "QP %d failed to change state %d %s (%d) -> %d %s(ibqp_mask 0x%x) state now is:%d\n",
+				qp->res.key, cur_state,
+				qp_enum_to_string(cur_state),
+				atomic_read(&qp->state), new_state,
+				qp_enum_to_string(new_state), ibqp_mask, atomic_read(&qp->state));
+	}
 	ntrdma_res_unlock(&qp->res);
+
+	ntrdma_dbg(dev, "Modify QP %d compited\n", qp->res.key);
+
+	return rc;
+}
+
+int ntrdma_modify_qp(struct ib_qp *ibqp,
+		struct ib_qp_attr *ibqp_attr,
+		int ibqp_mask,
+		struct ib_udata *ibudata)
+{
+	int rc;
+
+	NTRDMA_IB_PERF_INIT;
+	NTRDMA_IB_PERF_START;
+
+	rc = ntrdma_modify_qp_internal(ibqp,
+		ibqp_attr,
+		ibqp_mask,
+		ibudata,
+		true,
+		__func__);
+
 	NTRDMA_IB_PERF_END;
+
 	return rc;
 }
 
@@ -1510,10 +1550,10 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
-	TRACE("qp %p (res key %d)\n", qp, qp ? qp->res.key : -1);
+	ntrdma_dbg(dev, "QP %p (QP %d)\n", qp, qp ? qp->res.key : -1);
 
 	if (unlikely(qp->send_cmpl != qp->send_post)) {
-		ntrdma_info(dev,
+		ntrdma_dbg(dev,
 				"Destroy QP %p (%d) while send cmpl %d send post %d send prod %d send cap %d\n",
 				qp, qp->res.key, qp->send_cmpl,
 				qp->send_post, qp->send_prod, qp->send_cap);
@@ -1522,13 +1562,14 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	ntrdma_debugfs_qp_del(qp);
 
 	memset(&qpcb, 0, sizeof(qpcb));
+
 	init_completion(&qpcb.cb.cmds_done);
 	ntrdma_res_del(&qp->res, &qpcb.cb, &dev->qp_vec);
 
 	ntc_dma_flush(qp->dma_chan);
 
 	ntrdma_qp_put(qp);
-	
+
 	NTRDMA_IB_PERF_END;
 	return 0;
 }
@@ -2216,7 +2257,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	rc = ntrdma_res_add(&mr->res, &mrcb.cb, &dev->mr_list, &dev->mr_vec);
 	if (rc < 0) {
 		ntrdma_mr_put(mr);
-		ntrdma_err(dev, "reg_user_mr failed on ntrdma_res_add %d", rc);
+		ntrdma_err(dev, "reg_user_mr failed on ntrdma_res_add rc= %d key %d",
+				rc, mr->res.key);
 
 		NTRDMA_IB_PERF_END;
 		return ERR_PTR(rc);
@@ -2236,7 +2278,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 	}
 
 	ntrdma_debugfs_mr_add(mr);
-	
+
 	NTRDMA_IB_PERF_END;
 	return &mr->ibmr;
 
@@ -2263,8 +2305,9 @@ static void mr_release(struct kref *kref)
 	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
 	struct completion *done = mr->done;
 
-	TRACE("dev %p, mr %p (res key %d)\n",
-			dev, mr, mr->res.key);
+	ntrdma_dbg(dev, "release mr %p (res key %d)\n",
+			mr, mr->res.key);
+
 	ntrdma_mr_deinit(mr, dev);
 	if (mr->ib_umem)
 		ib_umem_release(mr->ib_umem);
@@ -2294,6 +2337,7 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
+	ntrdma_dbg(dev, "dereg MR %p (key %d)\n", mr, mr->res.key);
 
 	ntrdma_debugfs_mr_del(mr);
 
@@ -2308,7 +2352,7 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 
 	wait_for_completion(&done);
 	ntc_flush_dma_channels(dev->ntc);
-	
+
 
 	NTRDMA_IB_PERF_END;
 	return 0;
@@ -2625,6 +2669,8 @@ static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
 	}
 }
 
+
+
 int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 {
 	struct ib_device *ibdev = &dev->ibdev;
@@ -2635,7 +2681,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 	ntrdma_set_node_guid(&ibdev->node_guid);
 
 	ibdev->owner			= THIS_MODULE;
-	ibdev->node_type		= RDMA_NODE_IB_CA;
+	ibdev->node_type		= RDMA_NODE_RNIC;
 	/* TODO: maybe this should be the number of virtual doorbells */
 	ibdev->num_comp_vectors		= 1;
 
@@ -2713,7 +2759,11 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
 	ibdev->driver_id		= RDMA_DRIVER_NTRDMA;
 #endif
-
+	ibdev->iwcm = ntrdma_cm_init(ibdev->name);
+	if (!ibdev->iwcm) {
+		rc = -ENOMEM;
+		goto err_cm;
+	}
 	rc = ib_register_device(ibdev, NULL);
 	if (rc)
 		goto err_ib;
@@ -2722,6 +2772,8 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 
 err_ib:
 	ntrdma_err(dev, "got rc = %d on ib_register_device", rc);
+	ntrdma_cm_deinit(ibdev->iwcm);
+err_cm:
 	return rc;
 }
 
@@ -2729,6 +2781,7 @@ void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev)
 {
 	ntrdma_info(dev, "NTRDMA IB dev deinit");
 	ib_unregister_device(&dev->ibdev);
+	ntrdma_cm_deinit(dev->ibdev.iwcm);
 }
 
 int __init ntrdma_ib_module_init(void)

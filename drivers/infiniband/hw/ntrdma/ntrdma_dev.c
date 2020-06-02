@@ -36,6 +36,8 @@
 
 #include "ntrdma.h"
 #include "ntrdma_dev.h"
+#include "ntrdma_qp.h"
+#include "ntrdma_cm.h"
 
 #define NTRDMA_DEV_VBELL_START 0x8
 
@@ -45,6 +47,10 @@
 
 #define NTRDMA_DEV_ETH_VBELL_IDX 2
 #define NTRDMA_DEV_ETH_RX_CAP 0x100
+
+
+#define ntrdma_of_qp_close_work(__ws) \
+	container_of(__ws, struct ntrdma_dev, qp_close_work)
 
 
 DEFINE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
@@ -239,6 +245,7 @@ void ntrdma_dev_quiesce(struct ntrdma_dev *dev)
 	ntrdma_dev_eth_quiesce(dev);
 	/* resource disable should block from new commands to be submitted */
 	ntrdma_dev_res_disable(dev);
+	ntrdma_cm_shutdown(dev); /*FIXME should be moved inside ntrdma_dev_res_disable*/
 	/* cmd quiesce should block till all in progress commands completed */
 	ntrdma_dev_cmd_quiesce(dev);
 }
@@ -269,4 +276,5 @@ void _ntrdma_unrecoverable_err(struct ntrdma_dev *dev,
 	schedule_work(&dev->ntc_link_reset_work);
 	ntrdma_err(dev, "NTC state machine reset finished\n");
 }
+
 

@@ -145,9 +145,9 @@ static inline int ntrdma_cmd_cb_wait_out(struct ntrdma_dev *dev,
 					unsigned long *timeout)
 {
 	unsigned long t = *timeout;
-
 	if (t)
 		t = wait_for_completion_timeout(&cb->cmds_done, t);
+
 
 	if (!t && ntrdma_cmd_cb_unlink(dev, cb)) {
 		*timeout = 0;
@@ -167,7 +167,8 @@ inline int ntrdma_res_wait_cmds(struct ntrdma_dev *dev,
 	rc = ntrdma_cmd_cb_wait_out(dev, cb, &timeout);
 
 	if (rc < 0)
-		ntrdma_err(dev, "ntrdma res cmd timeout %ld id %d cb %p", timeout, cb->cmd_id, cb);
+		ntrdma_err(dev, "ntrdma res cmd timeout %ld id %d cb %p %pf\n",
+				timeout, cb->cmd_id, cb, cb->cmd_prep);
 
 	return rc;
 }
@@ -275,15 +276,13 @@ void ntrdma_dev_rres_reset(struct ntrdma_dev *dev)
 	struct ntrdma_rres *rres, *rres_next;
 
 	mutex_lock(&dev->rres_lock);
-	{
-		list_for_each_entry_safe_reverse(rres, rres_next,
-						 &dev->rres_list,
-						 obj.dev_entry) {
-			ntrdma_rres_remove_unsafe(rres);
-			rres->free(rres);
-		}
-		INIT_LIST_HEAD(&dev->rres_list);
+	list_for_each_entry_safe_reverse(rres, rres_next,
+			&dev->rres_list,
+			obj.dev_entry) {
+		ntrdma_rres_remove_unsafe(rres);
+		rres->free(rres);
 	}
+	INIT_LIST_HEAD(&dev->rres_list);
 	mutex_unlock(&dev->rres_lock);
 }
 
@@ -329,34 +328,38 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 
 	ntrdma_vdbg(dev, "resource obtained\n");
 
-	ntrdma_res_lock(res);
+
 	mutex_lock(&dev->res_lock);
-	{
-		write_lock_bh(&res_vec->lock);
-		res_vec->look[res->key] = res;
-		write_unlock_bh(&res_vec->lock);
+	ntrdma_res_lock(res);
 
-		list_add_tail(&res->obj.dev_entry, res_list);
+	ntrdma_kvec_set_key(res_vec, res->key, res);
 
-		ntrdma_vdbg(dev, "resource added\n");
+	list_add_tail(&res->obj.dev_entry, res_list);
 
-		if (dev->res_enable) {
-			ntrdma_vdbg(dev, "resource commands initiated\n");
-			res->enable(res, cb);
-			need_unlink = true;
-		} else {
-			ntrdma_vdbg(dev, "no commands\n");
-			need_unlink = false;
-		}
+	ntrdma_vdbg(dev, "resource added\n");
+
+	if (dev->res_enable) {
+		ntrdma_vdbg(dev, "resource commands initiated\n");
+		res->enable(res, cb);
+		need_unlink = true;
+	} else {
+		ntrdma_vdbg(dev, "no commands\n");
+		need_unlink = false;
 	}
+
+	ntrdma_res_unlock(res);
 	mutex_unlock(&dev->res_lock);
 
 	if (need_unlink) {
 		if (ntrdma_dev_cmd_submit(dev) >= 0) {
 			ntrdma_vdbg(dev, "wait for commands id %d cb %p\n", cb->cmd_id, cb);
 			rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
-			if (rc)
-				ntrdma_err(dev, "res %d, timeout %ld cb %p\n", res->key, res->timeout, cb);
+			if (rc) {
+				list_del(&res->obj.dev_entry);
+				ntrdma_kvec_set_key(res_vec, res->key, NULL);
+				ntrdma_err(dev, "res %d, timeout %u [msec] cb %p\n",
+						res->key, jiffies_to_msecs(res->timeout), cb);
+			}
 			ntrdma_vdbg(dev, "done waiting\n");
 		} else {
 			ntrdma_vdbg(dev, "won't submit commands\n");
@@ -365,7 +368,7 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	} else
 		complete_all(&cb->cmds_done);
 
-	ntrdma_res_unlock(res);
+
 
 	if (rc)
 		ntrdma_unrecoverable_err(dev);
@@ -380,24 +383,23 @@ void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	bool need_unlink;
 	int rc = 0;
 
-	ntrdma_res_lock(res);
 	mutex_lock(&dev->res_lock);
-	{
-		if (dev->res_enable) {
-			ntrdma_vdbg(dev, "resource commands initiated\n");
-			res->disable(res, cb);
-			need_unlink = true;
-		} else {
-			ntrdma_vdbg(dev, "no commands\n");
-			need_unlink = false;
-		}
+	ntrdma_res_lock(res);
 
-		list_del(&res->obj.dev_entry);
-
-		write_lock_bh(&res_vec->lock);
-		res_vec->look[res->key] = NULL;
-		write_unlock_bh(&res_vec->lock);
+	if (dev->res_enable) {
+		ntrdma_vdbg(dev, "resource commands initiated\n");
+		res->disable(res, cb);
+		need_unlink = true;
+	} else {
+		ntrdma_vdbg(dev, "no commands\n");
+		need_unlink = false;
 	}
+
+	list_del(&res->obj.dev_entry);
+
+	ntrdma_kvec_set_key(res_vec, res->key, NULL);
+
+	ntrdma_res_unlock(res);
 	mutex_unlock(&dev->res_lock);
 
 	if (need_unlink) {
@@ -412,10 +414,12 @@ void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	} else
 		complete_all(&cb->cmds_done);
 
-	ntrdma_res_unlock(res);
 
-	if (rc)
+
+	if (rc) {
+		ntrdma_dbg(dev, "wait cmd failed after %ld\n", res->timeout);
 		ntrdma_unrecoverable_err(dev);
+	}
 }
 
 void ntrdma_res_put(struct ntrdma_res *res,
