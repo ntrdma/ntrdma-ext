@@ -45,6 +45,7 @@
 #include "ntrdma_cq.h"
 #include "ntrdma_zip.h"
 #include "ntrdma-trace.h"
+#include "ntrdma_cm.h"
 
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
 
@@ -161,7 +162,10 @@ inline u32 ntrdma_rqp_recv_prod(struct ntrdma_rqp *rqp)
 	return READ_ONCE(*recv_prod_buf);
 }
 
-static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
+static void qp_release_work(struct work_struct *work);
+
+static inline
+int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 		struct ntrdma_dev *dev,
 		struct ntrdma_cq *recv_cq, struct ntrdma_cq *send_cq,
 		struct ntrdma_qp_init_attr *attr,
@@ -175,6 +179,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (is_deinit)
 		goto deinit;
 
+	INIT_WORK(&qp->qp_work, qp_release_work);
 	ntrdma_res_init(&qp->res, dev,
 			ntrdma_qp_enable_cb, ntrdma_qp_disable_cb);
 
@@ -287,6 +292,11 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	qp->recv_cons = 0;
 	qp->recv_cmpl = 0;
 
+
+	/*init cm state*/
+	qp->cm_id = 0;
+	qp->ntrdma_cm_state = NTRDMA_CM_STATE_IDLE;
+
 	/* set up the recv work queue buffer */
 	rc = ntc_local_buf_zalloc(&qp->recv_wqe_buf, dev->ntc,
 				qp->recv_cap * qp->recv_wqe_size, GFP_KERNEL);
@@ -319,6 +329,7 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	mutex_init(&qp->recv_post_lock);
 	spin_lock_init(&qp->recv_prod_lock);
 	spin_lock_init(&qp->recv_cons_lock);
+	mutex_init(&qp->cm_lock); /* FIXME should be well defined */
 	mutex_init(&qp->recv_cmpl_lock);
 
 	/* add qp to completion queues for polling */
@@ -329,6 +340,8 @@ static inline int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	return 0;
 
 deinit:
+	ntrdma_dbg(dev, "Deinit of QP %d started\n", qp->res.key);
+
 	ntrdma_cq_del_poll(qp->send_cq, &qp->send_poll);
 	ntrdma_cq_del_poll(qp->recv_cq, &qp->recv_poll);
 	kfree(qp->recv_cqe_buf);
@@ -371,19 +384,27 @@ void ntrdma_qp_deinit(struct ntrdma_qp *qp, struct ntrdma_dev *dev)
 	ntrdma_qp_init_deinit(qp, dev, NULL, NULL, NULL, true);
 }
 
+static void qp_release_work(struct work_struct *qp_work)
+{
+	struct ntrdma_qp *qp = container_of(qp_work, struct ntrdma_qp, qp_work);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	struct ntrdma_obj *obj = &qp->res.obj;
+
+	ntrdma_qp_deinit(qp, dev);
+	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
+			"Free list element while in the list, qp %p (QP %d)\n",
+			qp, qp->res.key);
+	ntrdma_free_qp(qp);
+	atomic_dec(&dev->qp_num);
+}
+
 static void ntrdma_qp_release(struct kref *kref)
 {
 	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
 	struct ntrdma_res *res = container_of(obj, struct ntrdma_res, obj);
 	struct ntrdma_qp *qp = container_of(res, struct ntrdma_qp, res);
-	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	ntrdma_qp_deinit(qp, dev);
-	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
-		"Free list element while in the list, obj %p, res %p, qp %p (key %d)\n",
-		obj, res, qp, qp->res.key);
-	ntrdma_free_qp(qp);
-	atomic_dec(&dev->qp_num);
+	schedule_work(&qp->qp_work);
 }
 
 void ntrdma_qp_put(struct ntrdma_qp *qp)
@@ -524,13 +545,6 @@ static void ntrdma_qp_enable_cb(struct ntrdma_res *res,
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	struct ntrdma_qp *qp = ntrdma_res_qp(res);
 	struct ntrdma_qp_cmd_cb *qpcb;
-
-	if (qp->qp_type == IB_QPT_GSI) {
-		qp->recv_prod = qp->recv_cons = qp->recv_cmpl;
-		TRACE("Enabling GSI QP post %u prod %u cons %u cmpl %u\n",
-				qp->recv_post, qp->recv_prod,
-				qp->recv_cons, qp->recv_cmpl);
-	}
 
 	qpcb = container_of(cb, struct ntrdma_qp_cmd_cb, cb);
 
@@ -676,8 +690,11 @@ static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
 
 	if (qp && dev)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
-	TRACE("qp %p (key %d) rqp %p (key %d)\n", qp, qp ? qp->res.key : -1,
+
+	ntrdma_dbg(dev, "Stalling qp %p (QP %d) rqp %p (RQP %d)\n",
+			qp, qp ? qp->res.key : -1,
 			rqp, rqp ? rqp->rres.key : -1);
+
 	ntrdma_qp_send_stall(qp, rqp);
 	if (rqp) {
 		rqp->qp_key = -1;
@@ -685,9 +702,6 @@ static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
 	}
 
 	qpcb = container_of(cb, struct ntrdma_qp_cmd_cb, cb);
-
-	if (unlikely(qp->qp_type == IB_QPT_GSI))
-		ntrdma_info(dev, "deleting QP type IB_QPT_GSI\n");
 
 	qpcb->cb.cmd_prep = ntrdma_qp_disable_prep;
 	qpcb->cb.rsp_cmpl = ntrdma_qp_disable_cmpl;
@@ -735,72 +749,36 @@ static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 
 void ntrdma_qp_reset(struct ntrdma_qp *qp)
 {
-	struct ntrdma_dev *dev;
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_rqp *rqp = NULL;
-	int start_cmpl, start_cons, end, base;
-	bool need_cue = false;
-	unsigned long irqflags = 0;
 
-	dev = ntrdma_qp_dev(qp);
-	if (dev) {
-		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
-		if (rqp) {
-			rqp->state = IB_QPS_ERR;
-			ntrdma_rqp_put(rqp);
-		}
+	rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
+	if (rqp) {
+		/*FIXME we should lock rqp res*/
+		rqp->state = IB_QPS_ERR;
+		ntrdma_rqp_put(rqp);
 	}
-	TRACE("qp reset %p (res key: %d) rqp %p\n", qp, qp->res.key, rqp);
+
+	ntrdma_dbg(dev, "qp reset %p (res key: %d) rqp %p\n",
+			qp, qp->res.key, rqp);
+
+	ntrdma_res_lock(&qp->res);
+
 	spin_lock_bh(&qp->recv_prod_lock);
-	{
-		if (qp->qp_type != IB_QPT_GSI)
-			move_to_err_state(qp);
-		ntc_remote_buf_clear(&qp->peer_recv_wqe_buf);
-	}
+	move_to_err_state(qp);
+	ntc_remote_buf_clear(&qp->peer_recv_wqe_buf);
 	spin_unlock_bh(&qp->recv_prod_lock);
 
 	spin_lock_bh(&qp->send_prod_lock);
-	{
-		ntc_remote_buf_clear(&qp->peer_send_wqe_buf);
-		qp->peer_send_vbell_idx = 0;
-	}
+	ntc_remote_buf_clear(&qp->peer_send_wqe_buf);
+	qp->peer_send_vbell_idx = 0;
 	spin_unlock_bh(&qp->send_prod_lock);
-	/* GSI is always active, we can move it to SQE only if we generate
-	 * error completion, here we check if there are completion waiting
-	 * if yet we move it to aborting and will generate the completion
-	 * later, if not it is transparent, and no need for the aborting
-	 */
-	if (qp->qp_type == IB_QPT_GSI) {
-		mutex_lock(&qp->send_cmpl_lock);
-		/* TODO: warn if qp state < SEND_DRAIN */
 
-		spin_lock_irqsave(&qp->send_post_slock, irqflags); /* Potential deadlock? */
-		ntrdma_ring_consume(qp->send_post, qp->send_cmpl,
-				qp->send_cap, &start_cmpl, &end, &base);
-		ntrdma_ring_consume(qp->send_post, ntrdma_qp_send_cons(qp),
-				qp->send_cap, &start_cons, &end, &base);
-		ntrdma_vdbg(dev,
-				"QP %d, start %d, end %d, base %d: send_abort %d, send_post %d, cons %d, send_cmpl %d, send_prod %d\n",
-				qp->res.key, start_cmpl, end, base,
-				qp->send_abort, qp->send_post,
-				ntrdma_qp_send_cons(qp), qp->send_cmpl,
-				qp->send_prod);
-		if (start_cons != end) {
-			qp->send_aborting = true;
-			move_to_err_state(qp);
-			need_cue = true;
-		} else if (start_cmpl != start_cons) {
-			need_cue = true;
-		}
-		spin_unlock_irqrestore(&qp->send_post_slock, irqflags);
-		mutex_unlock(&qp->send_cmpl_lock);
 
-		if (need_cue)
-			ntrdma_cq_cue(qp->send_cq);
-	} else
-		qp->send_aborting = true;
-	/* GSI can have only send abort (in SQE state) */
-	if (qp->qp_type != IB_QPT_GSI)
-		qp->recv_aborting = true;
+	qp->send_aborting = true;
+	qp->recv_aborting = true;
+
+	ntrdma_res_unlock(&qp->res);
 }
 
 static void ntrdma_rqp_free(struct ntrdma_rres *rres)
@@ -1169,6 +1147,7 @@ static inline void ntrdma_qp_recv_cmpl_get(struct ntrdma_qp *qp,
 		qp->recv_cons = recv_cons;
 	} else
 		recv_cons = qp->recv_cons;
+
 	ntrdma_ring_consume(recv_cons, qp->recv_cmpl, qp->recv_cap,
 			pos, end, base);
 
@@ -1626,7 +1605,6 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		goto err_rqp;
 	}
 
-
 	/* connected rqp must be ready to receive */
 	spin_lock_bh(&rqp->recv_cons_lock);
 	if (!is_state_recv_ready(rqp->state)) {
@@ -1980,9 +1958,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 
 				abort = true;
 				ntrdma_err(dev,
-						"QP %d, wrid 0x%llx recv_pos = recv_end = %d, wqe_op_status %d move to error state\n",
+						"QP %d, wrid 0x%llx recv_pos = recv_end = %d, wqe pos %d ,wqe_op_status %d move to error state\n",
 						rqp->qp_key, wqe.ulp_handle,
-						recv_pos, wqe.op_status);
+						pos - 1, wqe.recv_key, wqe.op_status);
 				break;
 			}
 
@@ -2128,6 +2106,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		rc = ntrdma_dev_vbell_peer(dev, dma_chan,
 					rqp->peer_cmpl_vbell_idx);
 		if (unlikely(rc < 0)) {
+			ntc_req_submit(qp->dma_chan);
 			ntrdma_err(dev, "QP %d ntrdma_dev_vbell_peer failed. rc=%d",
 				qp->res.key, rc);
 			goto err_memcpy;
@@ -2204,6 +2183,7 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
 {
 	if (!qp && !rqp)
 		return;
+
 	if (qp) {
 		TRACE("qp %p (QP %d)\n", qp, qp->res.key);
 
@@ -2224,6 +2204,7 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
 	}
 	if (!rqp)
 		return;
+
 	TRACE("rqp %p (rres key %d)\n", rqp, rqp->rres.key);
 
 	/* Just to sync */

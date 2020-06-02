@@ -116,6 +116,14 @@ static inline void ntrdma_kvec_dispose_key(struct ntrdma_kvec *vec, u32 key)
 	write_unlock_bh(&vec->lock);
 }
 
+static inline
+void ntrdma_kvec_set_key(struct ntrdma_kvec *vec, u32 key, void *value)
+{
+	write_lock_bh(&vec->lock);
+	vec->look[key] = value;
+	write_unlock_bh(&vec->lock);
+}
+
 static inline void ntrdma_deinit_slab(struct kmem_cache **pslab)
 {
 	struct kmem_cache *slab = *pslab;

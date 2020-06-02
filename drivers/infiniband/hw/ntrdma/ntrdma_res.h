@@ -95,6 +95,7 @@ static inline void ntrdma_res_lock(struct ntrdma_res *res)
 	mutex_lock(&res->lock);
 }
 
+
 static inline void ntrdma_res_unlock(struct ntrdma_res *res)
 {
 	mutex_unlock(&res->lock);

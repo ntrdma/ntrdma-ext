@@ -16,3 +16,4 @@ ntrdma-y += ntrdma_res.o
 ntrdma-y += ntrdma_util.o
 ntrdma-y += ntrdma_vbell.o
 ntrdma-y += ntrdma_zip.o
+ntrdma-y += ntrdma_cm.o

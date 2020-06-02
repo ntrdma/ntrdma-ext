@@ -87,6 +87,19 @@ struct ntrdma_dev_counters {
 };
 
 
+
+/*FIXME*/
+struct ntrdma_dev_res {
+	int						res_enable; /* Protected by res_lock. */
+	struct mutex			res_lock;
+	/* rdma local resources */
+
+	struct list_head		mr_list; /* Protected by res_lock. */
+	struct list_head		qp_list; /* Protected by res_lock. */
+	struct ntrdma_kvec		mr_vec;
+	struct ntrdma_kvec		qp_vec;
+};
+
 /* RDMA over PCIe NTB device */
 struct ntrdma_dev {
 	/* NOTE: .ibdev MUST be the first thing in ntrdma_dev!
@@ -130,7 +143,8 @@ struct ntrdma_dev {
 
 	/* commands to affect remote resources */
 
-	bool				cmd_ready;
+	bool				cmd_send_ready;
+	bool				cmd_recv_ready;
 
 	/* command recv work */
 	struct mutex			cmd_recv_lock;
@@ -187,6 +201,8 @@ struct ntrdma_dev {
 
 	/* rdma local resources */
 
+	struct ntrdma_dev_res dev_res;
+
 	struct list_head		mr_list; /* Protected by res_lock. */
 	struct list_head		qp_list; /* Protected by res_lock. */
 	struct ntrdma_kvec		mr_vec;
@@ -206,6 +222,8 @@ struct ntrdma_dev {
 	atomic_t cq_num;
 	atomic_t mr_num;
 	atomic_t pd_num;
+
+	struct mutex cmd_modify_qp_recv_lock;
 };
 
 inline u32 ntrdma_dev_cmd_send_cons(struct ntrdma_dev *dev);
