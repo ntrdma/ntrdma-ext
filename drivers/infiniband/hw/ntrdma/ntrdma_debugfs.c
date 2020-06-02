@@ -39,6 +39,7 @@
 #include "ntrdma_mr.h"
 #include "ntrdma_qp.h"
 #include "ntrdma_wr.h"
+#include "ntrdma_cm.h"
 
 #define NTRDMA_DEBUGFS_NAME_MAX 0x20
 
@@ -62,6 +63,7 @@ static const struct file_operations ntrdma_debugfs_rqp_send_wqe_ops;
 static const struct file_operations ntrdma_debugfs_rqp_send_cqe_ops;
 static const struct file_operations ntrdma_debugfs_rqp_recv_wqe_ops;
 static const struct file_operations ntrdma_debugfs_dev_vbell_peer_ops;
+static const struct file_operations ntrdma_debugfs_dev_cm_ops;
 
 static struct dentry *debug;
 DECLARE_PER_CPU(struct ntrdma_dev_counters, dev_cnt);
@@ -215,6 +217,8 @@ void ntrdma_debugfs_dev_add(struct ntrdma_dev *dev)
 			    dev, &ntrdma_debugfs_dev_vbell_ops);
 	debugfs_create_file("peer_vbell.seq", S_IRUSR, dev->debug,
 			    dev, &ntrdma_debugfs_dev_vbell_peer_ops);
+	debugfs_create_file("cm.seq", S_IRUSR, dev->debug,
+			    dev, &ntrdma_debugfs_dev_cm_ops);
 }
 
 void ntrdma_debugfs_dev_del(struct ntrdma_dev *dev)
@@ -426,7 +430,8 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 		(dma_addr_t)dev->peer_vbell_buf.dma_addr);
 	seq_printf(s, "peer_vbell_count %u\n", dev->peer_vbell_count);
 
-	seq_printf(s, "cmd_ready %d\n", dev->cmd_ready);
+	seq_printf(s, "cmd_send_ready %d\n", dev->cmd_send_ready);
+	seq_printf(s, "cmd_recv_ready %d\n", dev->cmd_recv_ready);
 	seq_printf(s, "cmd_send_cap %u\n", dev->cmd_send_cap);
 	seq_printf(s, "cmd_send_prod %u\n", dev->cmd_send_prod);
 	seq_printf(s, "cmd_send_cons %u\n", ntrdma_dev_cmd_send_cons(dev));
@@ -726,6 +731,51 @@ static int ntrdma_debugfs_dev_vbell_peer_open(struct inode *inode, struct file *
 
 static const struct file_operations ntrdma_debugfs_dev_vbell_peer_ops = {
 	.open = ntrdma_debugfs_dev_vbell_peer_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+
+static int ntrdma_debugfs_dev_cm_show(struct seq_file *s, void *v)
+{
+	struct ntrdma_dev *dev = s->private;
+	struct ntrdma_iw_cm *ntrdma_iwcm = ntrdma_iw_cm_from_ntrdma_dev(dev);
+	struct ntrdma_iw_cm_id_node *node = NULL;
+	struct iw_cm_id *cm_id;
+	struct sockaddr_in *rsin;
+	struct sockaddr_in *lsin;
+	int local_port, remote_port;
+
+	seq_printf(s, "*** cm_id list ***\n");
+	seq_printf(s, "printing:\nlocal ip:local port\tremote ip:remote port\tqpn\n");
+
+	read_lock(&ntrdma_iwcm->slock);
+	list_for_each_entry(node, &ntrdma_iwcm->ntrdma_iw_cm_list, head) {
+		cm_id = node->cm_id;
+		rsin = (struct sockaddr_in *)&cm_id->remote_addr;
+		lsin = (struct sockaddr_in *)&cm_id->local_addr;
+
+		local_port = lsin->sin_port;
+		remote_port = rsin->sin_port;
+
+		seq_printf(s, "%pISpc:%d\t%pISpc\t%d\t%d\n"
+					, lsin, local_port
+					, rsin, remote_port
+					, node->qpn);
+
+	}
+	read_unlock(&ntrdma_iwcm->slock);
+	return 0;
+}
+
+static int ntrdma_debugfs_dev_cm_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ntrdma_debugfs_dev_cm_show, inode->i_private);
+}
+
+static const struct file_operations ntrdma_debugfs_dev_cm_ops = {
+	.open = ntrdma_debugfs_dev_cm_open,
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = single_release,

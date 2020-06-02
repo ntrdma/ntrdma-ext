@@ -62,6 +62,8 @@ struct ntrdma_qp_cmd_cb {
 	struct ntrdma_qp *qp;
 };
 
+#include <rdma/iw_cm.h>
+
 /* Queue Pair */
 struct ntrdma_qp {
 	/* Ofed qp structure */
@@ -165,6 +167,10 @@ struct ntrdma_qp {
 	spinlock_t		recv_cons_lock;
 	struct mutex	recv_cmpl_lock;
 	bool		dma_chan_init;
+	struct iw_cm_id *cm_id;
+	struct mutex cm_lock;
+	int ntrdma_cm_state;
+	struct work_struct qp_work;
 };
 
 inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp);

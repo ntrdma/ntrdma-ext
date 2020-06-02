@@ -58,6 +58,7 @@ struct ntrdma_dev;
 #define NTRDMA_CMD_QP_CREATE		(NTRDMA_CMD_QP + 0)
 #define NTRDMA_CMD_QP_DELETE		(NTRDMA_CMD_QP + 1)
 #define NTRDMA_CMD_QP_MODIFY		(NTRDMA_CMD_QP + 2)
+#define NTRDMA_CMD_IW_CM		    (NTRDMA_CMD_QP + 3)
 
 #define CMD_TIMEOUT_MSEC 5000 /*5 sec*/
 
@@ -225,5 +226,6 @@ inline int ntrdma_dev_cmd_submit(struct ntrdma_dev *dev);
 
 inline bool ntrdma_cmd_cb_unlink(struct ntrdma_dev *dev,
 				struct ntrdma_cmd_cb *cb);
+
 
 #endif

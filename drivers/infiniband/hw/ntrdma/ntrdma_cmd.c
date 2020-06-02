@@ -44,6 +44,7 @@
 #include "ntrdma_mr.h"
 #include "ntrdma_qp.h"
 #include "ntrdma_wr.h"
+#include "ntrdma_cm.h"
 
 #define NTRDMA_RES_VBELL		1
 #define NTRDMA_RRES_VBELL		0
@@ -119,10 +120,12 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	if (is_deinit)
 		goto deinit;
 
-	dev->cmd_ready = 0;
+	dev->cmd_send_ready = false;
+	dev->cmd_recv_ready = false;
 
 	/* recv work */
 	mutex_init(&dev->cmd_recv_lock);
+	mutex_init(&dev->cmd_modify_qp_recv_lock);
 
 	ntrdma_work_vbell_init(dev, &dev->cmd_recv_vbell, recv_vbell_idx,
 			&dev->cmd_recv_work);
@@ -388,6 +391,7 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 	 */
 
 
+
 	list_for_each_entry_safe(cb, cb_tmp,
 			&dev->cmd_post_list, dev_entry) {
 
@@ -402,6 +406,9 @@ void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev)
 	 * (cmds did not sent yet)
 	 */
 
+	/*FIXME we should lock here (cmd_send_lock)
+	 * might be a race with ntrdma_cmd_cb_unlink
+	 */
 	list_for_each_entry_safe(cb, cb_tmp,
 			&dev->cmd_pend_list, dev_entry) {
 
@@ -424,12 +431,13 @@ void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev)
 void ntrdma_dev_cmd_enable(struct ntrdma_dev *dev)
 {
 	mutex_lock(&dev->cmd_send_lock);
-	mutex_lock(&dev->cmd_recv_lock);
-	{
-		dev->cmd_ready = 1;
-	}
-	mutex_unlock(&dev->cmd_recv_lock);
+	dev->cmd_send_ready = true;
 	mutex_unlock(&dev->cmd_send_lock);
+
+	mutex_lock(&dev->cmd_recv_lock);
+	dev->cmd_recv_ready = true;
+	mutex_unlock(&dev->cmd_recv_lock);
+
 
 	ntrdma_vbell_trigger(&dev->cmd_recv_vbell);
 	ntrdma_vbell_trigger(&dev->cmd_send_vbell);
@@ -437,12 +445,14 @@ void ntrdma_dev_cmd_enable(struct ntrdma_dev *dev)
 
 void ntrdma_dev_cmd_disable(struct ntrdma_dev *dev)
 {
-	mutex_lock(&dev->cmd_send_lock);
+	/* Verify cmd recv not running any more */
 	mutex_lock(&dev->cmd_recv_lock);
-	{
-		dev->cmd_ready = 0;
-	}
+	dev->cmd_recv_ready = false;
 	mutex_unlock(&dev->cmd_recv_lock);
+
+	/* Verify cmd send not running any more */
+	mutex_lock(&dev->cmd_send_lock);
+	dev->cmd_send_ready = false;
 	mutex_unlock(&dev->cmd_send_lock);
 }
 
@@ -643,7 +653,7 @@ static void ntrdma_cmd_send_work_cb(struct work_struct *ws)
 {
 	struct ntrdma_dev *dev = ntrdma_cmd_send_work_dev(ws);
 
-	if (!dev->cmd_ready) {
+	if (!dev->cmd_send_ready) {
 		ntrdma_info(dev, "cmd not ready yet to send");
 		return;
 	}
@@ -1029,6 +1039,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	}
 
 	rsp->hdr.status = 0;
+	ntrdma_dbg(dev, "success %d\n", rc);
 	return 0;
 
 err_add:
@@ -1045,6 +1056,7 @@ err_sanity:
 	ntc_remote_buf_desc_clear(&rsp->send_wqe_buf_desc);
 	rsp->send_prod_shift = 0;
 	rsp->send_vbell_idx = 0;
+	ntrdma_dbg(dev, "ntrdma_cmd_recv_qp_create failed %d\n", rc);
 	return rc;
 }
 
@@ -1060,7 +1072,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	cmd = READ_ONCE(*_cmd);
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
-	ntrdma_vdbg(dev, "called\n");
+	ntrdma_dbg(dev, "deleting  RQP %d\n", cmd.qp_key);
 
 	rsp->hdr.op = NTRDMA_CMD_QP_DELETE;
 	rsp->qp_key = cmd.qp_key;
@@ -1073,18 +1085,18 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	}
 	qp = ntrdma_dev_qp_look_and_get(dev, rqp->qp_key);
 
-	if (qp && (qp->qp_type == IB_QPT_GSI)) {
-		ntrdma_qp_put(qp);
-		ntrdma_rqp_put(rqp);
-		rsp->hdr.status = 0;
-		return 0;
-	}
-
 	ntrdma_vdbg(dev, "stall QP %d\n", qp ? qp->res.key : -1);
-	ntrdma_qp_send_stall(qp, rqp);
+
+
 	if (qp) {
+		ntrdma_res_lock(&qp->res);
+		ntrdma_qp_send_stall(qp, rqp);
 		qp->rqp_key = -1;
+		ntrdma_cm_kill(qp);
+		ntrdma_res_unlock(&qp->res);
 		ntrdma_qp_put(qp);
+	} else {
+		ntrdma_qp_send_stall(NULL, rqp);
 	}
 
 	ntrdma_rres_remove(&rqp->rres);
@@ -1100,116 +1112,168 @@ err_rqp:
 	return rc;
 }
 
-static int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
-				const struct ntrdma_cmd_qp_modify *_cmd,
-				struct ntrdma_rsp_qp_status *rsp)
+int ntrmda_rqp_modify(struct ntrdma_dev *dev,
+		u32 src_qp_key, u32 access,
+		u32 new_state, u32 dest_qp_key, const char *caller)
 {
-	struct ntrdma_cmd_qp_modify cmd;
 	struct ntrdma_rqp *rqp;
+	u32 qp_according_to_rqp;
 	struct ntrdma_qp *qp;
 	int rc;
-	u32 qp_according_to_rqp;
 
-	cmd = READ_ONCE(*_cmd);
-	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
-
-	ntrdma_vdbg(dev, "enter state %d qp key %d\n",
-			cmd.state, cmd.src_qp_key);
-
-	rsp->hdr.op = NTRDMA_CMD_QP_MODIFY;
-	rsp->qp_key = cmd.src_qp_key;
-
-	/* sanity check */
-	if (cmd.access > MAX_SUM_ACCESS_FLAGS || !is_state_valid(cmd.state)) {
-		ntrdma_err(dev, "Sanity failure %d %d", cmd.access, cmd.state);
-
-		rc = -EINVAL;
-		goto err_sanity;
-	}
-
-	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd.src_qp_key);
+	rqp = ntrdma_dev_rqp_look_and_get(dev, src_qp_key);
 	if (!rqp) {
-		ntrdma_err(dev, "ntrdma_dev_rqp_look failed key %d",
-			cmd.src_qp_key);
-		rc = -EINVAL;
-		goto err_rqp;
+		ntrdma_err(dev, "ntrdma_dev_rqp_look failed RQP %d from %s",
+				src_qp_key, caller);
+		return -EINVAL;
 	}
-	rqp->state = cmd.state;
-	rqp->access = cmd.access;
 
-	if (!is_state_error(cmd.state)) {
-		rqp->qp_key = cmd.dest_qp_key;
-		TRACE("RQP %d got qp_key %d\n", rqp->rres.key, rqp->qp_key);
+	mutex_lock(&dev->cmd_modify_qp_recv_lock); /*FIXME why global*/
+
+	rqp->state = new_state;
+
+	if (access)
+		rqp->access = access;
+
+	if (!is_state_error(new_state)) {
+		rqp->qp_key = dest_qp_key;
+		ntrdma_dbg(dev, "RQP %d got QP %d from %s\n",
+				rqp->rres.key, rqp->qp_key, caller);
 	}
+
 	ntrdma_vbell_trigger(&rqp->send_vbell);
 	qp_according_to_rqp = rqp->qp_key;
 	ntrdma_rqp_put(rqp);
 
-	if (is_state_error(cmd.state) &&
-			(qp_according_to_rqp == cmd.dest_qp_key)) {
-		qp = ntrdma_dev_qp_look_and_get(dev, cmd.dest_qp_key);
-		TRACE("qp %p (QP %d) state changed to %d", qp,
-			cmd.dest_qp_key, cmd.state);
+	if (is_state_error(new_state) &&
+				(qp_according_to_rqp == dest_qp_key)) {
+		qp = ntrdma_dev_qp_look_and_get(dev, dest_qp_key);
+		ntrdma_dbg(dev, "qp %p (QP %d) state changed to %d from %s", qp,
+				dest_qp_key, new_state, caller);
 		if (!qp) {
-			ntrdma_info(dev,
-				"ntrdma_dev_qp_look failed key %d (rqp key %d)",
-				cmd.dest_qp_key, cmd.src_qp_key);
+			ntrdma_dbg(dev,
+					"ntrdma_dev_qp_look failed QP %d (RQP %d) from %s",
+					dest_qp_key, src_qp_key, caller);
 			rc = 0;
-			goto err_qp;
+			goto exit_unlock;
 		}
-		atomic_set(&qp->state, cmd.state);
+
+		ntrdma_res_lock(&qp->res);
+
+		if (new_state > IB_QPS_RTS && qp->cm_id &&
+				new_state != atomic_read(&qp->state)) {
+			ntrdma_dbg(dev,
+					"QP %d state modified to %d, firing disconnect event caller %s\n",
+					qp->res.key, new_state, caller);
+			ntrdma_cm_kill(qp);
+		}
+
+		ntrdma_dbg(dev, "QP %d state modified %d -> %d by RQP %d caller %s\n",
+				qp->res.key, atomic_read(&qp->state),
+				new_state, src_qp_key, caller);
+
+		atomic_set(&qp->state, new_state);
+		ntrdma_res_unlock(&qp->res);
 		ntrdma_qp_put(qp);
-	} else {
-		TRACE(
-			"According to RQP %d, QP %d is not valid anymore (changed to %d)\n",
-			cmd.src_qp_key, cmd.dest_qp_key, qp_according_to_rqp);
 	}
 
-err_qp:
-	rsp->hdr.status = 0;
-	return 0;
+	rc = 0;
 
-err_rqp:
-err_sanity:
-	rsp->hdr.status = ~0;
+exit_unlock:
+	mutex_unlock(&dev->cmd_modify_qp_recv_lock);
 	return rc;
 }
+
+int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
+				const struct ntrdma_cmd_qp_modify *_cmd,
+				struct ntrdma_rsp_qp_status *rsp)
+{
+	struct ntrdma_cmd_qp_modify cmd;
+	int rc;
+
+	cmd = READ_ONCE(*_cmd);
+	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
+
+	rsp->hdr.op = NTRDMA_CMD_QP_MODIFY;
+	rsp->qp_key = cmd.src_qp_key;
+
+	ntrdma_vdbg(dev, "enter state %d qp key %d\n",
+			cmd.state, cmd.src_qp_key);
+
+	/* sanity check */
+	if (cmd.access > MAX_SUM_ACCESS_FLAGS || !is_state_valid(cmd.state)) {
+		ntrdma_err(dev, "Sanity failure %d %d", cmd.access, cmd.state);
+		return -EINVAL;
+	}
+
+	rc = ntrmda_rqp_modify(dev,
+			_cmd->src_qp_key, _cmd->access,
+			_cmd->state, _cmd->dest_qp_key,
+			__func__);
+
+	rsp->hdr.status = rc;
+
+	return rc;
+}
+
+int ntrdma_cmd_recv_cm(struct ntrdma_dev *dev,
+		const union ntrdma_cmd *cmd,
+		union ntrdma_rsp *rsp);
 
 static int ntrdma_cmd_recv(struct ntrdma_dev *dev, const union ntrdma_cmd *cmd,
 			union ntrdma_rsp *rsp)
 {
 	u32 op;
+	int rc;
 
 	op = READ_ONCE(cmd->hdr.op);
 
-	TRACE("CMD: received: op %d cb %p\n", op, (void *)cmd->hdr.cb_p);
+	ntrdma_dbg(dev, "CMD: received: op %d cb %p cmd id %u\n",
+			op, (void *)cmd->hdr.cb_p, cmd->hdr.cmd_id);
 
 	switch (op) {
 	case NTRDMA_CMD_NONE:
-		return ntrdma_cmd_recv_none(dev, &cmd->hdr, &rsp->hdr);
+		rc = ntrdma_cmd_recv_none(dev, &cmd->hdr, &rsp->hdr);
+		break;
 	case NTRDMA_CMD_MR_CREATE:
-		return ntrdma_cmd_recv_mr_create(dev, &cmd->mr_create,
+		rc = ntrdma_cmd_recv_mr_create(dev, &cmd->mr_create,
 						 &rsp->mr_create);
+		break;
 	case NTRDMA_CMD_MR_DELETE:
-		return ntrdma_cmd_recv_mr_delete(dev, &cmd->mr_delete,
+		rc = ntrdma_cmd_recv_mr_delete(dev, &cmd->mr_delete,
 						 &rsp->mr_delete);
+		break;
 	case NTRDMA_CMD_MR_APPEND:
-		return ntrdma_cmd_recv_mr_append(dev, &cmd->mr_append,
+		rc = ntrdma_cmd_recv_mr_append(dev, &cmd->mr_append,
 						 &rsp->mr_append);
+		break;
 	case NTRDMA_CMD_QP_CREATE:
-		return ntrdma_cmd_recv_qp_create(dev, &cmd->qp_create,
+		rc = ntrdma_cmd_recv_qp_create(dev, &cmd->qp_create,
 						 &rsp->qp_create);
+		break;
 	case NTRDMA_CMD_QP_DELETE:
-		return ntrdma_cmd_recv_qp_delete(dev, &cmd->qp_delete,
+		rc = ntrdma_cmd_recv_qp_delete(dev, &cmd->qp_delete,
 						 &rsp->qp_delete);
+		break;
 	case NTRDMA_CMD_QP_MODIFY:
-		return ntrdma_cmd_recv_qp_modify(dev, &cmd->qp_modify,
+		rc = ntrdma_cmd_recv_qp_modify(dev, &cmd->qp_modify,
 						 &rsp->qp_modify);
+		break;
+	case NTRDMA_CMD_IW_CM:
+		rc = ntrdma_cmd_recv_cm(dev, cmd, rsp);
+		break;
+	default:
+		ntrdma_err(dev, "unhandled recv cmd op %u\n", op);
+		rc = -EINVAL;
+		break;
 	}
 
-	ntrdma_err(dev, "unhandled recv cmd op %u\n", op);
+	ntrdma_dbg(dev, "CMD: received: op %d cb %p done rc %d\n",
+			op, (void *)cmd->hdr.cb_p, rc);
+	return rc;
 
-	return -EINVAL;
+
+
 }
 
 static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
@@ -1322,7 +1386,7 @@ static void ntrdma_cmd_recv_work_cb(struct work_struct *ws)
 {
 	struct ntrdma_dev *dev = ntrdma_cmd_recv_work_dev(ws);
 
-	if (!dev->cmd_ready) {
+	if (!dev->cmd_recv_ready) {
 		ntrdma_info(dev, "cmd not ready yet to recv");
 		return;
 	}

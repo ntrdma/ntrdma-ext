@@ -155,9 +155,7 @@ void ntrdma_cq_add_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll)
 void ntrdma_cq_del_poll(struct ntrdma_cq *cq, struct ntrdma_poll *poll)
 {
 	mutex_lock(&cq->poll_lock);
-	{
-		list_del(&poll->cq_entry);
-	}
+	list_del(&poll->cq_entry);
 	mutex_unlock(&cq->poll_lock);
 }
 
