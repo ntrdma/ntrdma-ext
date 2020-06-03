@@ -239,6 +239,8 @@ struct ntc_ntb_dev {
 	u32				self_info_done;
 };
 
+static bool cmadevs_set = false;
+
 #define ntc_ntb_down_cast(__ntc) \
 	container_of(__ntc, struct ntc_ntb_dev, ntc)
 
@@ -267,7 +269,6 @@ static u32 supported_versions[] = {
 	NTC_NTB_VERSION_CORONA, /* The last is preferred. */
 };
 
-#ifndef CONFIG_CMADEVS
 static bool ntc_check_reserved(unsigned long start, unsigned long end)
 {
 	bool success;
@@ -313,17 +314,17 @@ static bool ntc_check_reserved(unsigned long start, unsigned long end)
 
 	return success;
 }
-#endif
 //TODO add ntc_own_mw_data_check_cma
 
 static inline void ntc_own_mw_data_check_reserved(struct ntc_own_mw_data *data)
 {
-#ifdef CONFIG_CMADEVS
-	data->reserved = true;
-#else
-	data->reserved = ntc_check_reserved(data->base_addr,
-					data->base_addr + data->len);
-#endif
+	if (cmadevs_set) {
+		data->reserved = true;
+	}
+	else {
+		data->reserved = ntc_check_reserved(data->base_addr,
+						data->base_addr + data->len);
+	}
 }
 
 static inline
@@ -1584,12 +1585,13 @@ static int ntc_ntb_init_own_mw_reserved(struct ntc_ntb_dev *dev, int mw_idx)
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
 	if (data->mm_len) {
-#ifdef	CONFIG_CMADEVS
-		own_mw->base_ptr = phys_to_virt(data->base_addr);
-#else
-		own_mw->base_ptr =
-			memremap(data->base_addr, data->mm_len, MEMREMAP_WB);
-#endif
+		if (cmadevs_set) {
+			own_mw->base_ptr = phys_to_virt(data->base_addr);
+		}
+		else {
+			own_mw->base_ptr =
+				memremap(data->base_addr, data->mm_len, MEMREMAP_WB);
+		}
 		info("OWN MW: base_ptr=%p. virtual address", own_mw->base_ptr);
 		if (!own_mw->base_ptr) {
 			errmsg("OWN MW: cannot memremap. MW @%#lx len=%#lx.",
@@ -1611,13 +1613,13 @@ static int ntc_ntb_init_own_mw_reserved(struct ntc_ntb_dev *dev, int mw_idx)
 static void ntc_ntb_deinit_own_mw_reserved(struct ntc_ntb_dev *dev,
 					int mw_idx)
 {
-#ifndef	CONFIG_CMADEVS
-	struct ntc_dev *ntc = &dev->ntc;
-	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
+	if (!cmadevs_set) {
+		struct ntc_dev *ntc = &dev->ntc;
+		struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
-	if (own_mw->base_ptr)
-		memunmap(own_mw->base_ptr);
-#endif
+		if (own_mw->base_ptr)
+			memunmap(own_mw->base_ptr);
+	}
 }
 
 static void ntc_ntb_deinit_own(struct ntc_ntb_dev *dev, int mw_idx)
@@ -2123,10 +2125,25 @@ int __init ntc_init(void)
 #ifdef	CONFIG_CMADEVS
 	unsigned int cmadevs_area_count = cmadevs_get_area_count();
 
+	info("cmadevs configuration found in kernel");
 	info("input params mw0_base_addr=%lu mw0_len=%lu\n", mw0_base_addr, mw0_len);
-	mw0_base_addr=get_cma_area_base_addr(1);
-	mw0_len=get_cma_area_size(1);
-	info("values from cma: mw0_base_addr=%lu mw0_len=%lu\n", mw0_base_addr, mw0_len);
+	info("input params mw1_base_addr=%lu mw1_len=%lu\n", mw1_base_addr, mw1_len);
+	if (cmadevs_area_count == 0 && (mw1_base_addr == 0 || mw1_len == 0)) {
+		errmsg("no information about DRAM MW from cmadevs and no module params provided! exiting...");
+		return -EINVAL;
+	}
+	if (cmadevs_area_count > 0) {
+		info("using cmadevs mode!");
+		cmadevs_set = true;
+	} else {
+		info("using OOK mode!");
+	}
+
+	if (cmadevs_area_count > 1) {
+		mw0_base_addr=get_cma_area_base_addr(1);
+		mw0_len=get_cma_area_size(1);
+		info("values from cma: mw0_base_addr=%lu mw0_len=%lu\n", mw0_base_addr, mw0_len);
+	}
 #endif
 
 	info("%s %s init", DRIVER_DESCRIPTION, DRIVER_VERSION);
@@ -2159,16 +2176,16 @@ int __init ntc_init(void)
 	own_mw_data[NTC_INFO_MW_IDX].reserved = false;
 
 #ifdef CONFIG_CMADEVS
-	if (cmadevs_area_count == 0) {
-		ntc_deinit();
-		return -EINVAL;
+	if (cmadevs_set) {
+		own_mw_data[NTC_DRAM_MW_IDX].base_addr = get_cma_area_base_addr(0);
+		own_mw_data[NTC_DRAM_MW_IDX].len = get_cma_area_size(0);
 	}
-	own_mw_data[NTC_DRAM_MW_IDX].base_addr = get_cma_area_base_addr(0);
-	own_mw_data[NTC_DRAM_MW_IDX].len = get_cma_area_size(0);
-#else
-	own_mw_data[NTC_DRAM_MW_IDX].base_addr = mw1_base_addr;
-	own_mw_data[NTC_DRAM_MW_IDX].len = mw1_len;
 #endif
+	/* valid whether CONFIG_CMADEVS set or not */
+	if (!cmadevs_set) {
+		own_mw_data[NTC_DRAM_MW_IDX].base_addr = mw1_base_addr;
+		own_mw_data[NTC_DRAM_MW_IDX].len = mw1_len;
+	}
 	own_mw_data[NTC_DRAM_MW_IDX].mm_len = mw1_mm_len;
 	own_mw_data[NTC_DRAM_MW_IDX].mm_prealloc = 0;
 	own_mw_data[NTC_DRAM_MW_IDX].reserved = false;
