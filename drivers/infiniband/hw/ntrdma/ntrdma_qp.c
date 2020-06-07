@@ -70,9 +70,9 @@ static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
 static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 
-static void ntrdma_qp_enable_cb(struct ntrdma_res *res,
+static int ntrdma_qp_enable_cb(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb);
-static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
+static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb);
 
 static void ntrdma_rqp_free(struct ntrdma_rres *rres);
@@ -188,7 +188,7 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 		BUILD_BUG_ON(NTRDMA_QP_VEC_PREALLOCATED <= IB_QPT_SMI);
 		qp->res.key = attr->qp_type;
 	} else {
-		rc = ntrdma_kvec_reserve_key(&dev->qp_vec, dev->node);
+		rc = ntrdma_kvec_reserve_key(&dev->res.qp_vec, dev->node);
 		if (rc < 0) {
 			ntrdma_err(dev, "Fail to reserve resources on dev %p",
 					dev);
@@ -344,7 +344,7 @@ err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
 	ntrdma_cq_put(qp->recv_cq);
 err_res:
-	ntrdma_kvec_dispose_key(&dev->qp_vec, qp->res.key);
+	ntrdma_kvec_dispose_key(&dev->res.qp_vec, qp->res.key);
 	if (qp->send_page) {
 		put_page(qp->send_page);
 		qp->send_page = NULL;
@@ -430,18 +430,15 @@ int ntrdma_modify_qp_remote(struct ntrdma_qp *qp)
 		.qp = qp,
 	};
 
+	int rc;
+
 	init_completion(&qpcb.cb.cmds_done);
 
-	mutex_lock(&dev->res_lock);
+	rc = ntrdma_dev_cmd_add(dev, &qpcb.cb);
 
-	if (!dev->res_enable) {
-		mutex_unlock(&dev->res_lock);
+	if (unlikely(rc < 0)) {
 		return 0;
 	}
-
-	ntrdma_dev_cmd_add(dev, &qpcb.cb);
-
-	mutex_unlock(&dev->res_lock);
 
 	if (ntrdma_dev_cmd_submit(dev) < 0) {
 		ntrdma_cmd_cb_unlink(dev, &qpcb.cb);
@@ -500,7 +497,7 @@ out:
 	return rc;
 }
 
-static void ntrdma_qp_enable_cb(struct ntrdma_res *res,
+static int ntrdma_qp_enable_cb(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
@@ -513,7 +510,7 @@ static void ntrdma_qp_enable_cb(struct ntrdma_res *res,
 	qpcb->cb.rsp_cmpl = ntrdma_qp_enable_cmpl;
 	qpcb->qp = qp;
 
-	ntrdma_dev_cmd_add(dev, &qpcb->cb);
+	return ntrdma_dev_cmd_add(dev, &qpcb->cb);
 }
 
 void ntrdma_qp_enable(struct ntrdma_qp *qp)
@@ -641,7 +638,7 @@ out:
 	return rc;
 }
 
-static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
+static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
@@ -668,7 +665,7 @@ static void ntrdma_qp_disable_cb(struct ntrdma_res *res,
 	qpcb->cb.rsp_cmpl = ntrdma_qp_disable_cmpl;
 	qpcb->qp = qp;
 
-	ntrdma_dev_cmd_add(dev, &qpcb->cb);
+	return ntrdma_dev_cmd_add(dev, &qpcb->cb);
 }
 
 static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
@@ -746,9 +743,7 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 {
 	struct ntrdma_rqp *rqp = ntrdma_rres_rqp(rres);
 
-	ntrdma_rqp_del(rqp);
-	ntrdma_rqp_deinit(rqp);
-	ntrdma_free_rqp(rqp);
+	ntrdma_rqp_put(rqp);
 }
 
 static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
@@ -913,6 +908,7 @@ static void ntrdma_rqp_release(struct kref *kref)
 
 	ntc_remote_buf_unmap(&rqp->peer_send_cqe_buf, dev->ntc);
 
+	ntrdma_debugfs_rqp_del(rqp);
 	ntrdma_rqp_deinit(rqp);
 	ntrdma_free_rqp(rqp);
 }
@@ -2117,7 +2113,7 @@ struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_res *res;
 
-	res = ntrdma_res_look(&dev->qp_vec, key);
+	res = ntrdma_res_look(&dev->res.qp_vec, key);
 	if (!res)
 		return NULL;
 

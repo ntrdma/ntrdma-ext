@@ -419,16 +419,11 @@ static int ntrdma_cmd_send(struct ntrdma_dev *dev,
 
 	init_completion(&qpcb->cb.cmds_done);
 
-	mutex_lock(&dev->res_lock);
-
-	if (!dev->res_enable) {
+	rc = ntrdma_dev_cmd_add(dev, &qpcb->cb);
+	if (unlikely(rc < 0)) {
 		ntrdma_err(dev, "Command not sent, resource not enabled");
-		mutex_unlock(&dev->res_lock);
-		return -1;
+		return rc;
 	}
-
-	ntrdma_dev_cmd_add(dev, &qpcb->cb);
-	mutex_unlock(&dev->res_lock);
 
 	rc = ntrdma_dev_cmd_submit(dev);
 	if (unlikely(rc < 0)) {
@@ -678,11 +673,11 @@ void ntrdma_cm_shutdown(struct ntrdma_dev *dev)
 {
 	struct ntrdma_qp *qp;
 
-	mutex_lock(&dev->res_lock);
-	list_for_each_entry(qp, &dev->qp_list, res.obj.dev_entry) {
+	mutex_lock(&dev->res.res_lock);
+	list_for_each_entry(qp, &dev->res.qp_list, res.obj.dev_entry) {
 		ntrdma_cm_qp_shutdown(qp);
 	}
-	mutex_unlock(&dev->res_lock);
+	mutex_unlock(&dev->res.res_lock);
 }
 
 int ntrdma_cmd_recv_cm(struct ntrdma_dev *dev,

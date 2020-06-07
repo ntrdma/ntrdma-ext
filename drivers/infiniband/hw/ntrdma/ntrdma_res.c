@@ -42,21 +42,18 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 	int rc;
 
 	/* rdma resource synchronization state */
-
-	dev->res_enable = 0;
-
-	mutex_init(&dev->res_lock);
+	mutex_init(&dev->res.res_lock);
 	mutex_init(&dev->rres_lock);
 
 	/* rdma local resources */
 
 	dev->pd_next_key = 0;
-	INIT_LIST_HEAD(&dev->pd_list);
-	INIT_LIST_HEAD(&dev->cq_list);
-	INIT_LIST_HEAD(&dev->mr_list);
-	INIT_LIST_HEAD(&dev->qp_list);
+	INIT_LIST_HEAD(&dev->res.pd_list);
+	INIT_LIST_HEAD(&dev->res.cq_list);
+	INIT_LIST_HEAD(&dev->res.mr_list);
+	INIT_LIST_HEAD(&dev->res.qp_list);
 
-	rc = ntrdma_kvec_init(&dev->mr_vec,
+	rc = ntrdma_kvec_init(&dev->res.mr_vec,
 			NTRDMA_RES_VEC_INIT_CAP, NTRDMA_MR_VEC_PREALLOCATED,
 			dev->node);
 
@@ -65,7 +62,7 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 		goto err_mr;
 	}
 
-	rc = ntrdma_kvec_init(&dev->qp_vec,
+	rc = ntrdma_kvec_init(&dev->res.qp_vec,
 			NTRDMA_RES_VEC_INIT_CAP, NTRDMA_QP_VEC_PREALLOCATED,
 			dev->node);
 
@@ -102,9 +99,9 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 err_rqp:
 	ntrdma_vec_deinit(&dev->rmr_vec);
 err_rmr:
-	ntrdma_kvec_deinit(&dev->qp_vec);
+	ntrdma_kvec_deinit(&dev->res.qp_vec);
 err_qp:
-	ntrdma_kvec_deinit(&dev->mr_vec);
+	ntrdma_kvec_deinit(&dev->res.mr_vec);
 err_mr:
 	return rc;
 }
@@ -113,8 +110,8 @@ void ntrdma_dev_res_deinit(struct ntrdma_dev *dev)
 {
 	ntrdma_vec_deinit(&dev->rqp_vec);
 	ntrdma_vec_deinit(&dev->rmr_vec);
-	ntrdma_kvec_deinit(&dev->qp_vec);
-	ntrdma_kvec_deinit(&dev->mr_vec);
+	ntrdma_kvec_deinit(&dev->res.qp_vec);
+	ntrdma_kvec_deinit(&dev->res.mr_vec);
 }
 
 inline int ntrdma_dev_cmd_submit(struct ntrdma_dev *dev)
@@ -184,15 +181,13 @@ int ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 
 	TRACE("resources enabled\n");
 
-	mutex_lock(&dev->res_lock);
+	mutex_lock(&dev->res.res_lock);
 
-	dev->res_enable = 0;
-
-	list_for_each_entry(mr, &dev->mr_list, res.obj.dev_entry) {
+	list_for_each_entry(mr, &dev->res.mr_list, res.obj.dev_entry) {
 		timeout = max_t(typeof(timeout), timeout, mr->res.timeout);
 		ntrdma_mr_enable(mr);
 	}
-	list_for_each_entry(qp, &dev->qp_list, res.obj.dev_entry) {
+	list_for_each_entry(qp, &dev->res.qp_list, res.obj.dev_entry) {
 		timeout = max_t(typeof(timeout), timeout, qp->res.timeout);
 		ntrdma_qp_enable(qp);
 	}
@@ -203,28 +198,24 @@ int ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 	}
 	need_unlink = false;
 
-	list_for_each_entry(mr, &dev->mr_list, res.obj.dev_entry) {
+	list_for_each_entry(mr, &dev->res.mr_list, res.obj.dev_entry) {
 		r = ntrdma_cmd_cb_wait_out(dev, &mr->enable_mrcb.cb, &timeout);
 		rc = rc ? : r;
 	}
-	list_for_each_entry(qp, &dev->qp_list, res.obj.dev_entry) {
+	list_for_each_entry(qp, &dev->res.qp_list, res.obj.dev_entry) {
 		r = ntrdma_cmd_cb_wait_out(dev, &qp->enable_qpcb.cb, &timeout);
 		rc = rc ? : r;
 	}
 
-	if (likely(!rc))
-		dev->res_enable = 1;
-	else
-		ntrdma_err(dev, "ntrdma cmd timeout in %s", __func__);
-
  unlock:
-	mutex_unlock(&dev->res_lock);
+	mutex_unlock(&dev->res.res_lock);
 
 	if (need_unlink) {
-		list_for_each_entry(mr, &dev->mr_list, res.obj.dev_entry)
+		/*FIXME shouldn't we proteect mr/qp lists with res lock ?*/
+		list_for_each_entry(mr, &dev->res.mr_list, res.obj.dev_entry)
 			ntrdma_cmd_cb_unlink(dev, &mr->enable_mrcb.cb);
 
-		list_for_each_entry(qp, &dev->qp_list, res.obj.dev_entry)
+		list_for_each_entry(qp, &dev->res.qp_list, res.obj.dev_entry)
 			ntrdma_cmd_cb_unlink(dev, &mr->enable_mrcb.cb);
 	}
 
@@ -237,13 +228,12 @@ void ntrdma_dev_res_disable(struct ntrdma_dev *dev)
 
 	ntrdma_vdbg(dev, "res disable starting ...");
 
-	mutex_lock(&dev->res_lock);
-	dev->res_enable = 0;
+	mutex_lock(&dev->res.res_lock);
 
-	list_for_each_entry_reverse(qp, &dev->qp_list, res.obj.dev_entry) {
+	list_for_each_entry_reverse(qp, &dev->res.qp_list, res.obj.dev_entry) {
 		ntrdma_qp_reset(qp);
 	}
-	mutex_unlock(&dev->res_lock);
+	mutex_unlock(&dev->res.res_lock);
 
 	ntrdma_vdbg(dev, "res disable done");
 }
@@ -304,9 +294,9 @@ struct ntrdma_rres *ntrdma_rres_look(struct ntrdma_vec *vec, u32 key)
 
 void ntrdma_res_init(struct ntrdma_res *res,
 		struct ntrdma_dev *dev,
-		void (*enable)(struct ntrdma_res *res,
+		int (*enable)(struct ntrdma_res *res,
 			struct ntrdma_cmd_cb *cb),
-		void (*disable)(struct ntrdma_res *res,
+		int (*disable)(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb))
 {
 	ntrdma_obj_init(&res->obj, dev);
@@ -323,55 +313,39 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 		struct list_head *res_list, struct ntrdma_kvec *res_vec)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
-	bool need_unlink;
 	int rc = 0;
 
-	ntrdma_vdbg(dev, "resource obtained\n");
-
-
-	mutex_lock(&dev->res_lock);
+	mutex_lock(&dev->res.res_lock);
 	ntrdma_res_lock(res);
 
 	ntrdma_kvec_set_key(res_vec, res->key, res);
 
 	list_add_tail(&res->obj.dev_entry, res_list);
 
-	ntrdma_vdbg(dev, "resource added\n");
-
-	if (dev->res_enable) {
-		ntrdma_vdbg(dev, "resource commands initiated\n");
-		res->enable(res, cb);
-		need_unlink = true;
-	} else {
-		ntrdma_vdbg(dev, "no commands\n");
-		need_unlink = false;
-	}
+	rc = res->enable(res, cb);
 
 	ntrdma_res_unlock(res);
-	mutex_unlock(&dev->res_lock);
+	mutex_unlock(&dev->res.res_lock);
 
-	if (need_unlink) {
-		if (ntrdma_dev_cmd_submit(dev) >= 0) {
-			ntrdma_vdbg(dev, "wait for commands id %d cb %p\n", cb->cmd_id, cb);
-			rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
-			if (rc) {
-				list_del(&res->obj.dev_entry);
-				ntrdma_kvec_set_key(res_vec, res->key, NULL);
-				ntrdma_err(dev, "res %d, timeout %u [msec] cb %p\n",
-						res->key, jiffies_to_msecs(res->timeout), cb);
-			}
-			ntrdma_vdbg(dev, "done waiting\n");
-		} else {
-			ntrdma_vdbg(dev, "won't submit commands\n");
-			ntrdma_cmd_cb_unlink(dev, cb);
-		}
-	} else
+	if (rc) {
 		complete_all(&cb->cmds_done);
+		return 0;
+	}
 
+	rc = ntrdma_dev_cmd_submit(dev);
+	if (unlikely(rc)) {
+		ntrdma_cmd_cb_unlink(dev, cb);
+		return 0;
+	}
 
-
-	if (rc)
+	rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+	if (unlikely(rc)) {
+		list_del(&res->obj.dev_entry);
+		ntrdma_kvec_set_key(res_vec, res->key, NULL);
+		ntrdma_err(dev, "res %d, timeout %u [msec] cb %p\n",
+				res->key, jiffies_to_msecs(res->timeout), cb);
 		ntrdma_unrecoverable_err(dev);
+	}
 
 	return rc;
 }
@@ -380,43 +354,29 @@ void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 		struct ntrdma_kvec *res_vec)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
-	bool need_unlink;
 	int rc = 0;
 
-	mutex_lock(&dev->res_lock);
+	mutex_lock(&dev->res.res_lock);
 	ntrdma_res_lock(res);
+	rc = res->disable(res, cb);
+	list_del(&res->obj.dev_entry);
+	ntrdma_kvec_set_key(res_vec, res->key, NULL);
+	ntrdma_res_unlock(res);
+	mutex_unlock(&dev->res.res_lock);
 
-	if (dev->res_enable) {
-		ntrdma_vdbg(dev, "resource commands initiated\n");
-		res->disable(res, cb);
-		need_unlink = true;
-	} else {
-		ntrdma_vdbg(dev, "no commands\n");
-		need_unlink = false;
+	if (unlikely(rc)) {
+		complete_all(&cb->cmds_done);
+		return;
 	}
 
-	list_del(&res->obj.dev_entry);
+	rc = ntrdma_dev_cmd_submit(dev);
+	if (unlikely(rc)) {
+		ntrdma_cmd_cb_unlink(dev, cb);
+		return;
+	}
 
-	ntrdma_kvec_set_key(res_vec, res->key, NULL);
-
-	ntrdma_res_unlock(res);
-	mutex_unlock(&dev->res_lock);
-
-	if (need_unlink) {
-		if (ntrdma_dev_cmd_submit(dev) >= 0) {
-			ntrdma_vdbg(dev, "wait for commands\n");
-			rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
-			ntrdma_vdbg(dev, "done waiting\n");
-		} else {
-			ntrdma_vdbg(dev, "won't submit commands\n");
-			ntrdma_cmd_cb_unlink(dev, cb);
-		}
-	} else
-		complete_all(&cb->cmds_done);
-
-
-
-	if (rc) {
+	rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+	if (unlikely(rc)) {
 		ntrdma_dbg(dev, "wait cmd failed after %ld\n", res->timeout);
 		ntrdma_unrecoverable_err(dev);
 	}

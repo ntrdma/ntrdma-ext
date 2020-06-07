@@ -64,8 +64,8 @@ void ntrdma_cq_arm_resync(struct ntrdma_dev *dev)
 {
 	struct ntrdma_cq *cq;
 
-	mutex_lock(&dev->res_lock);
-	list_for_each_entry(cq, &dev->cq_list, obj.dev_entry) {
+	mutex_lock(&dev->res.res_lock);
+	list_for_each_entry(cq, &dev->res.cq_list, obj.dev_entry) {
 		spin_lock_bh(&cq->arm_lock);
 		if (cq->arm) {
 			ntrdma_vbell_add_clear(&cq->vbell);
@@ -75,7 +75,7 @@ void ntrdma_cq_arm_resync(struct ntrdma_dev *dev)
 		}
 		spin_unlock_bh(&cq->arm_lock);
 	}
-	mutex_unlock(&dev->res_lock);
+	mutex_unlock(&dev->res.res_lock);
 }
 
 void ntrdma_cq_vbell_kill(struct ntrdma_cq *cq)
