@@ -1112,7 +1112,7 @@ err_rqp:
 	return rc;
 }
 
-int ntrmda_rqp_modify(struct ntrdma_dev *dev,
+int _ntrmda_rqp_modify_local(struct ntrdma_dev *dev,
 		u32 src_qp_key, u32 access,
 		u32 new_state, u32 dest_qp_key, const char *caller)
 {
@@ -1206,10 +1206,9 @@ int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 		return -EINVAL;
 	}
 
-	rc = ntrmda_rqp_modify(dev,
+	rc = ntrmda_rqp_modify_local(dev,
 			_cmd->src_qp_key, _cmd->access,
-			_cmd->state, _cmd->dest_qp_key,
-			__func__);
+			_cmd->state, _cmd->dest_qp_key);
 
 	rsp->hdr.status = rc;
 

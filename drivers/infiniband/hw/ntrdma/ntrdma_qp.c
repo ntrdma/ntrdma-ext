@@ -419,7 +419,7 @@ inline struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,
 	return (void *)(qp->recv_cqe_buf + pos * sizeof(struct ntrdma_cqe));
 }
 
-int ntrdma_qp_modify(struct ntrdma_qp *qp)
+int ntrdma_modify_qp_remote(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_qp_cmd_cb qpcb = {
