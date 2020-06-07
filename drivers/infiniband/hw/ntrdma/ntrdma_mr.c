@@ -48,9 +48,9 @@ static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 
-static void ntrdma_mr_enable_cb(struct ntrdma_res *res,
+static int ntrdma_mr_enable_cb(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb);
-static void ntrdma_mr_disable_cb(struct ntrdma_res *res,
+static int ntrdma_mr_disable_cb(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb);
 
 static void ntrdma_rmr_free(struct ntrdma_rres *rres);
@@ -75,7 +75,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 	ntrdma_res_init(&mr->res, dev,
 			ntrdma_mr_enable_cb, ntrdma_mr_disable_cb);
 
-	rc = ntrdma_kvec_reserve_key(&dev->mr_vec, dev->node);
+	rc = ntrdma_kvec_reserve_key(&dev->res.mr_vec, dev->node);
 	if (rc < 0) {
 		ntrdma_err(dev, "mr %p failed to reserve key rc = %d", mr, rc);
 		goto err;
@@ -92,11 +92,11 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 
 void ntrdma_mr_deinit(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 {
-	ntrdma_kvec_dispose_key(&dev->mr_vec, mr->res.key);
+	ntrdma_kvec_dispose_key(&dev->res.mr_vec, mr->res.key);
 	ntc_mr_buf_clear_sgl(mr->sg_list, mr->sg_count);
 }
 
-static void ntrdma_mr_enable_cb(struct ntrdma_res *res,
+static int ntrdma_mr_enable_cb(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
@@ -116,7 +116,7 @@ static void ntrdma_mr_enable_cb(struct ntrdma_res *res,
 	mrcb->sg_pos = 0;
 	mrcb->sg_count = count;
 
-	ntrdma_dev_cmd_add(dev, &mrcb->cb);
+	return ntrdma_dev_cmd_add(dev, &mrcb->cb);
 }
 
 void ntrdma_mr_enable(struct ntrdma_mr *mr)
@@ -204,7 +204,7 @@ static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 	return rc;
 }
 
-static void ntrdma_mr_disable_cb(struct ntrdma_res *res,
+static int ntrdma_mr_disable_cb(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb)
 {
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
@@ -219,7 +219,7 @@ static void ntrdma_mr_disable_cb(struct ntrdma_res *res,
 	mrcb->sg_pos = 0;
 	mrcb->sg_count = 0;
 
-	ntrdma_dev_cmd_add(dev, &mrcb->cb);
+	return ntrdma_dev_cmd_add(dev, &mrcb->cb);
 }
 
 static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
@@ -312,7 +312,7 @@ struct ntrdma_mr *ntrdma_dev_mr_look(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_res *res;
 
-	res = ntrdma_res_look(&dev->mr_vec, key);
+	res = ntrdma_res_look(&dev->res.mr_vec, key);
 	if (!res)
 		return NULL;
 

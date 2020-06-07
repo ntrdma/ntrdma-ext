@@ -466,11 +466,18 @@ void ntrdma_dev_cmd_add_unsafe(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
 	list_add_tail(&cb->dev_entry, &dev->cmd_pend_list);
 }
 
-void ntrdma_dev_cmd_add(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
+int ntrdma_dev_cmd_add(struct ntrdma_dev *dev, struct ntrdma_cmd_cb *cb)
 {
+	int rc = -1;
+
 	mutex_lock(&dev->cmd_send_lock);
-	ntrdma_dev_cmd_add_unsafe(dev, cb);
+	if (dev->cmd_send_ready) {
+		ntrdma_dev_cmd_add_unsafe(dev, cb);
+		rc = 0;
+	}
 	mutex_unlock(&dev->cmd_send_lock);
+
+	return rc;
 }
 
 static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)

@@ -505,9 +505,9 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	 */
 	ntrdma_cq_vbell_init(cq, vbell_idx);
 
-	mutex_lock(&dev->res_lock);
-	list_add_tail(&cq->obj.dev_entry, &dev->cq_list);
-	mutex_unlock(&dev->res_lock);
+	mutex_lock(&dev->res.res_lock);
+	list_add_tail(&cq->obj.dev_entry, &dev->res.cq_list);
+	mutex_unlock(&dev->res.res_lock);
 
 	ntrdma_debugfs_cq_add(cq);
 
@@ -561,9 +561,9 @@ static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 	 * Remove from list before killing vbell,
 	 * so that killed vbell does not go off from ntrdma_cq_arm_resync().
 	 */
-	mutex_lock(&dev->res_lock);
+	mutex_lock(&dev->res.res_lock);
 	list_del(&cq->obj.dev_entry);
-	mutex_unlock(&dev->res_lock);
+	mutex_unlock(&dev->res.res_lock);
 
 	ntrdma_cq_vbell_kill(cq);
 
@@ -948,9 +948,9 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 
 	ntrdma_vdbg(dev, "initialized pd %p\n", pd);
 
-	mutex_lock(&dev->res_lock);
-	list_add_tail(&pd->obj.dev_entry, &dev->pd_list);
-	mutex_unlock(&dev->res_lock);
+	mutex_lock(&dev->res.res_lock);
+	list_add_tail(&pd->obj.dev_entry, &dev->res.pd_list);
+	mutex_unlock(&dev->res.res_lock);
 
 	ntrdma_vdbg(dev, "added pd key=%d", pd->key);
 
@@ -982,9 +982,9 @@ static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
-	mutex_lock(&dev->res_lock);
+	mutex_lock(&dev->res.res_lock);
 	list_del(&pd->obj.dev_entry);
-	mutex_unlock(&dev->res_lock);
+	mutex_unlock(&dev->res.res_lock);
 
 	ntrdma_pd_put(pd);
 
@@ -1077,7 +1077,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	memset(&qpcb, 0, sizeof(qpcb));
 	init_completion(&qpcb.cb.cmds_done);
-	rc = ntrdma_res_add(&qp->res, &qpcb.cb, &dev->qp_list, &dev->qp_vec);
+	rc = ntrdma_res_add(&qp->res, &qpcb.cb, &dev->res.qp_list, &dev->res.qp_vec);
 	if (rc) {
 		ntrdma_err(dev, "ntrdma_qp_add failed %d\n", rc);
 		goto err_add;
@@ -1530,7 +1530,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	memset(&qpcb, 0, sizeof(qpcb));
 
 	init_completion(&qpcb.cb.cmds_done);
-	ntrdma_res_del(&qp->res, &qpcb.cb, &dev->qp_vec);
+	ntrdma_res_del(&qp->res, &qpcb.cb, &dev->res.qp_vec);
 
 	ntc_dma_flush(qp->dma_chan);
 
@@ -2038,8 +2038,6 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 			break;
 	}
 
-	/* release lock for state change or posting later recvs */
-	if (dev->res_enable) /* WHY?? */
 		ntrdma_qp_recv_work(qp);
 
 out:
@@ -2160,7 +2158,7 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 
 	memset(&mrcb, 0, sizeof(mrcb));
 	init_completion(&mrcb.cb.cmds_done);
-	rc = ntrdma_res_add(&mr->res, &mrcb.cb, &dev->mr_list, &dev->mr_vec);
+	rc = ntrdma_res_add(&mr->res, &mrcb.cb, &dev->res.mr_list, &dev->res.mr_vec);
 	if (rc < 0) {
 		ntrdma_mr_put(mr);
 		ntrdma_err(dev, "reg_user_mr failed on ntrdma_res_add rc= %d key %d",
@@ -2249,7 +2247,7 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 
 	memset(&mrcb, 0, sizeof(mrcb));
 	init_completion(&mrcb.cb.cmds_done);
-	ntrdma_res_del(&mr->res, &mrcb.cb, &dev->mr_vec);
+	ntrdma_res_del(&mr->res, &mrcb.cb, &dev->res.mr_vec);
 
 	init_completion(&done);
 	mr->done = &done;

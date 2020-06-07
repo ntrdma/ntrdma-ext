@@ -471,8 +471,6 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "cmd_recv_vbell_seq %u\n", dev->cmd_recv_vbell.seq);
 	seq_printf(s, "cmd_recv_vbell_arm %d\n", dev->cmd_recv_vbell.arm);
 
-	seq_printf(s, "res_enable %d\n", dev->res_enable);
-
 	seq_printf(s, "eth_enable %d\n", eth->enable);
 	seq_printf(s, "eth_ready %d\n", eth->ready);
 	seq_printf(s, "eth_link %d\n", eth->link);
