@@ -50,13 +50,6 @@ struct ntrdma_iw_cm_cmd {
 
 void ntrdma_qp_recv_work(struct ntrdma_qp *qp);
 
-
-int ntrmda_rqp_modify(struct ntrdma_dev *dev,
-		u32 src_qp_key, u32 access,
-		u32 new_state, u32 dest_qp_key,
-		const char *caller);
-
-
 static inline void ntrdma_copy_ip_ntohl(u32 *dst, unsigned char *src)
 {
 	*dst++ = ntohl(*src++);
@@ -613,19 +606,18 @@ static int ntrdma_cm_handle_rep(struct ntrdma_dev *dev,
 
 	ibqp = ntrdma_get_qp(&dev->ibdev, qpn);
 
-	rc = ntrmda_rqp_modify(dev,
+	rc = ntrmda_rqp_modify_local(dev,
 			my_cmd->qpn, 0,
 			IB_QPS_RTS,
-			ntrdma_qp->res.key,
-			__func__);
+			ntrdma_qp->res.key);
 
 	if (rc) {
 		ntrdma_err(dev, "ntrdma_cmd_recv_qp_modify_internal failed. QPN: %d\n",
 				my_cmd->qpn);
 	}
 /*FIXME should we handle it*/
-	rc = ntrdma_modify_qp_internal(ibqp, &attr,
-			IB_QP_STATE|IB_QP_DEST_QPN, NULL, false, __func__);
+	rc = ntrdma_modify_qp_local(ibqp, &attr,
+			IB_QP_STATE|IB_QP_DEST_QPN);
 	if (rc) {
 		ntrdma_err(dev, "ntrdma_modify_qp_internal failed. QPN: %d\n",
 				attr.dest_qp_num);
@@ -901,8 +893,8 @@ static int ntrdma_accept(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_p
 			conn_param->private_data_len,
 			conn_param->private_data);
 
-	if (ntrdma_modify_qp_internal(ib_qp, &attr,
-			IB_QP_STATE|IB_QP_DEST_QPN, NULL, false, __func__)) {
+	if (ntrdma_modify_qp_local(ib_qp, &attr,
+			IB_QP_STATE|IB_QP_DEST_QPN)) {
 		ntrdma_err(dev,
 				"NTRDMA CM ERR accepting QP %d encountred error on modify qp state most likely link is down\n",
 				conn_param->qpn);
@@ -926,11 +918,10 @@ static int ntrdma_accept(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_p
 	}
 
 	/* Modify rqp */
-	rc = ntrmda_rqp_modify(dev,
+	rc = ntrmda_rqp_modify_local(dev,
 			dest_qp_num, 0,
 			IB_QPS_RTS,
-			ntrdma_qp->res.key,
-			__func__);
+			ntrdma_qp->res.key);
 
 	if (rc) {
 		ntrdma_err(dev,
