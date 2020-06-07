@@ -49,14 +49,13 @@ void ntrdma_cm_deinit(struct iw_cm_verbs *iwcm);
 
 void ntrdma_cm_shutdown(struct ntrdma_dev *dev);
 void ntrdma_cm_kill(struct ntrdma_qp *qp);
-int ntrdma_modify_qp_internal(struct ib_qp *ibqp,
+int _ntrdma_modify_qp_local(struct ib_qp *ibqp,
 		struct ib_qp_attr *ibqp_attr,
 		int ibqp_mask,
-		struct ib_udata *ibudata,
-		bool is_modify_remote,
 		const char *func);
 
-
+#define ntrdma_modify_qp_local(_ibqp, _ibqp_attr, _ibqp_mask) \
+		_ntrdma_modify_qp_local(_ibqp, _ibqp_attr, _ibqp_mask, __func__)
 
 
 

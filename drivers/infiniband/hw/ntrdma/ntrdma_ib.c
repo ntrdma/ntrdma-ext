@@ -1255,8 +1255,7 @@ static int ntrdma_query_qp(struct ib_qp *ibqp,
 
 static void ntrdma_modify_qp_debug(struct ib_qp *ibqp,
 		struct ib_qp_attr *ibqp_attr,
-		int ibqp_mask,
-		struct ib_udata *ibudata)
+		int ibqp_mask)
 {
 	struct ntrdma_dev *dev;
 	struct ntrdma_qp *qp;
@@ -1402,18 +1401,17 @@ int modify_qp_state(struct ntrdma_qp *qp, int cur_state, int new_state)
 	return 0;
 }
 
-int ntrdma_modify_qp_internal(struct ib_qp *ibqp,
+int _ntrdma_modify_qp_local(struct ib_qp *ibqp,
 		struct ib_qp_attr *ibqp_attr,
 		int ibqp_mask,
-		struct ib_udata *ibudata,
-		bool is_modify_remote, const char *caller)
+		const char *caller)
 {
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	int cur_state, new_state;
 	int rc = 0;
 
-	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask, ibudata);
+	ntrdma_modify_qp_debug(ibqp, ibqp_attr, ibqp_mask);
 
 	ntrdma_res_lock(&qp->res);
 
@@ -1471,17 +1469,6 @@ int ntrdma_modify_qp_internal(struct ib_qp *ibqp,
 				qp->res.key, qp->rqp_key);
 	}
 
-	if (is_modify_remote) {
-		ntrdma_res_unlock(&qp->res);
-		rc = ntrdma_qp_modify(qp);
-		ntrdma_res_lock(&qp->res);
-	} else
-		rc = 0;
-
-	if (unlikely(rc))
-		ntrdma_err(dev, "QP %d: ntrdma_qp_modify: failed rc = %d",
-				qp->res.key, rc);
-
 unlock_exit:
 	if (rc) {
 		ntrdma_info(dev, "QP %d failed to change state %d %s (%d) -> %d %s(ibqp_mask 0x%x) state now is:%d\n",
@@ -1503,16 +1490,17 @@ int ntrdma_modify_qp(struct ib_qp *ibqp,
 		struct ib_udata *ibudata)
 {
 	int rc;
+	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
-	rc = ntrdma_modify_qp_internal(ibqp,
+	rc = ntrdma_modify_qp_local(ibqp,
 		ibqp_attr,
-		ibqp_mask,
-		ibudata,
-		true,
-		__func__);
+		ibqp_mask);
+
+	if (likely(!rc))
+		rc = ntrdma_modify_qp_remote(qp);
 
 	NTRDMA_IB_PERF_END;
 

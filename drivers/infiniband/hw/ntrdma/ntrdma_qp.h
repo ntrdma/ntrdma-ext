@@ -214,7 +214,7 @@ int ntrdma_qp_init(struct ntrdma_qp *qp, struct ntrdma_dev *dev,
 
 void ntrdma_qp_deinit(struct ntrdma_qp *qp, struct ntrdma_dev *dev);
 
-int ntrdma_qp_modify(struct ntrdma_qp *qp);
+int ntrdma_modify_qp_remote(struct ntrdma_qp *qp);
 
 static inline void ntrdma_qp_get(struct ntrdma_qp *qp)
 {

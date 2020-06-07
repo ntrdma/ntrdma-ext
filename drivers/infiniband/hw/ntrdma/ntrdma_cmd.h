@@ -227,5 +227,12 @@ inline int ntrdma_dev_cmd_submit(struct ntrdma_dev *dev);
 inline bool ntrdma_cmd_cb_unlink(struct ntrdma_dev *dev,
 				struct ntrdma_cmd_cb *cb);
 
+int _ntrmda_rqp_modify_local(struct ntrdma_dev *dev,
+		u32 src_qp_key, u32 access,
+		u32 new_state, u32 dest_qp_key,
+		const char *caller);
+
+#define ntrmda_rqp_modify_local(_dev, _src_qp_key, _access, _new_state, _dest_qp_key) \
+		_ntrmda_rqp_modify_local(_dev, _src_qp_key, _access, _new_state, _dest_qp_key, __func__)
 
 #endif
