@@ -62,10 +62,10 @@ struct ntrdma_res {
 	struct ntrdma_obj		obj;
 
 	/* Initiate commands to create the remote resource */
-	void (*enable)(struct ntrdma_res *res,
+	int (*enable)(struct ntrdma_res *res,
 		struct ntrdma_cmd_cb *cb);
 	/* Initiate commands to delete the remote resource */
-	void (*disable)(struct ntrdma_res *res,
+	int (*disable)(struct ntrdma_res *res,
 			struct ntrdma_cmd_cb *cb);
 
 	/* The key identifies this resource */
@@ -80,9 +80,9 @@ struct ntrdma_res {
 
 void ntrdma_res_init(struct ntrdma_res *res,
 		struct ntrdma_dev *dev,
-		void (*enable)(struct ntrdma_res *res,
+		int (*enable)(struct ntrdma_res *res,
 			struct ntrdma_cmd_cb *cb),
-		void (*disable)(struct ntrdma_res *res,
+		int (*disable)(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb));
 
 int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,

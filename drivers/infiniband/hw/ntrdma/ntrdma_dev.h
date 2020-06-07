@@ -85,18 +85,15 @@ struct ntrdma_dev_counters {
 	u64 poll_cq_count_ioctl;
 };
 
-
-
-/*FIXME*/
+/* NTRDMA device local resources */
 struct ntrdma_dev_res {
-	int						res_enable; /* Protected by res_lock. */
 	struct mutex			res_lock;
-	/* rdma local resources */
-
-	struct list_head		mr_list; /* Protected by res_lock. */
-	struct list_head		qp_list; /* Protected by res_lock. */
+	struct list_head		mr_list;
+	struct list_head		qp_list;
 	struct ntrdma_kvec		mr_vec;
 	struct ntrdma_kvec		qp_vec;
+	struct list_head		cq_list;
+	struct list_head		pd_list;
 };
 
 /* RDMA over PCIe NTB device */
@@ -187,25 +184,9 @@ struct ntrdma_dev {
 	int hello_peer_buf_size;
 
 	/* rdma resource synchronization state */
-
-	int				res_enable; /* Protected by res_lock. */
-	struct mutex			res_lock;
+	struct ntrdma_dev_res res;
 	struct mutex			rres_lock; /* Protects rres_list. */
-
-	/* local-only resources */
-
-	struct list_head		cq_list; /* Protected by res_lock. */
-	struct list_head		pd_list; /* Protected by res_lock. */
 	u32				pd_next_key;
-
-	/* rdma local resources */
-
-	struct ntrdma_dev_res dev_res;
-
-	struct list_head		mr_list; /* Protected by res_lock. */
-	struct list_head		qp_list; /* Protected by res_lock. */
-	struct ntrdma_kvec		mr_vec;
-	struct ntrdma_kvec		qp_vec;
 
 	/* rdma remote resources */
 
