@@ -641,12 +641,6 @@ static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code, bool set_grh)
 	return 0;
 }
 
-static inline void ntrdma_qp_set_grh_hdr(struct ntrdma_qp *qp,
-		u32 pos, struct ib_grh *grh)
-{
-	memcpy(ntrdma_qp_grh(qp, pos), grh, sizeof(*grh));
-}
-
 static void ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 				struct ntrdma_qp *qp,
 				const struct ntrdma_cqe *cqe)
@@ -1781,53 +1775,6 @@ static inline struct ntrdma_ah *ntrdma_ah(struct ib_ah *ibah)
 }
 
 
-static inline int ntrdma_init_grh(struct ntrdma_qp *qp,
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-			struct ib_send_wr *ibwr,
-#else
-			const struct ib_send_wr *ibwr,
-#endif
-			struct ib_grh *grh)
-{
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-	struct ib_gid_attr sgid_attr;
-#endif
-	union ib_gid sgid;
-	int rc = 0;
-	struct rdma_ah_attr *ah_attr = &ntrdma_ah(ud_wr(ibwr)->ah)->attr;
-	const struct ib_global_route *global_route = rdma_ah_read_grh(ah_attr);
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-	rc = ib_query_gid(qp->ibqp.device, rdma_ah_get_port_num(ah_attr),
-			global_route->sgid_index, &sgid, &sgid_attr);
-#else
-	rc = rdma_query_gid(qp->ibqp.device, rdma_ah_get_port_num(ah_attr),
-			global_route->sgid_index, &sgid);
-#endif
-	if (rc) {
-		ntrdma_qp_err(qp, "ntrdma_post_send: qp %d failed to query GID (port=%d, ix=%d), rc=%d\n",
-				qp->res.key, rdma_ah_get_port_num(ah_attr),
-				global_route->sgid_index, rc);
-		goto out;
-	}
-
-	grh->sgid = sgid;
-	grh->dgid = global_route->dgid;
-
-	grh->version_tclass_flow =
-			cpu_to_be32(IB_GRH_VERSION << IB_GRH_VERSION_SHIFT);
-	grh->next_hdr = IB_GRH_NEXT_HDR;
-	grh->hop_limit = 0xff;
-	grh->paylen = 0; // will get real value before send
-
-out:
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-	dev_put(sgid_attr.ndev);
-#endif
-	TRACE("ntrdma_init_grh: QP %d rc %d\n",qp->res.key, rc);
-	return rc;
-}
-
 static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 					struct ib_send_wr *ibwr,
@@ -1842,7 +1789,6 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 	struct ntrdma_send_wqe *wqe;
 	u32 pos, end, base;
 	struct ib_sge *sg_list;
-	struct ib_grh grh_hdr;
 	int rc = 0;
 
 	while (ibwr) {
@@ -1852,14 +1798,6 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 			break;
 		}
 
-		if (qp->ibqp.qp_type == IB_QPT_GSI) {
-			rc = ntrdma_init_grh(qp, ibwr, &grh_hdr);
-			if (rc > 0) {
-				ntrdma_qp_err(qp, "qp %d failed to init grh",
-						qp->res.key);
-				return rc;
-			}
-		}
 		wqe = NULL;
 		for (;;) {
 			/* current entry in the ring */
@@ -1886,8 +1824,6 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 			rc = ntrdma_ib_send_to_wqe(qp, wqe, ibwr);
 			if (rc < 0)
 				break;
-			if (qp->ibqp.qp_type == IB_QPT_GSI)
-				ntrdma_qp_set_grh_hdr(qp, pos, &grh_hdr);
 
 			rc = ntrdma_post_send_wqe(qp, wqe, sg_list);
 			if (rc < 0)
