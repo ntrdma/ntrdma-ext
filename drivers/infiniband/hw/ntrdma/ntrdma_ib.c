@@ -647,20 +647,6 @@ static inline void ntrdma_qp_set_grh_hdr(struct ntrdma_qp *qp,
 	memcpy(ntrdma_qp_grh(qp, pos), grh, sizeof(*grh));
 }
 
-static inline void ntrdma_qp_start_measure(struct ntrdma_qp *qp,
-		struct ntrdma_send_wqe *wqe, u32 pos)
-{
-	if (!ntrdma_wr_code_push_data(wqe->op_code) ||
-						(wqe->flags & IB_SEND_SIGNALED))
-		ntrdma_qp_set_stats(qp, pos);
-}
-
-
-static inline cycles_t ntrdma_qp_stop_measure(struct ntrdma_qp *qp, u32 pos)
-{
-	return ntrdma_qp_get_diff_cycles(qp, pos);
-}
-
 static void ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 				struct ntrdma_qp *qp,
 				const struct ntrdma_cqe *cqe)
@@ -731,8 +717,6 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 						cqe.flags);
 
 				/* SHIFT 10 >> for saving bits, postponing wrap-around... */
-				this_cpu_add(dev_cnt.accum_latency,
-				(u64)ntrdma_qp_stop_measure(qp, pos) >> SHIFT_SAVE_BITS);
 				if (qp->qp_type != IB_QPT_GSI) {
 					if (cqe.flags & IB_SEND_SIGNALED)
 						++count_s;
@@ -1904,8 +1888,6 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 				break;
 			if (qp->ibqp.qp_type == IB_QPT_GSI)
 				ntrdma_qp_set_grh_hdr(qp, pos, &grh_hdr);
-
-			ntrdma_qp_start_measure(qp, wqe, pos);
 
 			rc = ntrdma_post_send_wqe(qp, wqe, sg_list);
 			if (rc < 0)
