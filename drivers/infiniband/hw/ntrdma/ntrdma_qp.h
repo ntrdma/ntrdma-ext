@@ -134,7 +134,6 @@ struct ntrdma_qp {
 
 	/* send ring buffers and consumer index */
 	struct ntc_local_buf		send_wqe_buf;
-	cycles_t			*send_wqe_cycles_buf;
 	struct ntc_local_buf		send_wqe_grh_buf;
 	struct ntc_export_buf		send_cqe_buf;
 	struct ntc_remote_buf		peer_send_wqe_buf;
@@ -238,7 +237,6 @@ inline void ntrdma_qp_set_stats(struct ntrdma_qp *qp, u32 pos);
 
 inline struct ib_grh *ntrdma_qp_grh(struct ntrdma_qp *qp, u32 pos);
 
-inline cycles_t ntrdma_qp_get_diff_cycles(struct ntrdma_qp *qp, u32 pos);
 inline
 const struct ntrdma_cqe *ntrdma_qp_send_cqe(struct ntrdma_qp *qp, u32 pos);
 

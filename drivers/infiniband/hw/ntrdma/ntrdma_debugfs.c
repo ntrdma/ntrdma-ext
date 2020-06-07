@@ -564,8 +564,6 @@ static int ntrdma_debugfs_dev_perf_show(struct seq_file *s, void *v)
 				per_cpu(dev_cnt.cqes_polled_ioctl_ns, i));
 		seq_printf(s, "cqes_armed %llu\n",
 				per_cpu(dev_cnt.cqes_armed, i));
-		seq_printf(s, "accum_latency %llu cycles\n",
-				per_cpu(dev_cnt.accum_latency, i));
 		seq_printf(s, "poll_cq_count %llu\n",
 				per_cpu(dev_cnt.poll_cq_count, i));
 		seq_printf(s, "poll_cq_count_ioctl %llu\n",
