@@ -682,6 +682,14 @@ static inline int set_memory_windows_on_device(struct ntc_ntb_dev *dev, int mw_i
 		goto err;
 	}
 
+	if (!own_mw->size) {
+		own_mw->size = data->size_max;
+	}
+
+	if (!own_mw->size) {
+		errmsg("size_max for MW %d is %#llx", mw_idx, data->size_max);
+		return -EINVAL;
+	}
 
 	if (data->addr_align)
 		addr_misalignment = data->base_addr & (data->addr_align - 1);
@@ -1508,17 +1516,11 @@ static int ntc_ntb_init_peer(struct ntc_ntb_dev *dev, int mw_idx,
 static int ntc_ntb_init_own_mw_flat(struct ntc_ntb_dev *dev, int mw_idx)
 {
 	struct ntc_dev *ntc = &dev->ntc;
-	struct ntc_own_mw_data *data = &own_mw_data[mw_idx];
 	struct ntc_own_mw *own_mw = &ntc->own_mws[mw_idx];
 
 	own_mw->base = 0;
 	own_mw->base_ptr = NULL;
-	own_mw->size = data->size_max;
-
-	if (!own_mw->size) {
-		errmsg("size_max for MW %d is %#llx", mw_idx, data->size_max);
-		return -EINVAL;
-	}
+	own_mw->size = 0;
 
 	info("OWN MW: FLAT base %#llx size %#llx", own_mw->base, own_mw->size);
 
