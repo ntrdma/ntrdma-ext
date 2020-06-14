@@ -1848,7 +1848,16 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	else
 		dma_chan = READ_ONCE(qp->dma_chan);
 	need_qp_put = true;
-	WRITE_ONCE(rqp->dma_chan, dma_chan);
+
+	if (likely(dma_chan))
+		rqp->dma_chan = dma_chan;
+	else {
+		ntrdma_qp_err(qp, "QP %d RQP %d. qp->dma_chan_init = %d , dma_chan is NULL\n",
+				qp->res.key,
+				rqp->qp_key,
+				qp->dma_chan_init);
+		goto err_dma_chan;
+	}
 
 	/* connected qp must be ready to receive */
 	rc = 0;
@@ -2058,7 +2067,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 		rc = ntrdma_dev_vbell_peer(dev, dma_chan,
 					rqp->peer_cmpl_vbell_idx);
 		if (unlikely(rc < 0)) {
-			ntc_req_submit(qp->dma_chan);
+			ntc_req_submit(dma_chan);
 			ntrdma_err(dev, "QP %d ntrdma_dev_vbell_peer failed. rc=%d",
 				qp->res.key, rc);
 			goto err_memcpy;
@@ -2090,8 +2099,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	return;
 
 err_memcpy:
-	ntc_req_submit(qp->dma_chan);
+	ntc_req_submit(dma_chan);
 err_recv:
+err_dma_chan:
 err_qp:
 	spin_unlock_bh(&rqp->send_cons_lock);
 	ntrdma_err(dev, "Failed qp key %d\n",
