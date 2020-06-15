@@ -271,7 +271,7 @@ void ntrdma_rmr_init(struct ntrdma_rmr *rmr,
 	memset(rmr->sg_list, 0,
 		sg_count * sizeof(*rmr->sg_list));
 
-	ntrdma_rres_init(&rmr->rres, dev, &dev->rmr_vec,
+	ntrdma_rres_init(&rmr->rres, dev, &dev->rres.rmr_vec,
 			ntrdma_rmr_free, key);
 }
 
@@ -323,7 +323,7 @@ struct ntrdma_rmr *ntrdma_dev_rmr_look(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_rres *rres;
 
-	rres = ntrdma_rres_look(&dev->rmr_vec, key);
+	rres = ntrdma_rres_look(&dev->rres.rmr_vec, key);
 	if (!rres)
 		return NULL;
 
