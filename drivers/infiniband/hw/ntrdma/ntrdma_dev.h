@@ -94,6 +94,14 @@ struct ntrdma_dev_res {
 	struct ntrdma_kvec		qp_vec;
 	struct list_head		cq_list;
 	struct list_head		pd_list;
+	u32						pd_next_key;
+};
+
+struct ntrdma_dev_rres {
+	struct mutex			rres_lock;
+	struct list_head		rres_list;
+	struct ntrdma_vec		rmr_vec;
+	struct ntrdma_vec		rqp_vec;
 };
 
 /* RDMA over PCIe NTB device */
@@ -185,14 +193,9 @@ struct ntrdma_dev {
 
 	/* rdma resource synchronization state */
 	struct ntrdma_dev_res res;
-	struct mutex			rres_lock; /* Protects rres_list. */
-	u32				pd_next_key;
+	struct ntrdma_dev_rres rres;
 
-	/* rdma remote resources */
 
-	struct list_head		rres_list; /* Protected by rres_lock. */
-	struct ntrdma_vec		rmr_vec;
-	struct ntrdma_vec		rqp_vec;
 
 	/* virtual ethernet device */
 	struct ntrdma_eth		*eth;

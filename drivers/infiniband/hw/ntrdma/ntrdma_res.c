@@ -43,11 +43,11 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 
 	/* rdma resource synchronization state */
 	mutex_init(&dev->res.res_lock);
-	mutex_init(&dev->rres_lock);
+	mutex_init(&dev->rres.rres_lock);
 
 	/* rdma local resources */
 
-	dev->pd_next_key = 0;
+	dev->res.pd_next_key = 0;
 	INIT_LIST_HEAD(&dev->res.pd_list);
 	INIT_LIST_HEAD(&dev->res.cq_list);
 	INIT_LIST_HEAD(&dev->res.mr_list);
@@ -73,9 +73,9 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 
 	/* rdma remote resources */
 
-	INIT_LIST_HEAD(&dev->rres_list);
+	INIT_LIST_HEAD(&dev->rres.rres_list);
 
-	rc = ntrdma_vec_init(&dev->rmr_vec,
+	rc = ntrdma_vec_init(&dev->rres.rmr_vec,
 			NTRDMA_RES_VEC_INIT_CAP,
 			dev->node);
 
@@ -84,7 +84,7 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 		goto err_rmr;
 	}
 
-	rc = ntrdma_vec_init(&dev->rqp_vec,
+	rc = ntrdma_vec_init(&dev->rres.rqp_vec,
 			NTRDMA_RES_VEC_INIT_CAP,
 			dev->node);
 
@@ -97,7 +97,7 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 
 	//ntrdma_vec_deinit(&dev->rqp_vec);
 err_rqp:
-	ntrdma_vec_deinit(&dev->rmr_vec);
+	ntrdma_vec_deinit(&dev->rres.rmr_vec);
 err_rmr:
 	ntrdma_kvec_deinit(&dev->res.qp_vec);
 err_qp:
@@ -108,8 +108,8 @@ err_mr:
 
 void ntrdma_dev_res_deinit(struct ntrdma_dev *dev)
 {
-	ntrdma_vec_deinit(&dev->rqp_vec);
-	ntrdma_vec_deinit(&dev->rmr_vec);
+	ntrdma_vec_deinit(&dev->rres.rqp_vec);
+	ntrdma_vec_deinit(&dev->rres.rmr_vec);
 	ntrdma_kvec_deinit(&dev->res.qp_vec);
 	ntrdma_kvec_deinit(&dev->res.mr_vec);
 }
@@ -271,15 +271,15 @@ void ntrdma_dev_rres_reset(struct ntrdma_dev *dev)
 {
 	struct ntrdma_rres *rres, *rres_next;
 
-	mutex_lock(&dev->rres_lock);
+	mutex_lock(&dev->rres.rres_lock);
 	list_for_each_entry_safe_reverse(rres, rres_next,
-			&dev->rres_list,
+			&dev->rres.rres_list,
 			obj.dev_entry) {
 		ntrdma_rres_remove_unsafe(rres);
 		rres->free(rres);
 	}
-	INIT_LIST_HEAD(&dev->rres_list);
-	mutex_unlock(&dev->rres_lock);
+	INIT_LIST_HEAD(&dev->rres.rres_list);
+	mutex_unlock(&dev->rres.rres_lock);
 }
 
 struct ntrdma_rres *ntrdma_rres_look(struct ntrdma_vec *vec, u32 key)
@@ -423,10 +423,10 @@ int ntrdma_rres_add(struct ntrdma_rres *rres)
 	if (rc < 0)
 		return rc;
 
-	mutex_lock(&dev->rres_lock);
+	mutex_lock(&dev->rres.rres_lock);
 	rres->in_rres_list = true;
-	list_add_tail(&rres->obj.dev_entry, &dev->rres_list);
-	mutex_unlock(&dev->rres_lock);
+	list_add_tail(&rres->obj.dev_entry, &dev->rres.rres_list);
+	mutex_unlock(&dev->rres.rres_lock);
 
 	return 0;
 }
@@ -447,8 +447,8 @@ void ntrdma_rres_remove(struct ntrdma_rres *rres)
 {
 	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
 
-	mutex_lock(&dev->rres_lock);
+	mutex_lock(&dev->rres.rres_lock);
 	ntrdma_rres_remove_unsafe(rres);
-	mutex_unlock(&dev->rres_lock);
+	mutex_unlock(&dev->rres.rres_lock);
 }
 
