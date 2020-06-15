@@ -935,13 +935,8 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 		goto err_pd;
 	}
 
-	ntrdma_vdbg(dev, "allocated pd %p\n", pd);
-
-	ntrdma_pd_init(pd, dev, dev->pd_next_key++);
-
-	ntrdma_vdbg(dev, "initialized pd %p\n", pd);
-
 	mutex_lock(&dev->res.res_lock);
+	ntrdma_pd_init(pd, dev, dev->res.pd_next_key++);
 	list_add_tail(&pd->obj.dev_entry, &dev->res.pd_list);
 	mutex_unlock(&dev->res.res_lock);
 

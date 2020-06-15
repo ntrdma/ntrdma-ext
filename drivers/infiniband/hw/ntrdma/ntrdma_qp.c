@@ -750,7 +750,7 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	if (is_deinit)
 		goto deinit;
 
-	ntrdma_rres_init(&rqp->rres, dev, &dev->rqp_vec,
+	ntrdma_rres_init(&rqp->rres, dev, &dev->rres.rqp_vec,
 			      ntrdma_rqp_free, key);
 
 	rqp->pd_key = attr->pd_key;
@@ -2087,7 +2087,7 @@ struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_rres *rres;
 
-	rres = ntrdma_rres_look(&dev->rqp_vec, key);
+	rres = ntrdma_rres_look(&dev->rres.rqp_vec, key);
 	if (!rres)
 		return NULL;
 
