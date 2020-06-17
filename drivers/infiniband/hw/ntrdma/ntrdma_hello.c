@@ -151,7 +151,7 @@ static int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	out = out_buf;
 	ntrdma_buff_supported_versions(&local);
 
-	dev->latest_version = local.versions[local.version_num-1];
+	dev->hello.latest_version = local.versions[local.version_num-1];
 
 	if (!in || (in->version_num > MAX_SUPPORTED_VERSIONS)) {
 		ntrdma_err(dev, "version %d not supported",
@@ -159,12 +159,12 @@ static int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 		return -EINVAL;
 	}
 
-	dev->version = ntrdma_version_choose(dev, in, &local);
-	if (dev->version == NTRDMA_VER_NONE) {
+	dev->hello.version = ntrdma_version_choose(dev, in, &local);
+	if (dev->hello.version == NTRDMA_VER_NONE) {
 		ntrdma_err(dev, "version is not aggreed\n");
 		return -EINVAL;
 	}
-	ntrdma_dbg(dev, "Agree on version %d", dev->version);
+	ntrdma_dbg(dev, "Agree on version %d", dev->hello.version);
 
 	/* protocol validation */
 	iowrite32(NTRDMA_V1_MAGIC, &out->version_magic);
@@ -292,8 +292,8 @@ int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase)
 {
 	const void *in_buf;
 	void __iomem *out_buf;
-	int in_size = dev->hello_local_buf_size/2;
-	int out_size = dev->hello_peer_buf_size/2;
+	int in_size = dev->hello.local_buf_size/2;
+	int out_size = dev->hello.peer_buf_size/2;
 
 	/* note: using double-buffer here, dividing the local and peer buffers
 	 * for two buffers each:
@@ -301,11 +301,11 @@ int ntrdma_dev_hello(struct ntrdma_dev *dev, int phase)
 	 * "even" phases will use the opposite of the above
 	 */
 	if (phase & 1) {
-		in_buf = dev->hello_local_buf;
-		out_buf = dev->hello_peer_buf + out_size;
+		in_buf = dev->hello.local_buf;
+		out_buf = dev->hello.peer_buf + out_size;
 	} else {
-		in_buf = dev->hello_local_buf + in_size;
-		out_buf = dev->hello_peer_buf;
+		in_buf = dev->hello.local_buf + in_size;
+		out_buf = dev->hello.peer_buf;
 	}
 
 	ntrdma_dbg(dev, "hello phase %d\n", phase);

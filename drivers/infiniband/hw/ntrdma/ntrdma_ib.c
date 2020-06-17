@@ -245,7 +245,7 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 	memset(ibattr, 0, sizeof(*ibattr));
 
 	/* ntrdma versioning */
-	ibattr->fw_ver = dev->latest_version;
+	ibattr->fw_ver = dev->hello.latest_version;
 
 	/* from the mlx web, most of the times, its equal to node guid.*/
 	ibattr->sys_image_guid = ibdev->node_guid;

@@ -191,23 +191,23 @@ err_vbell:
 
 int ntrdma_dev_hello_init(struct ntrdma_dev *dev, struct ntc_dev *ntc)
 {
-	dev->hello_local_buf = ntc_local_hello_buf(ntc, &dev->hello_local_buf_size);
-	dev->hello_peer_buf = ntc_peer_hello_buf(ntc, &dev->hello_peer_buf_size);
+	dev->hello.local_buf = ntc_local_hello_buf(ntc, &dev->hello.local_buf_size);
+	dev->hello.peer_buf = ntc_peer_hello_buf(ntc, &dev->hello.peer_buf_size);
 
 	ntrdma_dbg(dev, "local %p size %d peer %p size %d\n",
-				dev->hello_local_buf, dev->hello_local_buf_size,
-				dev->hello_peer_buf, dev->hello_peer_buf_size);
+				dev->hello.local_buf, dev->hello.local_buf_size,
+				dev->hello.peer_buf, dev->hello.peer_buf_size);
 
-	return !(dev->hello_local_buf && dev->hello_peer_buf &&
-			dev->hello_local_buf_size > 0 && dev->hello_peer_buf_size > 0);
+	return !(dev->hello.local_buf && dev->hello.peer_buf &&
+			dev->hello.local_buf_size > 0 && dev->hello.peer_buf_size > 0);
 }
 
 void ntrdma_dev_hello_deinit(struct ntrdma_dev *dev)
 {
-	dev->hello_local_buf = NULL;
-	dev->hello_peer_buf = NULL;
-	dev->hello_local_buf_size = 0;
-	dev->hello_peer_buf_size = 0;
+	dev->hello.local_buf = NULL;
+	dev->hello.peer_buf = NULL;
+	dev->hello.local_buf_size = 0;
+	dev->hello.peer_buf_size = 0;
 }
 
 void ntrdma_dev_deinit(struct ntrdma_dev *dev)
