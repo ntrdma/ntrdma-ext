@@ -166,6 +166,17 @@ struct ntrdma_dev_vbell {
 	int				peer_count;
 };
 
+struct ntrdma_dev_hello {
+	/* hello buffers */
+		const u8 *local_buf;
+		int local_buf_size;
+		u8 __iomem *peer_buf;
+		int peer_buf_size;
+		/* protocol version */
+		u32				version;
+		u32				latest_version;
+};
+
 /* RDMA over PCIe NTB device */
 struct ntrdma_dev {
 	/* NOTE: .ibdev MUST be the first thing in ntrdma_dev!
@@ -183,9 +194,7 @@ struct ntrdma_dev {
 	struct dentry			*debug;
 	struct mutex			debugfs_lock;
 
-	/* protocol version */
-	u32				version;
-	u32				latest_version;
+
 
 	struct ntrdma_dev_vbell vbell;
 
@@ -196,17 +205,11 @@ struct ntrdma_dev {
 
 	/* command send ring buffers and consumer index */
 	int				is_cmd_hello_done;
-	/* hello buffers */
-	const u8 *hello_local_buf;
-	int hello_local_buf_size;
-	u8 __iomem *hello_peer_buf;
-	int hello_peer_buf_size;
+	struct ntrdma_dev_hello hello;
 
 	/* rdma resource synchronization state */
 	struct ntrdma_dev_res res;
 	struct ntrdma_dev_rres rres;
-
-
 
 	/* virtual ethernet device */
 	struct ntrdma_eth		*eth;
