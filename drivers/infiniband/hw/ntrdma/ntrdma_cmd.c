@@ -491,157 +491,156 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 	const union ntrdma_rsp *cmd_send_rsp_buf;
 	u32 cmd_id;
 
-	mutex_lock(&dev->cmd_send.lock);
-	{
-		ntrdma_vbell_clear(&dev->cmd_send.vbell);
 
-		/* Complete commands that have a response */
-		ntrdma_ring_consume(ntrdma_dev_cmd_send_cons(dev),
-				dev->cmd_send.cmpl,
-				dev->cmd_send.cap, &start, &end, &base);
-		ntrdma_vdbg(dev, "rsp start %d end %d\n", start, end);
+	ntrdma_vbell_clear(&dev->cmd_send.vbell);
 
-		cmd_send_buf = ntc_local_buf_deref(&dev->cmd_send.buf);
+	/* Complete commands that have a response */
+	ntrdma_ring_consume(ntrdma_dev_cmd_send_cons(dev),
+			dev->cmd_send.cmpl,
+			dev->cmd_send.cap, &start, &end, &base);
+	ntrdma_vdbg(dev, "rsp start %d end %d\n", start, end);
 
-		cmd_send_rsp_buf =
+	cmd_send_buf = ntc_local_buf_deref(&dev->cmd_send.buf);
+
+	cmd_send_rsp_buf =
 			ntc_export_buf_const_deref(&dev->cmd_send.rsp_buf,
-						sizeof(*cmd_send_rsp_buf) *
-						start,
-						sizeof(*cmd_send_rsp_buf) *
-						(end - start));
-		/* Make it point to the start of dev->cmd_send.cmd_send_rsp_buf. */
-		cmd_send_rsp_buf -= start;
+					sizeof(*cmd_send_rsp_buf) *
+					start,
+					sizeof(*cmd_send_rsp_buf) *
+					(end - start));
+	/* Make it point to the start of dev->cmd_send.cmd_send_rsp_buf. */
+	cmd_send_rsp_buf -= start;
 
-		for (pos = start; pos < end; ++pos) {
+	for (pos = start; pos < end; ++pos) {
 
-			cmd_id = READ_ONCE(cmd_send_rsp_buf[pos].hdr.cmd_id);
+		cmd_id = READ_ONCE(cmd_send_rsp_buf[pos].hdr.cmd_id);
 
-			if (unlikely(pos != cmd_id)) {
-				ntrdma_err(dev,
+		if (unlikely(pos != cmd_id)) {
+			ntrdma_err(dev,
 					"rsp cmd id %d != pos %d, link down\n",
 					cmd_id, pos);
-				ntc_link_disable(dev->ntc);
-			}
+			ntc_link_disable(dev->ntc);
+		}
 
-			if (unlikely(list_empty(&dev->cmd_send.post_list))) {
-				ntrdma_info(dev, "Skipping timeouted command");
-				continue;
-			}
+		if (unlikely(list_empty(&dev->cmd_send.post_list))) {
+			ntrdma_info(dev, "Skipping timeouted command");
+			continue;
+		}
 
-			cb = list_first_entry(&dev->cmd_send.post_list,
-					struct ntrdma_cmd_cb,
-					dev_entry);
+		cb = list_first_entry(&dev->cmd_send.post_list,
+				struct ntrdma_cmd_cb,
+				dev_entry);
 
-			if (unlikely(cb->cmd_id != pos)) {
-				ntrdma_info(dev, "Skipping timeouted command");
-				continue;
-			}
+		if (unlikely(cb->cmd_id != pos)) {
+			ntrdma_info(dev, "Skipping timeouted command");
+			continue;
+		}
 
-			list_del(&cb->dev_entry);
-			cb->in_list = false;
+		list_del(&cb->dev_entry);
+		cb->in_list = false;
 
-			ntrdma_vdbg(dev, "rsp cmpl pos %d cmd_id %d", pos,
+		ntrdma_vdbg(dev, "rsp cmpl pos %d cmd_id %d", pos,
 				cmd_id);
 
-			TRACE("CMD: respond received for %p (func) pos %u\n",
+		TRACE("CMD: respond received for %p (func) pos %u\n",
 				cb->rsp_cmpl, pos);
 
-			rc = cb->rsp_cmpl(cb, &cmd_send_rsp_buf[pos]);
-			if (rc)
-				ntrdma_err(dev,
-						"%ps failed rc = %d", cb->rsp_cmpl,
-						rc);
-			/* FIXME: command failed, now what? */
-		}
+		rc = cb->rsp_cmpl(cb, &cmd_send_rsp_buf[pos]);
+		if (rc)
+			ntrdma_err(dev,
+					"%ps failed rc = %d", cb->rsp_cmpl,
+					rc);
+		/* FIXME: command failed, now what? */
+	}
 
-		if (pos != start) {
-			dev->cmd_send.cmpl = ntrdma_ring_update(pos, base,
-								dev->cmd_send.cap);
-			more = true;
-		}
+	if (pos != start) {
+		dev->cmd_send.cmpl = ntrdma_ring_update(pos, base,
+				dev->cmd_send.cap);
+		more = true;
+	}
 
-		/* Issue some more pending commands */
-		ntrdma_ring_produce(dev->cmd_send.prod,
-				    dev->cmd_send.cmpl,
-				    dev->cmd_send.cap,
-				    &start, &end, &base);
-		ntrdma_vdbg(dev, "cmd start %d end %d\n", start, end);
-		for (pos = start; pos < end; ++pos) {
-			if (list_empty(&dev->cmd_send.pend_list))
-				break;
-			cb = list_first_entry(&dev->cmd_send.pend_list,
-					struct ntrdma_cmd_cb,
-					dev_entry);
-			cb->cmd_id = pos;
+	/* Issue some more pending commands */
+	ntrdma_ring_produce(dev->cmd_send.prod,
+			dev->cmd_send.cmpl,
+			dev->cmd_send.cap,
+			&start, &end, &base);
+	ntrdma_vdbg(dev, "cmd start %d end %d\n", start, end);
+	for (pos = start; pos < end; ++pos) {
+		if (list_empty(&dev->cmd_send.pend_list))
+			break;
+		cb = list_first_entry(&dev->cmd_send.pend_list,
+				struct ntrdma_cmd_cb,
+				dev_entry);
+		cb->cmd_id = pos;
 
-			list_move_tail(&cb->dev_entry, &dev->cmd_send.post_list);
+		list_move_tail(&cb->dev_entry, &dev->cmd_send.post_list);
 
-			ntrdma_vdbg(dev, "cmd prep pos %d\n", pos);
+		ntrdma_vdbg(dev, "cmd prep pos %d\n", pos);
 
-			TRACE("CMD: post cmd by %p (func) pos %u\n",
+		TRACE("CMD: post cmd by %p (func) pos %u\n",
 				cb->cmd_prep, pos);
 
-			cmd_send_buf[pos].hdr.cmd_id = pos;
-			cmd_send_buf[pos].hdr.cb_p = (u64)cb;
-			rc = cb->cmd_prep(cb, &cmd_send_buf[pos]);
-			if (rc)
-				ntrdma_err(dev,
-						"%ps failed rc = %d", cb->cmd_prep,
-						rc);
-			/* FIXME: command failed, now what? */
+		cmd_send_buf[pos].hdr.cmd_id = pos;
+		cmd_send_buf[pos].hdr.cb_p = (u64)cb;
+		rc = cb->cmd_prep(cb, &cmd_send_buf[pos]);
+		if (rc)
+			ntrdma_err(dev,
+					"%ps failed rc = %d", cb->cmd_prep,
+					rc);
+		/* FIXME: command failed, now what? */
+	}
+
+	rc = 0;
+	if (pos != start) {
+		ntrdma_vdbg(dev, "cmd copy start %d pos %d\n", start, pos);
+
+		dev->cmd_send.prod = ntrdma_ring_update(pos, base,
+				dev->cmd_send.cap);
+		more = true;
+
+		/* copy the portion of the ring buf */
+
+		off = start * sizeof(union ntrdma_cmd);
+		len = (pos - start) * sizeof(union ntrdma_cmd);
+		rc = ntc_memcpy(&dev->peer_cmd_recv_buf, off,
+				&dev->cmd_send.buf, off, len);
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev,
+					"ntc_memcpy failed. rc=%d", rc);
+			goto dma_err;
 		}
 
-		rc = 0;
-		if (pos != start) {
-			ntrdma_vdbg(dev, "cmd copy start %d pos %d\n", start, pos);
-
-			dev->cmd_send.prod = ntrdma_ring_update(pos, base,
-								dev->cmd_send.cap);
-			more = true;
-
-			/* copy the portion of the ring buf */
-
-			off = start * sizeof(union ntrdma_cmd);
-			len = (pos - start) * sizeof(union ntrdma_cmd);
-			rc = ntc_memcpy(&dev->peer_cmd_recv_buf, off,
-					&dev->cmd_send.buf, off, len);
-			if (unlikely(rc < 0)) {
-				ntrdma_err(dev,
-					"ntc_memcpy failed. rc=%d", rc);
-				goto dma_err;
-			}
-
-			/* update the producer index on the peer */
-			rc = ntc_imm32(&dev->peer_cmd_recv_buf,
+		/* update the producer index on the peer */
+		rc = ntc_imm32(&dev->peer_cmd_recv_buf,
 				dev->peer_recv_prod_shift,
 				dev->cmd_send.prod);
-			if (unlikely(rc < 0)) {
-				ntrdma_err(dev,
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev,
 					"ntc_imm32 failed. rc=%d", rc);
-				goto dma_err;
-			}
+			goto dma_err;
+		}
 
-			/* update the vbell and signal the peer */
-			rc = ntrdma_dev_vbell_peer_direct(dev,
-						dev->peer_cmd_recv_vbell_idx);
-			if (unlikely(rc < 0)) {
-				ntrdma_err(dev,
+		/* update the vbell and signal the peer */
+		rc = ntrdma_dev_vbell_peer_direct(dev,
+				dev->peer_cmd_recv_vbell_idx);
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev,
 					"ntrdma_dev_vbell_peer_direct: rc=%d",
 					rc);
-				goto dma_err;
-			}
+			goto dma_err;
+		}
 
-			rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
-			if (unlikely(rc < 0)) {
-				ntrdma_err(dev, "ntc_signal failed. rc=%d",
+		rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev, "ntc_signal failed. rc=%d",
 					rc);
-				goto dma_err;
-			}
+			goto dma_err;
+		}
 
-			TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
+		TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
 				(pos - start), start,
 				dev->peer_cmd_recv_vbell_idx);
-		}
+	}
 
 	 dma_err:
 		if (unlikely(rc < 0))
@@ -652,20 +651,22 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			else
 				ntrdma_vbell_readd(&dev->cmd_send.vbell);
 		}
-	}
-	mutex_unlock(&dev->cmd_send.lock);
 }
 
 static void ntrdma_cmd_send_work_cb(struct work_struct *ws)
 {
 	struct ntrdma_dev *dev = ntrdma_cmd_send_work_dev(ws);
 
+	mutex_lock(&dev->cmd_send.lock);
+
 	if (!dev->cmd_send.ready) {
+		mutex_unlock(&dev->cmd_send.lock);
 		ntrdma_info(dev, "cmd not ready yet to send");
 		return;
 	}
 
 	ntrdma_cmd_send_work(dev);
+	mutex_unlock(&dev->cmd_send.lock);
 }
 
 static int ntrdma_cmd_recv_none(struct ntrdma_dev *dev,
@@ -1292,110 +1293,111 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 	ntrdma_vdbg(dev, "called\n");
 
-	mutex_lock(&dev->cmd_recv.lock);
-	{
-		ntrdma_vbell_clear(&dev->cmd_recv.vbell);
+	ntrdma_vbell_clear(&dev->cmd_recv.vbell);
 
-		cmd_recv_rsp_buf = ntc_local_buf_deref(&dev->cmd_recv.rsp_buf);
+	cmd_recv_rsp_buf = ntc_local_buf_deref(&dev->cmd_recv.rsp_buf);
 
-		/* Process commands */
-		ntrdma_ring_consume(ntrdma_dev_cmd_recv_prod(dev),
-				dev->cmd_recv.cons,
-				dev->cmd_recv.cap,
-				&start, &end, &base);
+	/* Process commands */
+	ntrdma_ring_consume(ntrdma_dev_cmd_recv_prod(dev),
+			dev->cmd_recv.cons,
+			dev->cmd_recv.cap,
+			&start, &end, &base);
 
-		ntrdma_vdbg(dev, "cmd start %d end %d\n", start, end);
+	ntrdma_vdbg(dev, "cmd start %d end %d\n", start, end);
 
-		cmd_recv_buf =
+	cmd_recv_buf =
 			ntc_export_buf_const_deref(&dev->cmd_recv.buf,
-						sizeof(*cmd_recv_buf) * start,
-						sizeof(*cmd_recv_buf) *
-						(end - start));
-		/* Make it point to the start of dev->cmd_recv_buf. */
-		cmd_recv_buf -= start;
+					sizeof(*cmd_recv_buf) * start,
+					sizeof(*cmd_recv_buf) *
+					(end - start));
+	/* Make it point to the start of dev->cmd_recv_buf. */
+	cmd_recv_buf -= start;
 
-		for (pos = start; pos < end; ++pos) {
-			ntrdma_vdbg(dev, "cmd recv pos %d\n", pos);
-			rc = ntrdma_cmd_recv(dev,
-					&cmd_recv_buf[pos],
-					&cmd_recv_rsp_buf[pos]);
-			if (rc)
-				ntrdma_err(dev,
-						"ntrdma_cmd_recv failed rc %d op %d, cmd id %d\n",
-						rc, cmd_recv_buf[pos].hdr.op,
-						cmd_recv_buf[pos].hdr.cmd_id);
+	for (pos = start; pos < end; ++pos) {
+		ntrdma_vdbg(dev, "cmd recv pos %d\n", pos);
+		rc = ntrdma_cmd_recv(dev,
+				&cmd_recv_buf[pos],
+				&cmd_recv_rsp_buf[pos]);
+		if (rc)
+			ntrdma_err(dev,
+					"ntrdma_cmd_recv failed rc %d op %d, cmd id %d\n",
+					rc, cmd_recv_buf[pos].hdr.op,
+					cmd_recv_buf[pos].hdr.cmd_id);
+	}
+
+	rc = 0;
+	if (pos != start) {
+		ntrdma_vdbg(dev, "rsp copy start %d pos %d\n",
+				start, pos);
+
+		dev->cmd_recv.cons = ntrdma_ring_update(pos, base,
+				dev->cmd_recv.cap);
+
+		/* copy the portion of the ring buf */
+
+		TRACE("CMD: send reply for %d cmds to pos %d\n",
+				(pos - start), start);
+
+		off = start * sizeof(union ntrdma_rsp);
+		len = (pos - start) * sizeof(union ntrdma_rsp);
+		rc = ntc_memcpy(&dev->peer_cmd_send_rsp_buf, off,
+				&dev->cmd_recv.rsp_buf, off, len);
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev,
+					"ntc_memcpy failed. rc=%d", rc);
+			goto dma_err;
 		}
 
-		rc = 0;
-		if (pos != start) {
-			ntrdma_vdbg(dev, "rsp copy start %d pos %d\n",
-				    start, pos);
-
-			dev->cmd_recv.cons = ntrdma_ring_update(pos, base,
-								dev->cmd_recv.cap);
-
-			/* copy the portion of the ring buf */
-
-			TRACE("CMD: send reply for %d cmds to pos %d\n",
-						(pos - start), start);
-
-			off = start * sizeof(union ntrdma_rsp);
-			len = (pos - start) * sizeof(union ntrdma_rsp);
-			rc = ntc_memcpy(&dev->peer_cmd_send_rsp_buf, off,
-					&dev->cmd_recv.rsp_buf, off, len);
-			if (unlikely(rc < 0)) {
-				ntrdma_err(dev,
-					"ntc_memcpy failed. rc=%d", rc);
-				goto dma_err;
-			}
-
-			/* update the producer index on the peer */
-			rc = ntc_imm32(&dev->peer_cmd_send_rsp_buf,
+		/* update the producer index on the peer */
+		rc = ntc_imm32(&dev->peer_cmd_send_rsp_buf,
 				dev->peer_send_cons_shift,
 				dev->cmd_recv.cons);
-			if (unlikely(rc < 0)) {
-				ntrdma_err(dev,
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev,
 					"ntc_imm32 failed. rc=%d", rc);
-				goto dma_err;
-			}
+			goto dma_err;
+		}
 
-			/* update the vbell and signal the peer */
+		/* update the vbell and signal the peer */
 
-			rc = ntrdma_dev_vbell_peer_direct(dev,
-						dev->peer_cmd_send_vbell_idx);
-			if (unlikely(rc < 0)) {
-				ntrdma_err(dev,
+		rc = ntrdma_dev_vbell_peer_direct(dev,
+				dev->peer_cmd_send_vbell_idx);
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev,
 					"ntrdma_dev_vbell_peer_direct: rc=%d",
 					rc);
-				goto dma_err;
-			}
+			goto dma_err;
+		}
 
-			rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
-			if (unlikely(rc < 0)) {
-				ntrdma_err(dev, "ntc_signal failed. rc=%d",
+		rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
+		if (unlikely(rc < 0)) {
+			ntrdma_err(dev, "ntc_signal failed. rc=%d",
 					rc);
-				goto dma_err;
-			}
+			goto dma_err;
+		}
 
-			ntrdma_vbell_trigger(&dev->cmd_recv.vbell);
-		} else
-			ntrdma_vbell_readd(&dev->cmd_recv.vbell);
+		ntrdma_vbell_trigger(&dev->cmd_recv.vbell);
+	} else
+		ntrdma_vbell_readd(&dev->cmd_recv.vbell);
 
 	dma_err:
-		if (unlikely(rc < 0))
-			ntrdma_unrecoverable_err(dev);
-	}
-	mutex_unlock(&dev->cmd_recv.lock);
+	if (unlikely(rc < 0))
+		ntrdma_unrecoverable_err(dev);
 }
 
 static void ntrdma_cmd_recv_work_cb(struct work_struct *ws)
 {
 	struct ntrdma_dev *dev = ntrdma_cmd_recv_work_dev(ws);
 
+	mutex_lock(&dev->cmd_recv.lock);
+
 	if (!dev->cmd_recv.ready) {
 		ntrdma_info(dev, "cmd not ready yet to recv");
+		mutex_unlock(&dev->cmd_recv.lock);
 		return;
 	}
 
 	ntrdma_cmd_recv_work(dev);
+
+	mutex_unlock(&dev->cmd_recv.lock);
 }
