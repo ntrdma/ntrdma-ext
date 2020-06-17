@@ -171,11 +171,11 @@ static int ntrdma_dev_hello_phase1(struct ntrdma_dev *dev,
 	iowrite32(NTRDMA_V1_P2_MAGIC, &out->phase_magic);
 
 	/* virtual doorbells */
-	ntc_export_buf_make_desc(&vbell_ntc_buf_desc, &dev->vbell_buf);
+	ntc_export_buf_make_desc(&vbell_ntc_buf_desc, &dev->vbell.buf);
 	memcpy_toio(&out->vbell_ntc_buf_desc, &vbell_ntc_buf_desc,
 		sizeof(vbell_ntc_buf_desc));
 
-	iowrite32(dev->vbell_count, &out->vbell_count);
+	iowrite32(dev->vbell.count, &out->vbell_count);
 	iowrite32(0, &out->vbell_reserved);
 
 	/* command rings */

@@ -420,15 +420,15 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	struct ntrdma_dev *dev = s->private;
 	struct ntrdma_eth *eth = dev->eth;
 
-	seq_printf(s, "vbell_enable %d\n",dev->vbell_enable);
-	seq_printf(s, "vbell_count %u\n", dev->vbell_count);
-	seq_printf(s, "vbell_start %u\n", dev->vbell_start);
-	seq_printf(s, "vbell_next %u\n", atomic_read(&dev->vbell_next));
+	seq_printf(s, "vbell_enable %d\n", dev->vbell.enable);
+	seq_printf(s, "vbell_count %u\n", dev->vbell.count);
+	seq_printf(s, "vbell_start %u\n", dev->vbell.start);
+	seq_printf(s, "vbell_next %u\n", atomic_read(&dev->vbell.next));
 	seq_printf(s, "vbell_buf.dma_addr %#llx\n",
-		(dma_addr_t)dev->vbell_buf.dma_addr);
+		(dma_addr_t)dev->vbell.buf.dma_addr);
 	seq_printf(s, "peer_vbell_buf.dma_addr %#llx\n",
-		(dma_addr_t)dev->peer_vbell_buf.dma_addr);
-	seq_printf(s, "peer_vbell_count %u\n", dev->peer_vbell_count);
+		(dma_addr_t)dev->vbell.peer_buf.dma_addr);
+	seq_printf(s, "peer_vbell_count %u\n", dev->vbell.peer_count);
 
 	seq_printf(s, "cmd_send_ready %d\n", dev->cmd_send.ready);
 	seq_printf(s, "cmd_recv_ready %d\n", dev->cmd_recv.ready);
@@ -461,7 +461,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "cmd_recv_rsp_buf.dma_addr %#llx\n",
 		(dma_addr_t)dev->cmd_recv.rsp_buf.dma_addr);
 	seq_printf(s, "peer_cmd_send_rsp_buf.dma_addr %#llx\n",
-		(dma_addr_t)dev->peer_cmd_send_rsp_buf.dma_addr);
+		(dma_addr_t)dev->cmd_recv.peer_cmd_send_rsp_buf.dma_addr);
 	seq_printf(s, "peer_send_cons_shift %#llx\n",
 		   dev->peer_send_cons_shift);
 	seq_printf(s, "peer_cmd_send_vbell_idx %u\n",
@@ -680,13 +680,13 @@ static const struct file_operations ntrdma_debugfs_dev_cmd_recv_rsp_ops = {
 static int ntrdma_debugfs_dev_vbell_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_dev *dev = s->private;
-	u32 i, count = dev->vbell_count;
+	u32 i, count = dev->vbell.count;
 	const u32 *vbell_buf;
 
-	if (count > dev->vbell_buf.size / sizeof(u32))
-		count = dev->vbell_buf.size / sizeof(u32);
+	if (count > dev->vbell.buf.size / sizeof(u32))
+		count = dev->vbell.buf.size / sizeof(u32);
 
-	vbell_buf = ntc_export_buf_const_deref(&dev->vbell_buf,
+	vbell_buf = ntc_export_buf_const_deref(&dev->vbell.buf,
 					0, count * sizeof(u32));
 	if (!vbell_buf)
 		return 0;
@@ -712,10 +712,10 @@ static const struct file_operations ntrdma_debugfs_dev_vbell_ops = {
 static int ntrdma_debugfs_dev_vbell_peer_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_dev *dev = s->private;
-	u32 i, count = dev->peer_vbell_count;
+	u32 i, count = dev->vbell.peer_count;
 
 	for (i = 0; i < count; ++i)
-		seq_printf(s, "%u: %u\n", i, dev->peer_vbell[i].seq);
+		seq_printf(s, "%u: %u\n", i, dev->vbell.peer[i].seq);
 
 	return 0;
 }

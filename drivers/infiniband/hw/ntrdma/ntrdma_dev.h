@@ -137,6 +137,29 @@ struct ntrdma_dev_cmd_recv {
 	/* command recv ring buffers and producer index */
 	struct ntc_export_buf		buf;
 	struct ntc_local_buf		rsp_buf;
+
+	struct ntc_remote_buf		peer_cmd_send_rsp_buf;
+	u64				peer_send_cons_shift;
+	u32				peer_cmd_send_vbell_idx;
+};
+
+struct ntrdma_dev_vbell {
+	spinlock_t			lock;
+	int			enable; /* Protected by vbell_self_lock */
+	struct tasklet_struct		work[NTB_MAX_IRQS];
+	struct vbell_work_data_s	work_data[NTB_MAX_IRQS];
+
+	u32				count;
+	u32				start;
+	atomic_t		next;
+	struct ntrdma_vbell_head	*vec;
+	struct ntc_export_buf		buf;
+
+	/* peer virtual doorbells */
+
+	struct ntrdma_peer_vbell	peer[NTRDMA_DEV_VBELL_COUNT];
+	struct ntc_remote_buf		peer_buf;
+	int				peer_count;
 };
 
 /* RDMA over PCIe NTB device */
@@ -160,25 +183,7 @@ struct ntrdma_dev {
 	u32				version;
 	u32				latest_version;
 
-	/* virtual doorbells synchronization */
-	int			vbell_enable; /* Protected by vbell_self_lock */
-	struct tasklet_struct		vbell_work[NTB_MAX_IRQS];
-	struct vbell_work_data_s	vbell_work_data[NTB_MAX_IRQS];
-	spinlock_t			vbell_self_lock;
-
-	/* local virtual doorbells */
-
-	u32				vbell_count;
-	u32				vbell_start;
-	atomic_t			vbell_next;
-	struct ntrdma_vbell_head	*vbell_vec;
-	struct ntc_export_buf		vbell_buf;
-
-	/* peer virtual doorbells */
-
-	struct ntrdma_peer_vbell	peer_vbell[NTRDMA_DEV_VBELL_COUNT];
-	struct ntc_remote_buf		peer_vbell_buf;
-	int				peer_vbell_count;
+	struct ntrdma_dev_vbell vbell;
 
 	/* commands to affect remote resources */
 
@@ -257,7 +262,7 @@ inline u32 ntrdma_dev_cmd_recv_prod(struct ntrdma_dev *dev);
 static inline void ntrdma_vbell_enable(struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
-	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	struct ntrdma_vbell_head *head = &dev->vbell.vec[vbell->idx];
 
 	spin_lock_bh(&head->lock);
 	vbell->enabled = true;
@@ -267,7 +272,7 @@ static inline void ntrdma_vbell_enable(struct ntrdma_vbell *vbell)
 static inline void ntrdma_vbell_disable(struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
-	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	struct ntrdma_vbell_head *head = &dev->vbell.vec[vbell->idx];
 
 	spin_lock_bh(&head->lock);
 	vbell->enabled = false;
@@ -277,7 +282,7 @@ static inline void ntrdma_vbell_disable(struct ntrdma_vbell *vbell)
 static inline void ntrdma_vbell_del(struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
-	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	struct ntrdma_vbell_head *head = &dev->vbell.vec[vbell->idx];
 
 	spin_lock_bh(&head->lock);
 
@@ -296,7 +301,7 @@ static inline void ntrdma_vbell_del(struct ntrdma_vbell *vbell)
 static inline void ntrdma_vbell_clear(struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
-	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	struct ntrdma_vbell_head *head = &dev->vbell.vec[vbell->idx];
 
 	spin_lock_bh(&head->lock);
 	vbell->seq = head->seq;
@@ -307,7 +312,7 @@ static inline int _ntrdma_vbell_readd(const char *caller, int line,
 				struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
-	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	struct ntrdma_vbell_head *head = &dev->vbell.vec[vbell->idx];
 	int rc = 0;
 
 	spin_lock_bh(&head->lock);
@@ -340,7 +345,7 @@ static inline int _ntrdma_vbell_readd(const char *caller, int line,
 static inline int ntrdma_vbell_add_clear(struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
-	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	struct ntrdma_vbell_head *head = &dev->vbell.vec[vbell->idx];
 	int rc = 0;
 
 	spin_lock_bh(&head->lock);
@@ -368,7 +373,7 @@ static inline int _ntrdma_vbell_trigger(const char *caller, int line,
 					struct ntrdma_vbell *vbell)
 {
 	struct ntrdma_dev *dev = vbell->dev;
-	struct ntrdma_vbell_head *head = &dev->vbell_vec[vbell->idx];
+	struct ntrdma_vbell_head *head = &dev->vbell.vec[vbell->idx];
 	int rc = 0;
 
 	spin_lock_bh(&head->lock);

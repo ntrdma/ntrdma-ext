@@ -139,7 +139,7 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	dev->is_cmd_prep = false;
 
 	/* assigned in ready phase */
-	ntc_remote_buf_clear(&dev->peer_cmd_send_rsp_buf);
+	ntc_remote_buf_clear(&dev->cmd_recv.peer_cmd_send_rsp_buf);
 	/* assigned in conf phase */
 	dev->peer_cmd_send_vbell_idx = 0;
 
@@ -292,7 +292,7 @@ int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
 		goto err_sanity;
 	}
 
-	rc = ntc_remote_buf_map(&dev->peer_cmd_send_rsp_buf, dev->ntc,
+	rc = ntc_remote_buf_map(&dev->cmd_recv.peer_cmd_send_rsp_buf, dev->ntc,
 				&peer_info->send_rsp_buf_desc);
 	if (rc < 0) {
 		ntrdma_err(dev, "peer_cmd_send_rsp_buf map failed");
@@ -343,7 +343,7 @@ err_recv_buf:
 	dev->cmd_recv.cap = 0;
 	dev->peer_cmd_send_vbell_idx = 0;
 	dev->peer_cmd_recv_vbell_idx = 0;
-	ntc_remote_buf_unmap(&dev->peer_cmd_send_rsp_buf, dev->ntc);
+	ntc_remote_buf_unmap(&dev->cmd_recv.peer_cmd_send_rsp_buf, dev->ntc);
 err_peer_cmd_send_rsp_buf:
 err_sanity:
 	return rc;
@@ -1340,7 +1340,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 		off = start * sizeof(union ntrdma_rsp);
 		len = (pos - start) * sizeof(union ntrdma_rsp);
-		rc = ntc_memcpy(&dev->peer_cmd_send_rsp_buf, off,
+		rc = ntc_memcpy(&dev->cmd_recv.peer_cmd_send_rsp_buf, off,
 				&dev->cmd_recv.rsp_buf, off, len);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
@@ -1349,7 +1349,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 		}
 
 		/* update the producer index on the peer */
-		rc = ntc_imm32(&dev->peer_cmd_send_rsp_buf,
+		rc = ntc_imm32(&dev->cmd_recv.peer_cmd_send_rsp_buf,
 				dev->peer_send_cons_shift,
 				dev->cmd_recv.cons);
 		if (unlikely(rc < 0)) {
