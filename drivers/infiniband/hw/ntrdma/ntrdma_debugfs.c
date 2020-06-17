@@ -442,11 +442,11 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "cmd_send_rsp_buf.dma_addr %#llx\n",
 		(dma_addr_t)dev->cmd_send.rsp_buf.dma_addr);
 	seq_printf(s, "peer_cmd_recv_buf.dma_addr %#llx\n",
-		(dma_addr_t)dev->peer_cmd_recv_buf.dma_addr);
+		(dma_addr_t)dev->cmd_send.peer_cmd_recv_buf.dma_addr);
 	seq_printf(s, "peer_recv_prod_shift %#llx\n",
-		dev->peer_recv_prod_shift);
+		dev->cmd_send.peer_recv_prod_shift);
 	seq_printf(s, "peer_cmd_recv_vbell_idx %u\n",
-		   dev->peer_cmd_recv_vbell_idx);
+		   dev->cmd_send.peer_cmd_recv_vbell_idx);
 
 	seq_printf(s, "cmd_send_vbell_idx %u\n", dev->cmd_send.vbell.idx);
 	seq_printf(s, "cmd_send_vbell_seq %u\n", dev->cmd_send.vbell.seq);
@@ -463,9 +463,9 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "peer_cmd_send_rsp_buf.dma_addr %#llx\n",
 		(dma_addr_t)dev->cmd_recv.peer_cmd_send_rsp_buf.dma_addr);
 	seq_printf(s, "peer_send_cons_shift %#llx\n",
-		   dev->peer_send_cons_shift);
+		   dev->cmd_recv.peer_send_cons_shift);
 	seq_printf(s, "peer_cmd_send_vbell_idx %u\n",
-		   dev->peer_cmd_send_vbell_idx);
+		   dev->cmd_recv.peer_cmd_send_vbell_idx);
 
 	seq_printf(s, "cmd_recv_vbell_idx %u\n", dev->cmd_recv.vbell.idx);
 	seq_printf(s, "cmd_recv_vbell_seq %u\n", dev->cmd_recv.vbell.seq);

@@ -141,7 +141,7 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 	/* assigned in ready phase */
 	ntc_remote_buf_clear(&dev->cmd_recv.peer_cmd_send_rsp_buf);
 	/* assigned in conf phase */
-	dev->peer_cmd_send_vbell_idx = 0;
+	dev->cmd_recv.peer_cmd_send_vbell_idx = 0;
 
 	/* send work */
 	INIT_LIST_HEAD(&dev->cmd_send.pend_list);
@@ -220,14 +220,14 @@ int ntrdma_dev_cmd_hello_done_undone(struct ntrdma_dev *dev,
 	if (is_undone)
 		goto undone;
 
-	rc = ntc_remote_buf_map(&dev->peer_cmd_recv_buf, dev->ntc,
+	rc = ntc_remote_buf_map(&dev->cmd_send.peer_cmd_recv_buf, dev->ntc,
 				&peer_prep->recv_buf_desc);
 	if (rc < 0) {
 		ntrdma_err(dev, "peer cmd recv buff map failed");
 		goto err_peer_cmd_recv_buf;
 	}
 
-	dev->peer_recv_prod_shift = peer_prep->recv_prod_shift;
+	dev->cmd_send.peer_recv_prod_shift = peer_prep->recv_prod_shift;
 
 	dev->is_cmd_hello_done = true;
 
@@ -237,7 +237,7 @@ undone:
 		return 0;
 
 	dev->is_cmd_hello_done = false;
-	ntc_remote_buf_unmap(&dev->peer_cmd_recv_buf, dev->ntc);
+	ntc_remote_buf_unmap(&dev->cmd_send.peer_cmd_recv_buf, dev->ntc);
 err_peer_cmd_recv_buf:
 	return rc;
 }
@@ -299,10 +299,10 @@ int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
 		goto err_peer_cmd_send_rsp_buf;
 	}
 
-	dev->peer_send_cons_shift = peer_info->send_cons_shift;
+	dev->cmd_recv.peer_send_cons_shift = peer_info->send_cons_shift;
 
-	dev->peer_cmd_send_vbell_idx = peer_info->send_vbell_idx;
-	dev->peer_cmd_recv_vbell_idx = peer_info->recv_vbell_idx;
+	dev->cmd_recv.peer_cmd_send_vbell_idx = peer_info->send_vbell_idx;
+	dev->cmd_send.peer_cmd_recv_vbell_idx = peer_info->recv_vbell_idx;
 
 	/* allocate local recv ring for peer send */
 	dev->cmd_recv.cap = peer_info->send_cap;
@@ -341,8 +341,8 @@ err_recv_buf:
 	dev->cmd_send.prod = 0;
 	dev->cmd_recv.cons = 0;
 	dev->cmd_recv.cap = 0;
-	dev->peer_cmd_send_vbell_idx = 0;
-	dev->peer_cmd_recv_vbell_idx = 0;
+	dev->cmd_recv.peer_cmd_send_vbell_idx = 0;
+	dev->cmd_send.peer_cmd_recv_vbell_idx = 0;
 	ntc_remote_buf_unmap(&dev->cmd_recv.peer_cmd_send_rsp_buf, dev->ntc);
 err_peer_cmd_send_rsp_buf:
 err_sanity:
@@ -602,7 +602,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 		off = start * sizeof(union ntrdma_cmd);
 		len = (pos - start) * sizeof(union ntrdma_cmd);
-		rc = ntc_memcpy(&dev->peer_cmd_recv_buf, off,
+		rc = ntc_memcpy(&dev->cmd_send.peer_cmd_recv_buf, off,
 				&dev->cmd_send.buf, off, len);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
@@ -611,8 +611,8 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 		}
 
 		/* update the producer index on the peer */
-		rc = ntc_imm32(&dev->peer_cmd_recv_buf,
-				dev->peer_recv_prod_shift,
+		rc = ntc_imm32(&dev->cmd_send.peer_cmd_recv_buf,
+				dev->cmd_send.peer_recv_prod_shift,
 				dev->cmd_send.prod);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
@@ -622,7 +622,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 		/* update the vbell and signal the peer */
 		rc = ntrdma_dev_vbell_peer_direct(dev,
-				dev->peer_cmd_recv_vbell_idx);
+				dev->cmd_send.peer_cmd_recv_vbell_idx);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
 					"ntrdma_dev_vbell_peer_direct: rc=%d",
@@ -639,7 +639,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 
 		TRACE("CMD: Send %d cmds to pos %u vbell %u\n",
 				(pos - start), start,
-				dev->peer_cmd_recv_vbell_idx);
+				dev->cmd_send.peer_cmd_recv_vbell_idx);
 	}
 
 	 dma_err:
@@ -1350,7 +1350,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 
 		/* update the producer index on the peer */
 		rc = ntc_imm32(&dev->cmd_recv.peer_cmd_send_rsp_buf,
-				dev->peer_send_cons_shift,
+				dev->cmd_recv.peer_send_cons_shift,
 				dev->cmd_recv.cons);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
@@ -1361,7 +1361,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 		/* update the vbell and signal the peer */
 
 		rc = ntrdma_dev_vbell_peer_direct(dev,
-				dev->peer_cmd_send_vbell_idx);
+				dev->cmd_recv.peer_cmd_send_vbell_idx);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
 					"ntrdma_dev_vbell_peer_direct: rc=%d",
