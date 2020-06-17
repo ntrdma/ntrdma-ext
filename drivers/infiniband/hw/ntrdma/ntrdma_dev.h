@@ -120,6 +120,10 @@ struct ntrdma_dev_cmd_send {
 
 	struct ntc_local_buf		buf;
 	struct ntc_export_buf		rsp_buf;
+
+	struct ntc_remote_buf		peer_cmd_recv_buf;
+	u64				peer_recv_prod_shift;
+	u32				peer_cmd_recv_vbell_idx;
 };
 
 struct ntrdma_dev_cmd_recv {
@@ -190,16 +194,7 @@ struct ntrdma_dev {
 	struct ntrdma_dev_cmd_send cmd_send;
 	struct ntrdma_dev_cmd_recv cmd_recv;
 
-
-	struct ntc_remote_buf		peer_cmd_send_rsp_buf;
-	u64				peer_send_cons_shift;
-	u32				peer_cmd_send_vbell_idx;
-
-
 	/* command send ring buffers and consumer index */
-	struct ntc_remote_buf		peer_cmd_recv_buf;
-	u64				peer_recv_prod_shift;
-	u32				peer_cmd_recv_vbell_idx;
 	int				is_cmd_hello_done;
 	/* hello buffers */
 	const u8 *hello_local_buf;
