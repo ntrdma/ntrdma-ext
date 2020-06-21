@@ -162,8 +162,6 @@ static inline void ntc_perf_finish_measure(struct ntc_perf_tracker_current *c)
 	t->total = 0;
 }
 
-#define NTC_PERF_TRACK
-
 #ifdef NTC_PERF_TRACK
 
 #define DEFINE_NTC_PERF_TRACKER(name, p, w)				\
