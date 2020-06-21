@@ -95,7 +95,6 @@ int ntrdma_dev_res_init(struct ntrdma_dev *dev)
 
 	return 0;
 
-	//ntrdma_vec_deinit(&dev->rqp_vec);
 err_rqp:
 	ntrdma_vec_deinit(&dev->rres.rmr_vec);
 err_rmr:

@@ -333,6 +333,8 @@ struct ntrdma_rqp {
 	/* work request processing */
 	struct ntrdma_vbell		send_vbell;
 	struct tasklet_struct		send_work;
+
+	struct mutex lock;
 };
 
 inline u32 ntrdma_rqp_send_prod(struct ntrdma_rqp *rqp);
