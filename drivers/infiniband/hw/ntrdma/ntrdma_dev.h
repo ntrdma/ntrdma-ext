@@ -220,7 +220,6 @@ struct ntrdma_dev {
 	atomic_t mr_num;
 	atomic_t pd_num;
 
-	struct mutex cmd_modify_qp_recv_lock;
 };
 
 inline u32 ntrdma_dev_cmd_send_cons(struct ntrdma_dev *dev);
