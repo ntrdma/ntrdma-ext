@@ -125,7 +125,6 @@ static inline int ntrdma_dev_cmd_init_deinit(struct ntrdma_dev *dev,
 
 	/* recv work */
 	mutex_init(&dev->cmd_recv.lock);
-	mutex_init(&dev->cmd_modify_qp_recv_lock);
 
 	ntrdma_work_vbell_init(dev, &dev->cmd_recv.vbell, recv_vbell_idx,
 			&dev->cmd_recv.work);
@@ -1007,6 +1006,8 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 		goto err_rqp;
 	}
 
+	mutex_init(&rqp->lock);
+
 	attr.pd_key = cmd.pd_key;
 	attr.recv_wqe_idx = cmd.recv_ring_idx;
 	attr.recv_wqe_cap = cmd.recv_wqe_cap;
@@ -1127,7 +1128,6 @@ int _ntrmda_rqp_modify_local(struct ntrdma_dev *dev,
 	struct ntrdma_rqp *rqp;
 	u32 qp_according_to_rqp;
 	struct ntrdma_qp *qp;
-	int rc;
 
 	rqp = ntrdma_dev_rqp_look_and_get(dev, src_qp_key);
 	if (!rqp) {
@@ -1136,7 +1136,7 @@ int _ntrmda_rqp_modify_local(struct ntrdma_dev *dev,
 		return -EINVAL;
 	}
 
-	mutex_lock(&dev->cmd_modify_qp_recv_lock); /*FIXME why global*/
+	mutex_lock(&rqp->lock);
 
 	rqp->state = new_state;
 
@@ -1151,6 +1151,7 @@ int _ntrmda_rqp_modify_local(struct ntrdma_dev *dev,
 
 	ntrdma_vbell_trigger(&rqp->send_vbell);
 	qp_according_to_rqp = rqp->qp_key;
+	mutex_unlock(&rqp->lock);
 	ntrdma_rqp_put(rqp);
 
 	if (is_state_error(new_state) &&
@@ -1162,8 +1163,7 @@ int _ntrmda_rqp_modify_local(struct ntrdma_dev *dev,
 			ntrdma_dbg(dev,
 					"ntrdma_dev_qp_look failed QP %d (RQP %d) from %s",
 					dest_qp_key, src_qp_key, caller);
-			rc = 0;
-			goto exit_unlock;
+			return 0;
 		}
 
 		ntrdma_res_lock(&qp->res);
@@ -1185,11 +1185,7 @@ int _ntrmda_rqp_modify_local(struct ntrdma_dev *dev,
 		ntrdma_qp_put(qp);
 	}
 
-	rc = 0;
-
-exit_unlock:
-	mutex_unlock(&dev->cmd_modify_qp_recv_lock);
-	return rc;
+	return 0;
 }
 
 int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
