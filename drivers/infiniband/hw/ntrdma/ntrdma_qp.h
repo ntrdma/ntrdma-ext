@@ -249,18 +249,6 @@ static inline void ntrdma_qp_recv_post_put(struct ntrdma_qp *qp,
 	qp->recv_post = ntrdma_ring_update(pos, base, qp->recv_cap);
 }
 
-static inline void ntrdma_qp_send_post_lock(struct ntrdma_qp *qp)
-{
-	if (qp->qp_type == IB_QPT_GSI)
-		spin_lock_bh(&qp->send_post_slock); /* Potential deadlock? */
-}
-
-static inline void ntrdma_qp_send_post_unlock(struct ntrdma_qp *qp)
-{
-	if (qp->qp_type == IB_QPT_GSI)
-		spin_unlock_bh(&qp->send_post_slock);
-}
-
 bool ntrdma_qp_send_work(struct ntrdma_qp *qp);
 
 static inline bool ntrdma_qp_send_post_get(struct ntrdma_qp *qp,
@@ -451,12 +439,8 @@ static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 {
 	TRACE("Move QP %d to err state from %s, line %d\n",
 			qp->res.key, s, line);
-	if (qp->qp_type == IB_QPT_GSI)
-		atomic_set(&qp->state, IB_QPS_SQE);
-	else {
-		atomic_set(&qp->state, IB_QPS_ERR);
-		qp->dma_chan_init = false;
-	}
+	atomic_set(&qp->state, IB_QPS_ERR);
+	qp->dma_chan_init = false;
 }
 
 struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev);
