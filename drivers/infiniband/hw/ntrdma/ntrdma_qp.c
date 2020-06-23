@@ -183,27 +183,16 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	ntrdma_res_init(&qp->res, dev,
 			ntrdma_qp_enable_cb, ntrdma_qp_disable_cb);
 
-	if (attr->qp_type == IB_QPT_GSI || attr->qp_type == IB_QPT_SMI) {
-		BUILD_BUG_ON(NTRDMA_QP_VEC_PREALLOCATED <= IB_QPT_GSI);
-		BUILD_BUG_ON(NTRDMA_QP_VEC_PREALLOCATED <= IB_QPT_SMI);
-		qp->res.key = attr->qp_type;
-	} else {
-		rc = ntrdma_kvec_reserve_key(&dev->res.qp_vec, dev->node);
-		if (rc < 0) {
-			ntrdma_err(dev, "Fail to reserve resources on dev %p",
-					dev);
-			goto err_res;
-		}
-		qp->res.key = rc;
+	rc = ntrdma_kvec_reserve_key(&dev->res.qp_vec, dev->node);
+	if (rc < 0) {
+		ntrdma_err(dev, "Fail to reserve resources on dev %p",
+				dev);
+		goto err_res;
 	}
+	qp->res.key = rc;
 
-	if (attr->qp_type == IB_QPT_GSI) {
-		ntc_init_dma_chan(&qp->dma_chan, dev->ntc, NTC_QP_DMA_CHAN);
-		qp->dma_chan_init = true;
-	} else {
-		qp->dma_chan = NULL;
-		qp->dma_chan_init = false;
-	}
+	qp->dma_chan = NULL;
+	qp->dma_chan_init = false;
 
 	ntrdma_cq_get(recv_cq);
 	qp->recv_cq = recv_cq;
@@ -1381,8 +1370,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 		ntrdma_qp_vdbg(qp, "QP %d state %d will retry", qp->res.key,
 			atomic_read(&qp->state));
 
-		if (qp->qp_type != IB_QPT_GSI)
-			qp->recv_aborting = true;
+		qp->recv_aborting = true;
 
 		goto unlock;
 	}
@@ -1534,21 +1522,11 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 
 	/* get the next producing range in the send ring */
 	ntrdma_qp_send_prod_get(qp, &start, &end, &base);
-	if (qp->qp_type == IB_QPT_GSI)
-		ntrdma_qp_vdbg(qp, "QP %d, start %d, end %d, base %d",
-				qp->res.key, start, end, base);
+
 	/* quit if there is no send work to do */
 	if (start == end)
 		goto done;
 
-	/* limit the range to batch size */
-	/* end = min_t(u32, end, start + NTRDMA_QP_BATCH_SIZE); */
-
-	/* On GSI qp we do not change qp state in reset, since it cannot move
-	 * to SQE state without error completion, we move it to aborting
-	 * and on first send (here) we will provide the error completion
-	 * and move to error state
-	 */
 	if (qp->send_abort || qp->send_aborting) {
 		ntrdma_qp_err(qp, "QP %d in abort process", qp->res.key);
 		goto err_rqp;
@@ -1657,21 +1635,6 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 						wqe->ulp_handle, NTC_DMA_WAIT);
 				if (rc >= 0) {
 					wqe->rdma_sge.length = rdma_len;
-
-					if (qp->qp_type == IB_QPT_GSI) {
-						struct ib_sge sge = {
-							.lkey = NTRDMA_RESERVED_DMA_LEKY
-						};
-
-						rc = ntrdma_zip_rdma(dev, qp->dma_chan,
-									&rdma_len,
-									_recv_wqe->rcv_sg_list,
-									&sge,
-									recv_wqe.sg_count,
-									1,
-									0,
-									wqe->ulp_handle, NTC_DMA_WAIT);
-					}
 				}
 			} else {
 				ntrdma_err(dev,
@@ -1769,17 +1732,7 @@ err_memcpy:
 err_recv:
 	ntrdma_rqp_put(rqp);
 err_rqp:
-	if (qp->qp_type == IB_QPT_GSI) {
-		atomic_set(&qp->state, IB_QPS_SQE);
-		qp->send_aborting = true;
-		qp->send_abort = false;
-		qp->send_abort_first = false;
-		/* We know no other ntrdma_post_send is running */
-		ntrdma_qp_send_prod_put(qp, end, base);
-		spin_unlock_bh(&qp->send_prod_lock);
-		ntrdma_cq_cue(qp->send_cq);
-	} else
-		spin_unlock_bh(&qp->send_prod_lock);
+	spin_unlock_bh(&qp->send_prod_lock);
 
 	ntrdma_qp_info_ratelimited(qp, "err_rqp QP %d aborting = %d qp %p, cq %p end %d\n",
 		qp->send_aborting, qp->res.key, qp, qp->send_cq, end);
