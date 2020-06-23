@@ -627,11 +627,11 @@ static inline int ntrdma_ib_wc_opcode_from_cqe(u32 op_code)
 	return -1;
 }
 
-static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code, bool set_grh)
+static inline int ntrdma_ib_wc_flags_from_cqe(u32 op_code)
 {
 	switch (op_code) {
 	case NTRDMA_WR_RECV:
-		return (set_grh ? IB_WC_GRH : 0);
+		return 0;
 	case NTRDMA_WR_RECV_IMM:
 	case NTRDMA_WR_RECV_RDMA:
 		return IB_WC_WITH_IMM;
@@ -656,8 +656,7 @@ static void ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 	ibwc->ex.imm_data = cqe->imm_data;
 	ibwc->src_qp = qp->rqp_key;
 	ibwc->wc_flags = 0;
-	ibwc->wc_flags = ntrdma_ib_wc_flags_from_cqe(cqe->op_code,
-			(ibwc->qp->qp_type == IB_QPT_GSI));
+	ibwc->wc_flags = ntrdma_ib_wc_flags_from_cqe(cqe->op_code);
 	ibwc->pkey_index = 0;
 	ibwc->slid = 0;
 	ibwc->sl = 0;
@@ -673,7 +672,7 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 	struct ntrdma_qp *qp;
 	struct ntrdma_cqe cqe;
 	u32 pos, end, base;
-	int count_s = 0, count_ns = 0, count_gsi = 0, rc = 0;
+	int count_s = 0, count_ns = 0, rc = 0;
 	int count = 0;
 
 	NTRDMA_IB_PERF_INIT;
@@ -711,13 +710,10 @@ static int ntrdma_poll_cq(struct ib_cq *ibcq,
 						cqe.flags);
 
 				/* SHIFT 10 >> for saving bits, postponing wrap-around... */
-				if (qp->qp_type != IB_QPT_GSI) {
-					if (cqe.flags & IB_SEND_SIGNALED)
-						++count_s;
-					else
-						++count_ns;
-				} else
-					++count_gsi;
+				if (cqe.flags & IB_SEND_SIGNALED)
+					++count_s;
+				else
+					++count_ns;
 				++count;
 			}
 
@@ -785,8 +781,7 @@ static void ntrdma_wc_from_cqe(struct ntrdma_ibv_wc *wc,
 	wc->byte_len = cqe->rdma_len;
 	wc->imm_data = cqe->imm_data;
 	wc->src_qp = qp->rqp_key;
-	wc->wc_flags = ntrdma_ib_wc_flags_from_cqe(op_code,
-			(qp->ibqp.qp_type == IB_QPT_GSI));
+	wc->wc_flags = ntrdma_ib_wc_flags_from_cqe(op_code);
 	wc->pkey_index = 0;
 	wc->slid = 0;
 	wc->sl = 0;
@@ -851,12 +846,10 @@ static inline int ntrdma_cq_process_poll_ioctl(struct ntrdma_cq *cq)
 					pos,
 					end,
 					cqe.flags);
-				if (qp->qp_type != IB_QPT_GSI) {
-					if (cqe.flags & IB_SEND_SIGNALED)
-						++count_s;
-					else
-						++count_ns;
-				}
+				if (cqe.flags & IB_SEND_SIGNALED)
+					++count_s;
+				else
+					++count_ns;
 				++count;
 			}
 
@@ -1545,7 +1538,6 @@ static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
 					struct ntrdma_send_wqe *wqe,
 					struct ib_sge *sg_list)
 {
-	bool from_user = (qp->qp_type != IB_QPT_GSI);
 	u64 tail_size;
 	u64 entry_size;
 	u64 available_size;
@@ -1556,29 +1548,23 @@ static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
 		entry_size = sg_list[i].length;
 		if (!entry_size)
 			continue;
-		if (from_user) {
-			if (copy_from_user(snd_inline_data(wqe) + tail_size,
-						(void __user *)sg_list[i].addr,
-						entry_size)) {
-				ntrdma_qp_err(qp,
-					"QP %d: copy from user failed (%p -> %p) size %lld",
-					qp->res.key,
-					snd_inline_data(wqe) + tail_size,
+		if (copy_from_user(snd_inline_data(wqe) + tail_size,
 					(void __user *)sg_list[i].addr,
-							entry_size);
-				return -EFAULT;
-			}
-		} else
-			memcpy(snd_inline_data(wqe) + tail_size,
-				phys_to_virt(sg_list[i].addr), entry_size);
+					entry_size)) {
+			ntrdma_qp_err(qp,
+				"QP %d: copy from user failed (%p -> %p) size %lld",
+				qp->res.key,
+				snd_inline_data(wqe) + tail_size,
+				(void __user *)sg_list[i].addr,
+						entry_size);
+			return -EFAULT;
+		}
 	}
 
 	this_cpu_add(dev_cnt.post_send_bytes, available_size);
-	if (qp->qp_type != IB_QPT_GSI) {
-		if (wqe->flags & IB_SEND_SIGNALED)
-			this_cpu_inc(dev_cnt.post_send_wqes_signalled);
-		this_cpu_inc(dev_cnt.post_send_wqes);
-	}
+	if (wqe->flags & IB_SEND_SIGNALED)
+		this_cpu_inc(dev_cnt.post_send_wqes_signalled);
+	this_cpu_inc(dev_cnt.post_send_wqes);
 
 	return 0;
 }
@@ -1611,7 +1597,6 @@ static inline int ntrdma_ib_send_to_wqe(struct ntrdma_qp *qp,
 #endif
 {
 	bool is_rdma = ntrdma_send_opcode_is_rdma(ibwr->opcode);
-	bool from_user;
 	u64 tail_size;
 	u64 entry_size;
 	u64 available_size;
@@ -1628,12 +1613,9 @@ static inline int ntrdma_ib_send_to_wqe(struct ntrdma_qp *qp,
 	wqe->flags = ibwr->send_flags;
 
 	if (is_rdma) {
-		from_user = (qp->qp_type != IB_QPT_GSI);
-		if (unlikely(from_user !=
-				(wqe->rdma_sge.lkey !=
-					NTRDMA_RESERVED_DMA_LEKY))) {
-			ntrdma_qp_err(qp, "QP %d: wrid 0x%llx from_user %d but key reserved %d",
-				qp->res.key, wqe->ulp_handle, from_user,
+		if (unlikely(wqe->rdma_sge.lkey == NTRDMA_RESERVED_DMA_LEKY)) {
+			ntrdma_qp_err(qp, "QP %d: wrid 0x%llx but key reserved %d",
+				qp->res.key, wqe->ulp_handle,
 				(wqe->rdma_sge.lkey ==
 						NTRDMA_RESERVED_DMA_LEKY));
 			return -EINVAL;
@@ -1673,7 +1655,6 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
 					struct ntrdma_send_wqe *wqe,
 					struct ib_sge *sg_list)
 {
-	bool from_user = (qp->qp_type != IB_QPT_GSI);
 	int sg_count = wqe->sg_count;
 	struct ib_sge *sge;
 	struct ib_sge *wqe_snd_sge;
@@ -1684,21 +1665,19 @@ static inline int ntrdma_ib_send_to_wqe_sgl(struct ntrdma_qp *qp,
 		wqe_snd_sge = snd_sg_list(i, wqe);
 		*wqe_snd_sge = *sge;
 
-		if (unlikely(from_user != !ntrdma_ib_sge_reserved(sge))) {
+		if (unlikely(ntrdma_ib_sge_reserved(sge))) {
 			ntrdma_qp_err(qp,
-				"QP %d from_user %d but key reserved %d",
-				qp->res.key, from_user,
+				"QP %d fbut key reserved %d",
+				qp->res.key,
 				ntrdma_ib_sge_reserved(sge));
 			return -EINVAL;
 		}
 
 		this_cpu_add(dev_cnt.post_send_bytes, sge->length);
 	}
-	if (qp->qp_type != IB_QPT_GSI) {
-		if (wqe->flags & IB_SEND_SIGNALED)
-			this_cpu_add(dev_cnt.post_send_wqes_signalled, sg_count);
-		this_cpu_add(dev_cnt.post_send_wqes, sg_count);
-	}
+	if (wqe->flags & IB_SEND_SIGNALED)
+		this_cpu_add(dev_cnt.post_send_wqes_signalled, sg_count);
+	this_cpu_add(dev_cnt.post_send_wqes, sg_count);
 
 	return 0;
 }
@@ -1848,6 +1827,7 @@ static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 	return rc;
 }
 
+/* Assuming the QP is locked in the rdma-core library */
 static int ntrdma_post_send(struct ib_qp *ibqp,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
 			struct ib_send_wr *ibwr,
@@ -1863,9 +1843,6 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 	bool has_deferred_work = false;
 	int rc;
 
-	/* Assuming the QP is locked in the rdma-core library */
-	ntrdma_qp_send_post_lock(qp);
-
 	if (likely(ntrdma_qp_is_send_ready(qp))) {
 		rc = ntrdma_post_send_locked(qp, ibwr, bad,
 					&had_immediate_work,
@@ -1877,8 +1854,6 @@ static int ntrdma_post_send(struct ib_qp *ibqp,
 			atomic_read(&qp->state));
 		rc = -EINVAL;
 	}
-
-	ntrdma_qp_send_post_unlock(qp);
 
 	NTRDMA_PERF_MEASURE(perf);
 
@@ -2394,11 +2369,9 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 			return -EINVAL;
 		}
 		available_size = wqe->inline_len;
-		if (qp->qp_type != IB_QPT_GSI) {
-			if (wqe->flags & IB_SEND_SIGNALED)
-				this_cpu_inc(dev_cnt.post_send_wqes_ioctl_signalled);
-			this_cpu_inc(dev_cnt.post_send_wqes_ioctl);
-		}
+		if (wqe->flags & IB_SEND_SIGNALED)
+			this_cpu_inc(dev_cnt.post_send_wqes_ioctl_signalled);
+		this_cpu_inc(dev_cnt.post_send_wqes_ioctl);
 	} else {
 		if (unlikely(wqe->sg_count * sizeof(struct ib_sge) !=
 				wqe_size - sizeof(*wqe))) {
@@ -2422,11 +2395,9 @@ static inline int ntrdma_validate_post_send_wqe(struct ntrdma_qp *qp,
 			}
 			available_size += wqe_snd_sge->length;
 		}
-		if (qp->qp_type != IB_QPT_GSI) {
-			if (wqe->flags & IB_SEND_SIGNALED)
-				this_cpu_inc(dev_cnt.post_send_wqes_ioctl_signalled);
-			this_cpu_inc(dev_cnt.post_send_wqes_ioctl);
-		}
+		if (wqe->flags & IB_SEND_SIGNALED)
+			this_cpu_inc(dev_cnt.post_send_wqes_ioctl_signalled);
+		this_cpu_inc(dev_cnt.post_send_wqes_ioctl);
 	}
 
 	this_cpu_add(dev_cnt.post_send_bytes, available_size);
@@ -2520,6 +2491,7 @@ static inline int ntrdma_qp_process_send_ioctl_locked(struct ntrdma_qp *qp,
 	return rc;
 }
 
+/* Assuming the QP is locked in the rdma-core library */
 static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 {
 	DEFINE_NTC_FUNC_PERF_TRACKER(perf, 1 << 20);
@@ -2534,9 +2506,6 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 	}
 	_uptr = page_address(qp->send_page);
 
-	/* Assuming the QP is locked in the rdma-core library */
-	ntrdma_qp_send_post_lock(qp);
-
 	if (likely(ntrdma_qp_is_send_ready(qp))) {
 		rc = ntrdma_qp_process_send_ioctl_locked(qp, _uptr,
 							&had_immediate_work,
@@ -2548,8 +2517,6 @@ static inline int ntrdma_qp_process_send_ioctl(struct ntrdma_qp *qp)
 			atomic_read(&qp->state));
 		rc = -EINVAL;
 	}
-
-	ntrdma_qp_send_post_unlock(qp);
 
 	NTRDMA_PERF_MEASURE(perf);
 
