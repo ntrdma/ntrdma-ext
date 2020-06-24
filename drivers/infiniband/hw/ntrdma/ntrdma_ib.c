@@ -505,9 +505,9 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	 */
 	ntrdma_cq_vbell_init(cq, vbell_idx);
 
-	mutex_lock(&dev->res.res_lock);
+	mutex_lock(&dev->res.lock);
 	list_add_tail(&cq->obj.dev_entry, &dev->res.cq_list);
-	mutex_unlock(&dev->res.res_lock);
+	mutex_unlock(&dev->res.lock);
 
 	ntrdma_debugfs_cq_add(cq);
 
@@ -561,9 +561,9 @@ static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 	 * Remove from list before killing vbell,
 	 * so that killed vbell does not go off from ntrdma_cq_arm_resync().
 	 */
-	mutex_lock(&dev->res.res_lock);
+	mutex_lock(&dev->res.lock);
 	list_del(&cq->obj.dev_entry);
-	mutex_unlock(&dev->res.res_lock);
+	mutex_unlock(&dev->res.lock);
 
 	ntrdma_cq_vbell_kill(cq);
 
@@ -935,10 +935,10 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 		goto err_pd;
 	}
 
-	mutex_lock(&dev->res.res_lock);
+	mutex_lock(&dev->res.lock);
 	ntrdma_pd_init(pd, dev, dev->res.pd_next_key++);
 	list_add_tail(&pd->obj.dev_entry, &dev->res.pd_list);
-	mutex_unlock(&dev->res.res_lock);
+	mutex_unlock(&dev->res.lock);
 
 	ntrdma_vdbg(dev, "added pd key=%d", pd->key);
 
@@ -970,9 +970,9 @@ static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
-	mutex_lock(&dev->res.res_lock);
+	mutex_lock(&dev->res.lock);
 	list_del(&pd->obj.dev_entry);
-	mutex_unlock(&dev->res.res_lock);
+	mutex_unlock(&dev->res.lock);
 
 	ntrdma_pd_put(pd);
 

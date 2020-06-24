@@ -720,11 +720,12 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 	qp->peer_send_vbell_idx = 0;
 	spin_unlock_bh(&qp->send_prod_lock);
 
-
 	qp->send_aborting = true;
 	qp->recv_aborting = true;
 
 	ntrdma_res_unlock(&qp->res);
+
+	ntrdma_cm_qp_shutdown(qp);
 }
 
 static void ntrdma_rqp_free(struct ntrdma_rres *rres)

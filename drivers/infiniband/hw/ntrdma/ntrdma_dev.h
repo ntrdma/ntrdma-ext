@@ -87,7 +87,7 @@ struct ntrdma_dev_counters {
 
 /* NTRDMA device local resources */
 struct ntrdma_dev_res {
-	struct mutex			res_lock;
+	struct mutex			lock;
 	struct list_head		mr_list;
 	struct list_head		qp_list;
 	struct ntrdma_kvec		mr_vec;
@@ -98,10 +98,45 @@ struct ntrdma_dev_res {
 };
 
 struct ntrdma_dev_rres {
-	struct mutex			rres_lock;
-	struct list_head		rres_list;
+	struct mutex			lock;
+	struct list_head		list;
 	struct ntrdma_vec		rmr_vec;
 	struct ntrdma_vec		rqp_vec;
+};
+
+struct ntrdma_dev_cmd_send {
+	struct mutex			lock;
+	bool				ready;
+	struct list_head	pend_list;
+	struct list_head	post_list;
+
+	struct work_struct		work;
+	struct ntrdma_vbell		vbell;
+
+	/* command send ring indices */
+	u32				cap;
+	u32				prod;
+	u32				cmpl;
+
+	struct ntc_local_buf		buf;
+	struct ntc_export_buf		rsp_buf;
+};
+
+struct ntrdma_dev_cmd_recv {
+	bool				ready;
+
+	/* command recv work */
+	struct mutex			lock;
+	struct work_struct		work;
+	struct ntrdma_vbell		vbell;
+
+	/* command recv ring indices */
+	u32				cap;
+	u32				cons;
+
+	/* command recv ring buffers and producer index */
+	struct ntc_export_buf		buf;
+	struct ntc_local_buf		rsp_buf;
 };
 
 /* RDMA over PCIe NTB device */
@@ -147,40 +182,16 @@ struct ntrdma_dev {
 
 	/* commands to affect remote resources */
 
-	bool				cmd_send_ready;
-	bool				cmd_recv_ready;
+	struct ntrdma_dev_cmd_send cmd_send;
+	struct ntrdma_dev_cmd_recv cmd_recv;
 
-	/* command recv work */
-	struct mutex			cmd_recv_lock;
-	struct work_struct		cmd_recv_work;
-	struct ntrdma_vbell		cmd_recv_vbell;
 
-	/* command recv ring indices */
-	u32				cmd_recv_cap;
-	u32				cmd_recv_cons;
-
-	/* command recv ring buffers and producer index */
-	struct ntc_export_buf		cmd_recv_buf;
-	struct ntc_local_buf		cmd_recv_rsp_buf;
 	struct ntc_remote_buf		peer_cmd_send_rsp_buf;
 	u64				peer_send_cons_shift;
 	u32				peer_cmd_send_vbell_idx;
 
-	/* command recv work */
-	struct list_head	cmd_pend_list; /* Protected by cmd_send_lock */
-	struct list_head	cmd_post_list; /* Protected by cmd_send_lock */
-	struct mutex			cmd_send_lock;
-	struct work_struct		cmd_send_work;
-	struct ntrdma_vbell		cmd_send_vbell;
-
-	/* command send ring indices */
-	u32				cmd_send_cap;
-	u32				cmd_send_prod;
-	u32				cmd_send_cmpl;
 
 	/* command send ring buffers and consumer index */
-	struct ntc_local_buf		cmd_send_buf;
-	struct ntc_export_buf		cmd_send_rsp_buf;
 	struct ntc_remote_buf		peer_cmd_recv_buf;
 	u64				peer_recv_prod_shift;
 	u32				peer_cmd_recv_vbell_idx;
@@ -218,9 +229,9 @@ inline u32 ntrdma_dev_cmd_recv_prod(struct ntrdma_dev *dev);
 #define ntrdma_ntc_link_reset_work_dev(__ws) \
 	container_of(__ws, struct ntrdma_dev, ntc_link_reset_work)
 #define ntrdma_cmd_send_work_dev(__ws) \
-	container_of(__ws, struct ntrdma_dev, cmd_send_work)
+		container_of(container_of(__ws, struct ntrdma_dev_cmd_send, work), struct ntrdma_dev, cmd_send)
 #define ntrdma_cmd_recv_work_dev(__ws) \
-	container_of(__ws, struct ntrdma_dev, cmd_recv_work)
+		container_of(container_of(__ws, struct ntrdma_dev_cmd_recv, work), struct ntrdma_dev, cmd_recv)
 
 #define ntrdma_dbg(__dev, ...)			\
 	ntc_dbg((__dev)->ntc, ##__VA_ARGS__)

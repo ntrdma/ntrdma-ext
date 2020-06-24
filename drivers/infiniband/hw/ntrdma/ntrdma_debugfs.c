@@ -430,17 +430,17 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 		(dma_addr_t)dev->peer_vbell_buf.dma_addr);
 	seq_printf(s, "peer_vbell_count %u\n", dev->peer_vbell_count);
 
-	seq_printf(s, "cmd_send_ready %d\n", dev->cmd_send_ready);
-	seq_printf(s, "cmd_recv_ready %d\n", dev->cmd_recv_ready);
-	seq_printf(s, "cmd_send_cap %u\n", dev->cmd_send_cap);
-	seq_printf(s, "cmd_send_prod %u\n", dev->cmd_send_prod);
+	seq_printf(s, "cmd_send_ready %d\n", dev->cmd_send.ready);
+	seq_printf(s, "cmd_recv_ready %d\n", dev->cmd_recv.ready);
+	seq_printf(s, "cmd_send_cap %u\n", dev->cmd_send.cap);
+	seq_printf(s, "cmd_send_prod %u\n", dev->cmd_send.prod);
 	seq_printf(s, "cmd_send_cons %u\n", ntrdma_dev_cmd_send_cons(dev));
-	seq_printf(s, "cmd_send_cmpl %u\n", dev->cmd_send_cmpl);
+	seq_printf(s, "cmd_send_cmpl %u\n", dev->cmd_send.cmpl);
 
 	seq_printf(s, "cmd_send_buf.dma_addr %#llx\n",
-		(dma_addr_t)dev->cmd_send_buf.dma_addr);
+		(dma_addr_t)dev->cmd_send.buf.dma_addr);
 	seq_printf(s, "cmd_send_rsp_buf.dma_addr %#llx\n",
-		(dma_addr_t)dev->cmd_send_rsp_buf.dma_addr);
+		(dma_addr_t)dev->cmd_send.rsp_buf.dma_addr);
 	seq_printf(s, "peer_cmd_recv_buf.dma_addr %#llx\n",
 		(dma_addr_t)dev->peer_cmd_recv_buf.dma_addr);
 	seq_printf(s, "peer_recv_prod_shift %#llx\n",
@@ -448,18 +448,18 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "peer_cmd_recv_vbell_idx %u\n",
 		   dev->peer_cmd_recv_vbell_idx);
 
-	seq_printf(s, "cmd_send_vbell_idx %u\n", dev->cmd_send_vbell.idx);
-	seq_printf(s, "cmd_send_vbell_seq %u\n", dev->cmd_send_vbell.seq);
-	seq_printf(s, "cmd_send_vbell_arm %d\n", dev->cmd_send_vbell.arm);
+	seq_printf(s, "cmd_send_vbell_idx %u\n", dev->cmd_send.vbell.idx);
+	seq_printf(s, "cmd_send_vbell_seq %u\n", dev->cmd_send.vbell.seq);
+	seq_printf(s, "cmd_send_vbell_arm %d\n", dev->cmd_send.vbell.arm);
 
-	seq_printf(s, "cmd_recv_cap %u\n", dev->cmd_recv_cap);
+	seq_printf(s, "cmd_recv_cap %u\n", dev->cmd_recv.cap);
 	seq_printf(s, "cmd_recv_prod %u\n", ntrdma_dev_cmd_recv_prod(dev));
-	seq_printf(s, "cmd_recv_cons %u\n", dev->cmd_recv_cons);
+	seq_printf(s, "cmd_recv_cons %u\n", dev->cmd_recv.cons);
 
 	seq_printf(s, "cmd_recv_buf.dma_addr %#llx\n",
-		(dma_addr_t)dev->cmd_recv_buf.dma_addr);
+		(dma_addr_t)dev->cmd_recv.buf.dma_addr);
 	seq_printf(s, "cmd_recv_rsp_buf.dma_addr %#llx\n",
-		(dma_addr_t)dev->cmd_recv_rsp_buf.dma_addr);
+		(dma_addr_t)dev->cmd_recv.rsp_buf.dma_addr);
 	seq_printf(s, "peer_cmd_send_rsp_buf.dma_addr %#llx\n",
 		(dma_addr_t)dev->peer_cmd_send_rsp_buf.dma_addr);
 	seq_printf(s, "peer_send_cons_shift %#llx\n",
@@ -467,9 +467,9 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "peer_cmd_send_vbell_idx %u\n",
 		   dev->peer_cmd_send_vbell_idx);
 
-	seq_printf(s, "cmd_recv_vbell_idx %u\n", dev->cmd_recv_vbell.idx);
-	seq_printf(s, "cmd_recv_vbell_seq %u\n", dev->cmd_recv_vbell.seq);
-	seq_printf(s, "cmd_recv_vbell_arm %d\n", dev->cmd_recv_vbell.arm);
+	seq_printf(s, "cmd_recv_vbell_idx %u\n", dev->cmd_recv.vbell.idx);
+	seq_printf(s, "cmd_recv_vbell_seq %u\n", dev->cmd_recv.vbell.seq);
+	seq_printf(s, "cmd_recv_vbell_arm %d\n", dev->cmd_recv.vbell.arm);
 
 	seq_printf(s, "eth_enable %d\n", eth->enable);
 	seq_printf(s, "eth_ready %d\n", eth->ready);
@@ -605,7 +605,7 @@ static int ntrdma_debugfs_dev_cmd_send_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_dev *dev = s->private;
 
-	return ntc_local_buf_seq_write(s, &dev->cmd_send_buf);
+	return ntc_local_buf_seq_write(s, &dev->cmd_send.buf);
 }
 
 static int ntrdma_debugfs_dev_cmd_send_open(struct inode *inode, struct file *file)
@@ -624,7 +624,7 @@ static int ntrdma_debugfs_dev_cmd_send_rsp_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_dev *dev = s->private;
 
-	return ntc_export_buf_seq_write(s, &dev->cmd_send_rsp_buf);
+	return ntc_export_buf_seq_write(s, &dev->cmd_send.rsp_buf);
 }
 
 static int ntrdma_debugfs_dev_cmd_send_rsp_open(struct inode *inode, struct file *file)
@@ -643,7 +643,7 @@ static int ntrdma_debugfs_dev_cmd_recv_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_dev *dev = s->private;
 
-	return ntc_export_buf_seq_write(s, &dev->cmd_recv_buf);
+	return ntc_export_buf_seq_write(s, &dev->cmd_recv.buf);
 }
 
 static int ntrdma_debugfs_dev_cmd_recv_open(struct inode *inode, struct file *file)
@@ -662,7 +662,7 @@ static int ntrdma_debugfs_dev_cmd_recv_rsp_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_dev *dev = s->private;
 
-	return ntc_local_buf_seq_write(s, &dev->cmd_send_buf);
+	return ntc_local_buf_seq_write(s, &dev->cmd_send.buf);
 }
 
 static int ntrdma_debugfs_dev_cmd_recv_rsp_open(struct inode *inode, struct file *file)

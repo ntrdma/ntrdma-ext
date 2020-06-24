@@ -196,7 +196,7 @@ union ntrdma_rsp {
 
 struct ntrdma_cmd_cb {
 	/* entry in the device cmd pending or posted list */
-	struct list_head	dev_entry; /* Protected by dev->cmd_send_lock */
+	struct list_head	dev_entry; /* Protected by dev->cmd_send.lock */
 
 	/* prepare a command in-place in the ring buffer */
 	int (*cmd_prep)(struct ntrdma_cmd_cb *cb,
@@ -208,8 +208,8 @@ struct ntrdma_cmd_cb {
 
 	struct completion	cmds_done;
 
-	bool			in_list; /* Protected by dev->cmd_send_lock */
-	int			cmd_id;  /* Protected by dev->cmd_send_lock */
+	bool			in_list; /* Protected by dev->cmd_send.lock */
+	int			cmd_id;  /* Protected by dev->cmd_send.lock */
 };
 
 int ntrdma_dev_cmd_init(struct ntrdma_dev *dev,
