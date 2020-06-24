@@ -47,7 +47,7 @@ struct iw_cm_verbs *ntrdma_cm_init(const char *name);
 
 void ntrdma_cm_deinit(struct iw_cm_verbs *iwcm);
 
-void ntrdma_cm_shutdown(struct ntrdma_dev *dev);
+void ntrdma_cm_qp_shutdown(struct ntrdma_qp *qp);
 void ntrdma_cm_kill(struct ntrdma_qp *qp);
 int _ntrdma_modify_qp_local(struct ib_qp *ibqp,
 		struct ib_qp_attr *ibqp_attr,
