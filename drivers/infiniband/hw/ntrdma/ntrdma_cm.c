@@ -645,7 +645,7 @@ exit:
 	return rc;
 }
 
-static void ntrdma_cm_qp_shutdown(struct ntrdma_qp *qp)
+void ntrdma_cm_qp_shutdown(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
@@ -666,18 +666,6 @@ static void ntrdma_cm_qp_shutdown(struct ntrdma_qp *qp)
 
 exit_unlock:
 	mutex_unlock(&qp->cm_lock);
-}
-
-
-void ntrdma_cm_shutdown(struct ntrdma_dev *dev)
-{
-	struct ntrdma_qp *qp;
-
-	mutex_lock(&dev->res.res_lock);
-	list_for_each_entry(qp, &dev->res.qp_list, res.obj.dev_entry) {
-		ntrdma_cm_qp_shutdown(qp);
-	}
-	mutex_unlock(&dev->res.res_lock);
 }
 
 int ntrdma_cmd_recv_cm(struct ntrdma_dev *dev,

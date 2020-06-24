@@ -245,7 +245,6 @@ void ntrdma_dev_quiesce(struct ntrdma_dev *dev)
 	ntrdma_dev_eth_quiesce(dev);
 	/* resource disable should block from new commands to be submitted */
 	ntrdma_dev_res_disable(dev);
-	ntrdma_cm_shutdown(dev); /*FIXME should be moved inside ntrdma_dev_res_disable*/
 	/* cmd quiesce should block till all in progress commands completed */
 	ntrdma_dev_cmd_quiesce(dev);
 }
