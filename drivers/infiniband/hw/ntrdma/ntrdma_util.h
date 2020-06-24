@@ -80,12 +80,12 @@ static inline int ntrdma_vec_set(struct ntrdma_vec *vec, u32 key, void *value,
 	rvec = vec->rvec;
 	rc = ntrdma_vec_copy_assign(vec, new_cap, node, key, value);
 	if (rc < 0) {
-		spin_unlock_bh(&vec->lock);
+		mutex_unlock(&vec->lock);
 		return rc;
 	}
 
 	call_rcu(&rvec->rcu, remove_rcu_vec);
-	mutex_unlock_bh(&vec->lock);
+	mutex_unlock(&vec->lock);
 
 	return 0;
 }

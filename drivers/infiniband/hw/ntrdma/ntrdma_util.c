@@ -160,7 +160,7 @@ int ntrdma_kvec_init(struct ntrdma_kvec *vec, u32 cap, u32 num_reserved_keys,
 	rkvec->next_key = num_reserved_keys;
 
 	rcu_assign_pointer(vec->rkvec, rkvec);
-	mutex_lock(&vec->lock);
+	mutex_init(&vec->lock);
 
 	return 0;
 }
