@@ -788,6 +788,7 @@ static int ntrdma_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_
 				conn_param->private_data_len,
 				private_data_max_len);
 		rc = -EINVAL;
+		cm_id->rem_ref(cm_id);
 		goto err_priv;
 	}
 
@@ -800,6 +801,7 @@ static int ntrdma_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_
 				conn_param->qpn,
 				cm_id);
 
+		cm_id->rem_ref(cm_id);
 		goto err_store;
 	}
 
