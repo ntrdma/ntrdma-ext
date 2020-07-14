@@ -164,8 +164,8 @@ store_iw_cm_id(struct ntrdma_dev *dev,
 	cm_id->add_ref(cm_id);
 	cm_id->provider_data = node;
 
-	ntrdma_dbg(dev, "node %p QP %d cm_id %p\n",
-			node, node->qpn, cm_id);
+	ntrdma_dbg(dev, "node %p QP %d cm_id %p local port %d remote port %d\n",
+			node, node->qpn, cm_id, local_port, remote_port);
 
 	return 0;
 }
@@ -505,8 +505,7 @@ static int ntrdma_cm_handle_connect_req(struct ntrdma_dev *dev,
 	iw_cm_node = find_iw_cm_id_listener_node(dev, req_cmd->remote_port);
 
 	if (!iw_cm_node) {
-		ntrdma_err(dev, "Listener port not found");
-		dump_iw_cm_id_nodes(dev);
+		ntrdma_err(dev, "Listener port  %d not found", req_cmd->remote_port);
 		ntrdma_cmd_send_rep(dev,
 				&event.local_addr,
 				&event.remote_addr,
@@ -544,13 +543,13 @@ static int ntrdma_cm_handle_reject(struct ntrdma_dev *dev,
 
 	ntrdma_qp = ntrdma_dev_qp_look_and_get(dev, qpn);
 	if (unlikely(!ntrdma_qp)) {
-		ntrdma_err(dev, "QP %d  node %p local port %d from connection reply not found\n",
+		ntrdma_err(dev, "QP %d node %p local port %d from connection reply not found\n",
 				qpn, iw_cm_node, ntohs(rsp_cmd->local_port));
 		dump_iw_cm_id_nodes(dev);
 		goto exit;
 	}
-	ntrdma_dbg(dev, "RDMA_CM: reject cm_id %p QP %d\n",
-			iw_cm_node->cm_id, qpn);
+	ntrdma_dbg(dev, "RDMA_CM: reject cm_id %p QP %d RQP %d\n",
+			iw_cm_node->cm_id, qpn, ntrdma_qp->rqp_key);
 
 	status = ntrdma_fire_reject(cm_id, 0, rsp_cmd->priv_len);
 
@@ -838,13 +837,13 @@ static int ntrdma_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_
 	sprintf(lname, "%pISpc", &cm_id->local_addr);
 	sprintf(rname, "%pISpc", &cm_id->remote_addr);
 	ntrdma_dbg(dev,
-			"Connect: I want QP %d local %s remote %s priv data len %u priv data %p node %p cm_id %p\n",
+			"Connect: I want QP %d local %s remote %s priv data len %u priv data %p node %p cm_id %p, local port %d, remote port %d\n",
 			conn_param->qpn, lname,
 			rname,
 			conn_param->private_data_len,
 			conn_param->private_data,
 			cm_id->provider_data,
-			cm_id);
+			cm_id, ntohs(lsin->sin_port), ntohs(rsin->sin_port));
 
 	rc = ntrdma_cmd_send(dev, &qpcb);
 	if (rc) {
@@ -996,7 +995,8 @@ static int ntrdma_reject(struct iw_cm_id *cm_id, const void *pdata, u8 pdata_len
 		rejmsg.sin_family = AF_INET;
 	}
 
-	ntrdma_dbg(dev, "NTRDMA CM rejecting pdata len %u on\n", pdata_len);
+	ntrdma_dbg(dev, "NTRDMA CM rejecting pdata len %u on local port %d, remote port %d\n",
+			pdata_len, rejmsg.local_port, rejmsg.remote_port);
 
 	return ntrdma_cmd_send(dev, &rejmsg);
 }
