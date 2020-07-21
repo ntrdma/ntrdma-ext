@@ -524,28 +524,44 @@ static int ntrdma_cm_handle_connect_req(struct ntrdma_dev *dev,
 }
 
 static int ntrdma_cm_handle_reject(struct ntrdma_dev *dev,
-		struct ntrdma_iw_cm_cmd *my_cmd)
+		struct ntrdma_iw_cm_cmd *rsp_cmd)
 {
 	int status = 0 ;
 	struct ntrdma_iw_cm_id_node *iw_cm_node;
+	struct ntrdma_qp *ntrdma_qp;
+	struct iw_cm_id *cm_id;
+	int qpn;
 
-	iw_cm_node = find_iw_cm_id_node(dev, my_cmd->local_port, my_cmd->remote_port);
+	iw_cm_node = find_iw_cm_id_node(dev, rsp_cmd->local_port, rsp_cmd->remote_port);
 	if (!iw_cm_node) {
 		ntrdma_err(dev, "iw cm node for port %d  QP %d not found in reject handler\n",
-				ntohs(my_cmd->local_port), my_cmd->qpn);
+				ntohs(rsp_cmd->local_port), rsp_cmd->qpn);
 		return -ENETUNREACH;
 	}
 
-	ntrdma_dbg(dev, "RDMA_CM: reject cm_id %p QP %d\n",
-			iw_cm_node->cm_id, my_cmd->qpn);
+	cm_id = iw_cm_node->cm_id;
+	qpn = iw_cm_node->qpn;
 
-	status = ntrdma_fire_reject(iw_cm_node->cm_id, 0, my_cmd->priv_len);
+	ntrdma_qp = ntrdma_dev_qp_look_and_get(dev, qpn);
+	if (unlikely(!ntrdma_qp)) {
+		ntrdma_err(dev, "QP %d  node %p local port %d from connection reply not found\n",
+				qpn, iw_cm_node, ntohs(rsp_cmd->local_port));
+		dump_iw_cm_id_nodes(dev);
+		goto exit;
+	}
+	ntrdma_dbg(dev, "RDMA_CM: reject cm_id %p QP %d\n",
+			iw_cm_node->cm_id, qpn);
+
+	status = ntrdma_fire_reject(cm_id, 0, rsp_cmd->priv_len);
 
 	if (unlikely(status)) {
 		ntrdma_err(dev, "firing event IW_CM_EVENT_CONNECT_REPLY at reject and returned error %d\n",
 				status);
 	}
-
+	mutex_lock(&ntrdma_qp->cm_lock);
+	discard_iw_cm_id(dev, iw_cm_node);
+	mutex_unlock(&ntrdma_qp->cm_lock);
+exit:
 	return status;
 }
 
