@@ -544,12 +544,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 		TRACE("CMD: respond received for %p (func) pos %u\n",
 				cb->rsp_cmpl, pos);
 
-		rc = cb->rsp_cmpl(cb, &cmd_send_rsp_buf[pos]);
-		if (rc)
-			ntrdma_err(dev,
-					"%ps failed rc = %d", cb->rsp_cmpl,
-					rc);
-		/* FIXME: command failed, now what? */
+		cb->rsp_cmpl(cb, &cmd_send_rsp_buf[pos]);
 	}
 
 	if (pos != start) {

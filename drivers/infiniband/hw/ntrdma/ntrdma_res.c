@@ -352,11 +352,16 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	}
 
 	rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+	if (!rc)
+		rc = cb->ret;
+
 	if (unlikely(rc)) {
 		list_del(&res->obj.dev_entry);
 		ntrdma_kvec_set_key(dev->node, res_vec, res->key, NULL);
-		ntrdma_err(dev, "res %d, timeout %u [msec] cb %p\n",
-				res->key, jiffies_to_msecs(res->timeout), cb);
+		ntrdma_err(dev,
+				"res %d, timeout %u [msec] cb %p rc %d\n",
+				res->key, jiffies_to_msecs(res->timeout),
+				cb, rc);
 		ntrdma_unrecoverable_err(dev);
 	}
 
@@ -389,8 +394,12 @@ void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	}
 
 	rc = ntrdma_res_wait_cmds(dev, cb, res->timeout);
+	if (!rc)
+		rc = cb->ret;
+
 	if (unlikely(rc)) {
-		ntrdma_dbg(dev, "wait cmd failed after %ld\n", res->timeout);
+		ntrdma_dbg(dev, "wait cmd failed after %ld rc %d\n",
+				res->timeout, rc);
 		ntrdma_unrecoverable_err(dev);
 	}
 }

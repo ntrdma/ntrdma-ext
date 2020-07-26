@@ -7,3 +7,5 @@ Module.symvers
 modules.order
 *.o.parts
 !.gitignore
+devops-scripts/
+output/
