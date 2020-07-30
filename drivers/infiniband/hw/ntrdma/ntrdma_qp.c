@@ -59,15 +59,15 @@ static struct kmem_cache *shadow_slab;
 
 static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
 				union ntrdma_cmd *cmd);
-static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 				union ntrdma_cmd *cmd);
-static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
 				union ntrdma_cmd *cmd);
-static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 
 static int ntrdma_qp_enable_cb(struct ntrdma_res *res,
@@ -410,6 +410,7 @@ inline struct ntrdma_cqe *ntrdma_qp_recv_cqe(struct ntrdma_qp *qp,
 int ntrdma_modify_qp_remote(struct ntrdma_qp *qp)
 {
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
+	int rc;
 	struct ntrdma_qp_cmd_cb qpcb = {
 		.cb = {
 			.cmd_prep = ntrdma_qp_modify_prep,
@@ -417,8 +418,6 @@ int ntrdma_modify_qp_remote(struct ntrdma_qp *qp)
 		},
 		.qp = qp,
 	};
-
-	int rc;
 
 	init_completion(&qpcb.cb.cmds_done);
 
@@ -433,7 +432,11 @@ int ntrdma_modify_qp_remote(struct ntrdma_qp *qp)
 		return 0;
 	}
 
-	return ntrdma_res_wait_cmds(dev, &qpcb.cb, qp->res.timeout);
+	rc = ntrdma_res_wait_cmds(dev, &qpcb.cb, qp->res.timeout);
+	if (rc < 0)
+		return rc;
+
+	return qpcb.cb.ret;
 }
 
 static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
@@ -456,33 +459,22 @@ static int ntrdma_qp_modify_prep(struct ntrdma_cmd_cb *cb,
 	return 0;
 }
 
-static int ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	u32 status;
-	int rc;
 
-	ntrdma_vdbg(dev, "called\n");
-
-	status = READ_ONCE(rsp->hdr.status);
-	if (unlikely(status)) {
-		ntrdma_err(dev, "rsp %p status %d", rsp, status);
-		rc = -EIO;
-
+	cb->ret = READ_ONCE(rsp->hdr.status);
+	if (unlikely(cb->ret)) {
+		ntrdma_err(dev, "rsp %p status %d", rsp, cb->ret);
 		ntrdma_qp_recv_work(qp);
-
-		goto out;
 	}
 
-	rc = 0;
-
-out:
 	complete_all(&cb->cmds_done);
 
-	return rc;
+	return;
 }
 
 static int ntrdma_qp_enable_cb(struct ntrdma_res *res,
@@ -581,49 +573,45 @@ err_peer_recv_wqe_buf:
 	return rc;
 }
 
-static int ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *_rsp)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	union ntrdma_rsp rsp;
-	int rc;
-
-	ntrdma_vdbg(dev, "called\n");
 
 	TRACE("qp_enable cmpl: %d\n", qp->res.key);
 
 	rsp = READ_ONCE(*_rsp);
-	if (unlikely(rsp.hdr.status)) {
+	cb->ret = rsp.hdr.status;
+
+	if (unlikely(cb->ret)) {
 		ntrdma_err(dev, "QP %d status %d",
-				qp->res.key, rsp.hdr.status);
-		rc = -EIO;
+				qp->res.key, cb->ret);
 		goto out;
 	}
 
-	rc = ntrdma_qp_enable_disable_cmpl_common(qp, dev, &rsp, false);
-	if (unlikely(rc)) {
+	cb->ret = ntrdma_qp_enable_disable_cmpl_common(qp, dev, &rsp, false);
+	if (unlikely(cb->ret)) {
 		ntrdma_err(dev,
 			"QP %d ntrdma_qp_enable_disable_cmpl_common return %d",
-			qp->res.key, rc);
+			qp->res.key, cb->ret);
 		goto out;
 	}
 
 	if (is_state_out_of_reset(atomic_read(&qp->state))) {
+		/*sync QP state before waking up the sender */
 		qpcb->cb.cmd_prep = ntrdma_qp_modify_prep;
 		qpcb->cb.rsp_cmpl = ntrdma_qp_modify_cmpl;
 		ntrdma_dev_cmd_add_unsafe(dev, &qpcb->cb);
-		return 0;
+		return;
 	}
 
 	ntrdma_qp_recv_work(qp);
-	rc = 0;
 
 out:
 	complete_all(&cb->cmds_done);
-
-	return rc;
 }
 
 static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
@@ -671,26 +659,23 @@ static int ntrdma_qp_disable_prep(struct ntrdma_cmd_cb *cb,
 	return 0;
 }
 
-static int ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_qp_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp)
 {
 	struct ntrdma_qp_cmd_cb *qpcb = ntrdma_cmd_cb_qpcb(cb);
 	struct ntrdma_qp *qp = qpcb->qp;
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	ntrdma_vdbg(dev, "called\n");
-
-	ntrdma_qp_enable_disable_cmpl_common(qp, dev, NULL, true);
-
-	complete_all(&cb->cmds_done);
-
-	if (READ_ONCE(rsp->hdr.status)) {
+	cb->ret = READ_ONCE(rsp->hdr.status);
+	if (cb->ret) {
 		ntrdma_err(dev, "QP %d: status is %d",
 				qp->res.key, rsp->hdr.status);
-		return -EIO;
+
+	} else {
+		ntrdma_qp_enable_disable_cmpl_common(qp, dev, NULL, true);
 	}
 
-	return 0;
+	complete_all(&cb->cmds_done);
 }
 
 void ntrdma_qp_reset(struct ntrdma_qp *qp)
