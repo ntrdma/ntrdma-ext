@@ -203,13 +203,14 @@ struct ntrdma_cmd_cb {
 			union ntrdma_cmd *cmd);
 
 	/* complete and free the command following a response */
-	int (*rsp_cmpl)(struct ntrdma_cmd_cb *cb,
+	void (*rsp_cmpl)(struct ntrdma_cmd_cb *cb,
 			const union ntrdma_rsp *rsp);
 
 	struct completion	cmds_done;
 
 	bool			in_list; /* Protected by dev->cmd_send.lock */
 	int			cmd_id;  /* Protected by dev->cmd_send.lock */
+	int ret;
 };
 
 int ntrdma_dev_cmd_init(struct ntrdma_dev *dev,

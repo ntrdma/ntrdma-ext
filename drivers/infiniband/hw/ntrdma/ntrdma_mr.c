@@ -41,11 +41,11 @@
 
 static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 				union ntrdma_cmd *cmd);
-static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 				union ntrdma_cmd *cmd);
-static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp);
 
 static int ntrdma_mr_enable_cb(struct ntrdma_res *res,
@@ -164,29 +164,25 @@ static int ntrdma_mr_enable_prep(struct ntrdma_cmd_cb *cb,
 	return 0;
 }
 
-static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp)
 {
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
 	struct ntrdma_dev *dev = ntrdma_res_dev(&mr->res);
-	u32 end, count, status;
-	int rc;
+	u32 end, count;
 
 	TRACE("mr_enable cmpl: %d\n", mr->res.key);
-	status = READ_ONCE(rsp->hdr.status);
-	if (unlikely(status)) {
-		ntrdma_err(dev, "mr %p rsp status %d", mr, status);
-		rc = -EIO;
+
+	cb->ret = READ_ONCE(rsp->hdr.status);
+	if (unlikely(cb->ret)) {
+		ntrdma_err(dev, "mr %p rsp status %d", mr, cb->ret);
 		goto out;
-	} else
-		rc = 0;
+	}
 
 	end = mrcb->sg_pos + mrcb->sg_count;
 	if (end != mr->sg_count) {
-		if (unlikely(rc < 0))
-			return rc;
-
+		/* Continue to send mr enable segments */
 		count = mr->sg_count - end;
 		if (count > NTRDMA_CMD_MR_APPEND_SG_CAP)
 			count = NTRDMA_CMD_MR_APPEND_SG_CAP;
@@ -195,13 +191,12 @@ static int ntrdma_mr_enable_cmpl(struct ntrdma_cmd_cb *cb,
 		mrcb->sg_count = count;
 
 		ntrdma_dev_cmd_add_unsafe(dev, &mrcb->cb);
-		return 0;
+
+		return;
 	}
 
  out:
 	complete_all(&cb->cmds_done);
-
-	return rc;
 }
 
 static int ntrdma_mr_disable_cb(struct ntrdma_res *res,
@@ -234,23 +229,19 @@ static int ntrdma_mr_disable_prep(struct ntrdma_cmd_cb *cb,
 	return 0;
 }
 
-static int ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_mr_disable_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp)
 {
-	u32 status;
 	struct ntrdma_mr_cmd_cb *mrcb = ntrdma_cmd_cb_mrcb(cb);
 	struct ntrdma_mr *mr = mrcb->mr;
 	struct ntrdma_dev *dev = ntrdma_res_dev(&mr->res);
 
+	cb->ret = READ_ONCE(rsp->hdr.status);
+	if (unlikely(cb->ret))
+		ntrdma_err(dev, "mr %p status %d", mr, cb->ret);
+
 	complete_all(&cb->cmds_done);
-
-	status = READ_ONCE(rsp->hdr.status);
-	if (unlikely(status)) {
-		ntrdma_err(dev, "mr %p status %d", mr, status);
-		return -EIO;
-	}
-
-	return 0;
+	return;
 }
 
 void ntrdma_rmr_init(struct ntrdma_rmr *rmr,

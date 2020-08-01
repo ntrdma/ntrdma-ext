@@ -391,25 +391,14 @@ static int ntrdma_iw_cm_gen_perp(struct ntrdma_cmd_cb *cb,
 	return 0;
 }
 
-static int ntrdma_iw_cm_gen_cmpl(struct ntrdma_cmd_cb *cb,
+static void ntrdma_iw_cm_gen_cmpl(struct ntrdma_cmd_cb *cb,
 				const union ntrdma_rsp *rsp)
 {
-	u32 status;
-	int rc;
+	cb->ret = READ_ONCE(rsp->hdr.status);
+	if (unlikely(cb->ret))
+		pr_err("NTRDMA CM returned status %u\n", cb->ret);
 
-	status = READ_ONCE(rsp->hdr.status);
-	if (unlikely(status)) {
-		pr_err("NTRDMA CM returned status %u\n", status);
-		rc = -EIO;
-		goto out;
-	}
-
-	rc = 0;
-
- out:
 	complete_all(&cb->cmds_done);
-
-	return rc;
 }
 
 static int ntrdma_cmd_send(struct ntrdma_dev *dev,
@@ -432,7 +421,12 @@ static int ntrdma_cmd_send(struct ntrdma_dev *dev,
 	}
 
 	/*TODO consider make it async , if we changing to async qpcb should be dynamicly allocated*/
-	return ntrdma_res_wait_cmds(dev, &qpcb->cb, msecs_to_jiffies(CMD_TIMEOUT_MSEC));
+	rc = ntrdma_res_wait_cmds(dev, &qpcb->cb,
+			msecs_to_jiffies(CMD_TIMEOUT_MSEC));
+	if (rc < 0)
+		return rc;
+
+	return qpcb->cb.ret;
 }
 
 static int ntrdma_cmd_send_rep(struct ntrdma_dev *dev,

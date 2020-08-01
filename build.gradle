@@ -1,0 +1,2 @@
+// Default to building the entire repo
+defaultTasks gradle.build.buildTaskName
