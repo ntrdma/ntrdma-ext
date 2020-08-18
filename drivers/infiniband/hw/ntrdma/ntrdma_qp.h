@@ -222,7 +222,7 @@ static inline void ntrdma_qp_get(struct ntrdma_qp *qp)
 
 void ntrdma_qp_put(struct ntrdma_qp *qp);
 
-void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp);
+void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp, const char *from, int line);
 
 inline struct ntrdma_recv_wqe *ntrdma_qp_recv_wqe(struct ntrdma_qp *qp,
 						u32 pos);

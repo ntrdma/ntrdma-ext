@@ -1094,13 +1094,13 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 
 	if (qp) {
 		ntrdma_res_lock(&qp->res);
-		ntrdma_qp_send_stall(qp, rqp);
+		ntrdma_qp_send_stall(qp, rqp, __func__, __LINE__);
 		qp->rqp_key = -1;
 		ntrdma_cm_kill(qp);
 		ntrdma_res_unlock(&qp->res);
 		ntrdma_qp_put(qp);
 	} else {
-		ntrdma_qp_send_stall(NULL, rqp);
+		ntrdma_qp_send_stall(NULL, rqp, __func__, __LINE__);
 	}
 
 	ntrdma_rres_remove(&rqp->rres);
