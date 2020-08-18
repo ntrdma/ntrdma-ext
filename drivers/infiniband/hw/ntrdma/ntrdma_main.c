@@ -40,6 +40,9 @@
 #include "ntrdma_file.h"
 #include "ntrdma_dev.h"
 
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
+
 #define DRIVER_NAME "ntrdma"
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_RELDATE  "20 October 2015"
@@ -53,7 +56,7 @@ MODULE_DESCRIPTION("RDMA Driver for PCIe NTB and DMA");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(DRIVER_VERSION);
 #ifdef NTRDMA_GIT_HASH
-MODULE_INFO(githash, NTRDMA_GIT_HASH);
+MODULE_INFO(githash, TOSTRING(NTRDMA_GIT_HASH));
 #endif
 
 
@@ -121,7 +124,9 @@ static int ntrdma_probe(struct ntc_driver *self,
 	int rc;
 
 	pr_devel("probe ntc %s\n", dev_name(&ntc->dev));
-
+#ifdef NTRDMA_GIT_HASH
+	pr_info("Probe ntrdma - git hash %s", TOSTRING(NTRDMA_GIT_HASH));
+#endif
 	ntc_link_disable(ntc);
 
 	dev = (void *)ib_alloc_device(sizeof(*dev));
