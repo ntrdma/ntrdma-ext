@@ -687,6 +687,7 @@ void ntrdma_cm_qp_shutdown(struct ntrdma_qp *qp)
 
 	discard_iw_cm_id(dev, qp->cm_id->provider_data);
 	ntrdma_cm_fire_abort(qp);
+	qp->ntrdma_cm_state = NTRDMA_CM_STATE_KILLING;
 
 exit_unlock:
 	mutex_unlock(&qp->cm_lock);
