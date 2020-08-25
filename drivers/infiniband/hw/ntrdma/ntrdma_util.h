@@ -81,6 +81,9 @@ static inline int ntrdma_vec_set(struct ntrdma_vec *vec, u32 key, void *value,
 	rc = ntrdma_vec_copy_assign(vec, new_cap, node, key, value);
 	if (rc < 0) {
 		mutex_unlock(&vec->lock);
+		pr_err(
+			"rc %d for ntrdma_vec_copy_assign, key %d, vec %p, val %p node %d, cap %d",
+			rc, key, vec, value, node, new_cap);
 		return rc;
 	}
 
