@@ -505,7 +505,9 @@ static int ntrdma_cm_handle_connect_req(struct ntrdma_dev *dev,
 	iw_cm_node = find_iw_cm_id_listener_node(dev, req_cmd->remote_port);
 
 	if (!iw_cm_node) {
-		ntrdma_err(dev, "Listener port  %d not found", req_cmd->remote_port);
+		ntrdma_info_ratelimited(dev,
+				"Listener port  %d not found (ratelimted)",
+				req_cmd->remote_port);
 		ntrdma_cmd_send_rep(dev,
 				&event.local_addr,
 				&event.remote_addr,
@@ -602,7 +604,13 @@ static int ntrdma_cm_handle_rep(struct ntrdma_dev *dev,
 	ntrdma_dbg(dev, "Reply for port %d node %p from RQP %d status %d\n",
 			my_cmd->local_port, iw_cm_node, my_cmd->qpn, my_cmd->status);
 
-	/* FIXME handle bad status */
+	if (my_cmd->status == -ENETUNREACH) {
+		ntrdma_info(dev,
+				"reply with status %d for QP %d node %p local port %d - rejecting",
+				my_cmd->status, qpn, iw_cm_node,
+				ntohs(my_cmd->local_port));
+		return ntrdma_cm_handle_reject(dev, my_cmd);
+	}
 
 	mutex_lock(&ntrdma_qp->cm_lock);
 
@@ -679,6 +687,7 @@ void ntrdma_cm_qp_shutdown(struct ntrdma_qp *qp)
 
 	discard_iw_cm_id(dev, qp->cm_id->provider_data);
 	ntrdma_cm_fire_abort(qp);
+	qp->ntrdma_cm_state = NTRDMA_CM_STATE_KILLING;
 
 exit_unlock:
 	mutex_unlock(&qp->cm_lock);
