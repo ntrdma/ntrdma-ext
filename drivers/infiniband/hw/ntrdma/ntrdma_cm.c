@@ -140,8 +140,8 @@ store_iw_cm_id(struct ntrdma_dev *dev,
 	remote_port = ((struct sockaddr_in *)&cm_id->remote_addr)->sin_port;
 	node = find_iw_cm_id_node(dev, local_port, remote_port);
 	if (unlikely(node)) {
-		ntrdma_err(dev, "Trying store cm_id with local port %d  remote port %d while exist\n",
-				ntohs(local_port), ntohs(remote_port));
+		ntrdma_err(dev, "Trying store cm_id with local port %d  remote port %d while exist for QP %d\n",
+				ntohs(local_port), ntohs(remote_port), qpn);
 		dump_iw_cm_id_nodes(dev);
 		return -EINVAL;
 	}
@@ -631,14 +631,14 @@ static int ntrdma_cm_handle_rep(struct ntrdma_dev *dev,
 			ntrdma_qp->res.key);
 
 	if (rc) {
-		ntrdma_err(dev, "ntrdma_cmd_recv_qp_modify_internal failed. QPN: %d\n",
+		ntrdma_err(dev, "ntrdma_cmd_recv_qp_modify_internal failed. QP %d\n",
 				my_cmd->qpn);
 	}
 /*FIXME should we handle it*/
 	rc = ntrdma_modify_qp_local(ibqp, &attr,
 			IB_QP_STATE|IB_QP_DEST_QPN);
 	if (rc) {
-		ntrdma_err(dev, "ntrdma_modify_qp_internal failed. QPN: %d\n",
+		ntrdma_err(dev, "ntrdma_modify_qp_internal failed. QP %d\n",
 				attr.dest_qp_num);
 	}
 /*FIXME should we handle it*/
@@ -831,7 +831,7 @@ static int ntrdma_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_
 		sprintf(lname, "%pISpc", &cm_id->local_addr);
 		sprintf(rname, "%pISpc", &cm_id->remote_addr);
 		ntrdma_err(dev,
-				"NTRDMA CM DEBUG connect %s -> %s failed on storing id. QPN: %d cm id %p\n",
+				"NTRDMA CM DEBUG connect %s -> %s failed on storing id. QP %d cm id %p\n",
 				lname,
 				rname,
 				conn_param->qpn,
@@ -857,7 +857,7 @@ static int ntrdma_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_
 	rc = ntrdma_cmd_send(dev, &qpcb);
 	if (rc) {
 		ntrdma_err(dev,
-				"NTRDMA CM DEBUG connect failed on sending request. QPN: %d\n",
+				"NTRDMA CM DEBUG connect failed on sending request. QP %d\n",
 				conn_param->qpn);
 
 		/* There might be a race when cmd reply times out while connection already accepted by peer */
