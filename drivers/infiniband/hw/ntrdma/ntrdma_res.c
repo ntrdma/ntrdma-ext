@@ -428,8 +428,10 @@ int ntrdma_rres_add(struct ntrdma_rres *rres)
 	int rc;
 
 	rc = ntrdma_vec_set(rres->vec, rres->key, rres, dev->node);
-	if (rc < 0)
+	if (rc < 0) {
+		ntrdma_err(dev, "ntrdma_vec_set rc = %d, rres key %d\n", rc, rres->key);
 		return rc;
+	}
 
 	mutex_lock(&dev->rres.lock);
 	rres->in_rres_list = true;

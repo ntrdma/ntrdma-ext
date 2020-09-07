@@ -251,7 +251,7 @@ static inline int ntc_mm_preinit(struct ntc_mm *mm, int size, int num_els)
 
 	TRACE("mm %p: added %d buffers of size %d. brk is %ld",
 		mm, num_els, size, mm->brk - mm->memory);
-	pr_info("mm %p: added %d buffers of size %d. brk is %ld",
+	pr_debug("mm %p: added %d buffers of size %d. brk is %ld",
 		mm, num_els, size, mm->brk - mm->memory);
 
 	return num_els;
@@ -269,7 +269,7 @@ static inline void *ntc_mm_alloc(const char *caller, int line,
 	if (unlikely(IS_ERR(fixed))) {
 		TRACE("mm %p from %s:%d: failed to add %d bytes. No fixed mm",
 			mm, caller, line, size);
-		pr_info("mm %p from %s:%d: failed to add %d bytes. No fixed mm",
+		pr_debug("mm %p from %s:%d: failed to add %d bytes. No fixed mm",
 			mm, caller, line, size);
 		return fixed;
 	}
@@ -285,7 +285,7 @@ static inline void *ntc_mm_alloc(const char *caller, int line,
 	if (unlikely(IS_ERR(ptr))) {
 		TRACE("mm %p from %s:%d: failed to add %d bytes. brk is %ld",
 			mm, caller, line, size, mm->brk - mm->memory);
-		pr_info("mm %p from %s:%d: failed to add %d bytes. brk is %ld",
+		pr_debug("mm %p from %s:%d: failed to add %d bytes. brk is %ld",
 			mm, caller, line, size, mm->brk - mm->memory);
 		return ptr;
 	}
@@ -295,7 +295,7 @@ static inline void *ntc_mm_alloc(const char *caller, int line,
 
 	TRACE("mm %p from %s:%d: added buffer of size %d. brk is %ld",
 		mm, caller, line, size, mm->brk - mm->memory);
-	pr_info("mm %p from %s:%d: added buffer of size %d. brk is %ld",
+	pr_debug("mm %p from %s:%d: added buffer of size %d. brk is %ld",
 		mm, caller, line, size, mm->brk - mm->memory);
 
 	return ptr;

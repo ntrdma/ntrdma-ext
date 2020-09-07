@@ -629,7 +629,7 @@ static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 			qp, qp ? qp->res.key : -1,
 			rqp, rqp ? rqp->rres.key : -1);
 
-	ntrdma_qp_send_stall(qp, rqp);
+	ntrdma_qp_send_stall(qp, rqp, __func__, __LINE__);
 	if (rqp) {
 		rqp->qp_key = -1;
 		ntrdma_rqp_put(rqp);
@@ -2080,33 +2080,37 @@ struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key)
 	return ntrdma_rres_rqp(rres);
 }
 
-void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp)
+void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp, const char *from, int line)
 {
 	if (!qp && !rqp)
 		return;
 
 	if (qp) {
-		TRACE("qp %p (QP %d)\n", qp, qp->res.key);
+		TRACE("qp %p (QP %d) called from %s %d\n",
+				qp, qp->res.key, from, line);
 
 		spin_lock_bh(&qp->send_prod_lock);
 
 		if (!ntrdma_qp_is_send_ready(qp)) {
 			spin_unlock_bh(&qp->send_prod_lock);
-			ntrdma_qp_info(qp, "QP %d state %d",
-				qp->res.key, atomic_read(&qp->state));
+			ntrdma_qp_info(qp, "QP %d state %d called from %s %d",
+				qp->res.key, atomic_read(&qp->state),
+				from, line);
 		} else {
 			move_to_err_state(qp);
 			qp->send_aborting = true;
 			qp->recv_aborting = true;
 			spin_unlock_bh(&qp->send_prod_lock);
-			TRACE("QP %d - aborting\n", qp->res.key);
+			TRACE("QP %d - aborting, called from %s %d\n",
+					qp->res.key, from, line);
 		}
 
 	}
 	if (!rqp)
 		return;
 
-	TRACE("rqp %p (rres key %d)\n", rqp, rqp->rres.key);
+	TRACE("rqp %p (rres key %d)called from %s %d\n",
+			rqp, rqp->rres.key, from, line);
 
 	/* Just to sync */
 	spin_lock_bh(&rqp->send_cons_lock);
