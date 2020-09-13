@@ -1080,7 +1080,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	if (ibudata && ibudata->inlen >= sizeof(inbuf)) {
 		if (copy_from_user(&inbuf, ibudata->inbuf, sizeof(inbuf))) {
-			ntrdma_qp_err(qp, "copy_from_user failed");
+			ntrdma_qp_err(qp, "copy_from_user failed QP %d",
+					qp->res.key);
 			ntrdma_qp_put(qp); /* The initial ref */
 
 			NTRDMA_IB_PERF_END;
@@ -1088,12 +1089,14 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		}
 
 		if (!ntrdma_ioctl_if_check_desc(&inbuf.desc)) {
-			ntrdma_qp_err(qp, "BAD inbuf.desc:\n%s", inbuf.desc);
+			ntrdma_qp_err(qp, "QP %d, BAD inbuf.desc:\n%s",
+					qp->res.key, inbuf.desc);
 			goto bad_ntrdma_ioctl_if;
 		}
 
 		if (!inbuf.send_page_ptr) {
-			ntrdma_qp_err(qp, "inbuf.send_page_ptr is NULL");
+			ntrdma_qp_err(qp, "QP %d, inbuf.send_page_ptr is NULL",
+					qp->res.key);
 			ntrdma_qp_put(qp); /* The initial ref */
 
 			NTRDMA_IB_PERF_END;
@@ -1103,7 +1106,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		rc = get_user_pages_fast(inbuf.send_page_ptr, 1, 1,
 					&qp->send_page);
 		if (rc < 0) {
-			ntrdma_qp_err(qp, "get_user_pages_fast failed: %d", rc);
+			ntrdma_qp_err(qp, "QP %d, get_user_pages_fast failed: %d",
+					qp->res.key, rc);
 			ntrdma_qp_put(qp); /* The initial ref */
 
 			NTRDMA_IB_PERF_END;
@@ -1119,8 +1123,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 		outbuf.qpfd = get_unused_fd_flags(flags);
 		if (outbuf.qpfd < 0) {
-			ntrdma_qp_err(qp, "get_unused_fd_flags failed: %d",
-				outbuf.qpfd);
+			ntrdma_qp_err(qp, "QP %d, get_unused_fd_flags failed: %d",
+					qp->res.key, outbuf.qpfd);
 			ntrdma_qp_put(qp); /* The initial ref */
 
 			NTRDMA_IB_PERF_END;
@@ -1130,8 +1134,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		file = anon_inode_getfile("ntrdma_qp", &ntrdma_qp_fops, qp,
 					flags);
 		if (IS_ERR(file)) {
-			ntrdma_qp_err(qp, "anon_inode_getfile failed: %ld",
-				PTR_ERR(file));
+			ntrdma_qp_err(qp, "QP %d, anon_inode_getfile failed: %ld",
+					qp->res.key, PTR_ERR(file));
 			ntrdma_qp_put(qp); /* The initial ref */
 			put_unused_fd(outbuf.qpfd);
 
@@ -1144,7 +1148,8 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		ntrdma_qp_get(qp);
 
 		if (copy_to_user(ibudata->outbuf, &outbuf, sizeof(outbuf))) {
-			ntrdma_qp_err(qp, "copy_to_user failed");
+			ntrdma_qp_err(qp, "QP %d, copy_to_user failed",
+					qp->res.key);
 			fput(file); /* Close the file. */
 			ntrdma_qp_put(qp); /* The initial ref */
 			put_unused_fd(outbuf.qpfd);
@@ -1172,7 +1177,7 @@ err_init:
 	kmem_cache_free(qp_slab, qp);
 err_qp:
 	atomic_dec(&dev->qp_num);
-	ntrdma_err(dev, "failed, returning err %d\n", rc);
+	ntrdma_err(dev, "QP %d, failed, returning err %d\n", qp->res.key, rc);
 
 	NTRDMA_IB_PERF_END;
 	return ERR_PTR(rc);
@@ -1500,6 +1505,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_qp_cmd_cb qpcb;
+	unsigned long t0, t1, t2, t3, t4;
 
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
@@ -1512,19 +1518,23 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 				qp, qp->res.key, qp->send_cmpl,
 				qp->send_post, qp->send_prod, qp->send_cap);
 	}
-
+	t0 = jiffies;
 	ntrdma_debugfs_qp_del(qp);
-
+	t1 = jiffies;
 	memset(&qpcb, 0, sizeof(qpcb));
 
 	init_completion(&qpcb.cb.cmds_done);
 	ntrdma_res_del(&qp->res, &qpcb.cb, &dev->res.qp_vec);
-
+	t2 = jiffies;
 	ntc_dma_flush(qp->dma_chan);
-
+	t3 = jiffies;
 	ntrdma_qp_put(qp);
-
+	t4 = jiffies;
 	NTRDMA_IB_PERF_END;
+	if (t4 - t0 > 100)
+		ntrdma_info(dev,
+				"#NTRDMAPERF -  put %ld, flush %ld, res_del %ld, debugfs %ld\n",
+				t4 - t3, t3 - t2, t2 - t1, t1 - t0);
 	return 0;
 }
 
@@ -2208,17 +2218,20 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
 	struct ntrdma_mr_cmd_cb mrcb;
 	struct completion done;
+	unsigned long t0, t1, t2, t3, t4;
 
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
 	ntrdma_dbg(dev, "dereg MR %p (key %d)\n", mr, mr->res.key);
-
+	t0 = jiffies;
 	ntrdma_debugfs_mr_del(mr);
+	t1 = jiffies;
 
 	memset(&mrcb, 0, sizeof(mrcb));
 	init_completion(&mrcb.cb.cmds_done);
 	ntrdma_res_del(&mr->res, &mrcb.cb, &dev->res.mr_vec);
+	t2 = jiffies;
 
 	init_completion(&done);
 	mr->done = &done;
@@ -2226,10 +2239,16 @@ static int ntrdma_dereg_mr(struct ib_mr *ibmr)
 	ntrdma_mr_put(mr);
 
 	wait_for_completion(&done);
+	t3 = jiffies;
 	ntc_flush_dma_channels(dev->ntc);
+	t4 = jiffies;
 
 
 	NTRDMA_IB_PERF_END;
+	if (t4 - t0 > 100)
+		ntrdma_info(dev,
+				"#NTRDMAPERF -  flush %ld, put %ld, res_del %ld, debugfs %ld\n",
+				t4 - t3, t3 - t2, t2 - t1, t1 - t0);
 	return 0;
 }
 
