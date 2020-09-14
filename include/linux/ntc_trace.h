@@ -154,7 +154,7 @@ static inline void ntc_perf_finish_measure(struct ntc_perf_tracker_current *c)
 
 	pr_info("PERF: %s [%d]: %lld calls. %lld%% of time. %lld cyc average.",
 		c->prefix, smp_processor_id(), t->num_calls,
-		t->total * 100 / (t->total + t->total_out),
+		(u64) t->total * 100 / (t->total + t->total_out),
 		t->total / t->num_calls);
 
 	t->num_calls = 0;

@@ -103,8 +103,10 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	int rc;
 	u32 rx_cons = 0;
 
-	if (is_deinit)
+	if (is_deinit) {
+		rc = -EFAULT;
 		goto deinit;
+	}
 
 	net = alloc_etherdev(sizeof(*eth));
 	if (!net) {
@@ -277,8 +279,10 @@ int ntrdma_dev_eth_hello_prep_unperp(struct ntrdma_dev *dev,
 	int rc;
 	u32 tx_prod;
 
-	if (is_unperp)
+	if (is_unperp) {
+		rc = -EFAULT;
 		goto unprep;
+	}
 
 	if (peer_info->vbell_idx > NTRDMA_DEV_VBELL_COUNT) {
 		ntrdma_err(dev, "peer info suspected as garbage vbell_idx %u\n",
