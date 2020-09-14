@@ -270,8 +270,10 @@ int ntrdma_dev_cmd_hello_prep_unprep(struct ntrdma_dev *dev,
 {
 	int rc;
 
-	if (is_unprep)
+	if (is_unprep) {
+		rc = -EFAULT;
 		goto deinit;
+	}
 
 	if (peer_info->send_vbell_idx > NTRDMA_DEV_VBELL_COUNT ||
 		peer_info->recv_vbell_idx > NTRDMA_DEV_VBELL_COUNT) {
