@@ -690,7 +690,7 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 		ntrdma_rqp_put(rqp);
 	}
 
-	ntrdma_dbg(dev, "qp reset %p (res key: %d) rqp %p\n",
+	ntrdma_dbg(dev, "qp reset %p (QP %d) rqp %p\n",
 			qp, qp->res.key, rqp);
 
 	ntrdma_res_lock(&qp->res);
@@ -1086,13 +1086,13 @@ static inline void ntrdma_qp_recv_cmpl_get(struct ntrdma_qp *qp,
 		qp->recv_abort = true;
 		qp->recv_abort_first = true;
 		TRACE(
-				"qp %p (res key %d): move from aborting to abort, pos = end = %d, cons %d, post %d\n",
+				"qp %p (QP %d): move from aborting to abort, pos = end = %d, cons %d, post %d\n",
 				qp, qp->res.key, *pos, recv_cons,
 				qp->recv_post);
 	}
 	if (qp->recv_aborting && (*pos != *end))
 		TRACE(
-				"qp %p (res key: %d): recv_bort %d, post %d, cons %d, cmpl %d, cap %d, pos %d, end %d, base %d\n",
+				"qp %p (QP %d): recv_bort %d, post %d, cons %d, cmpl %d, cap %d, pos %d, end %d, base %d\n",
 				qp, qp->res.key, qp->recv_abort,
 				qp->recv_post, qp->recv_cons, qp->recv_cmpl,
 				qp->recv_cap, *pos, *end, *base);
@@ -1139,12 +1139,12 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 		qp->send_abort = true;
 		qp->send_abort_first = true;
 		TRACE(
-				"qp %p (res key %d): move from aborting to abort, pos = end = %d, cons %d, post %d\n",
+				"qp %p (QP %d): move from aborting to abort, pos = end = %d, cons %d, post %d\n",
 				qp, qp->res.key, *pos, send_cons,
 				qp->send_post);
 	}
 	if (qp->send_aborting && (*pos != *end))
-		TRACE("qp %p (res key: %d): send_abort %d, post %d, cons %d, cmpl %d, cap %d, pos %d, end %d, base %d\n",
+		TRACE("qp %p (QP %d): send_abort %d, post %d, cons %d, cmpl %d, cap %d, pos %d, end %d, base %d\n",
 			qp, qp->res.key, qp->send_abort, qp->send_post,
 			ntrdma_qp_send_cons(qp), qp->send_cmpl, qp->send_cap,
 			*pos, *end, *base);
@@ -2092,7 +2092,11 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp, const ch
 		spin_lock_bh(&qp->send_prod_lock);
 
 		if (!ntrdma_qp_is_send_ready(qp)) {
+			if (!qp->send_abort)
+				qp->send_aborting = true;
 			spin_unlock_bh(&qp->send_prod_lock);
+			if (!qp->recv_abort)
+				qp->recv_aborting = true;
 			ntrdma_qp_info(qp, "QP %d state %d called from %s %d",
 				qp->res.key, atomic_read(&qp->state),
 				from, line);
@@ -2109,7 +2113,7 @@ void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp, const ch
 	if (!rqp)
 		return;
 
-	TRACE("rqp %p (rres key %d)called from %s %d\n",
+	TRACE("rqp %p (RQP %d)called from %s %d\n",
 			rqp, rqp->rres.key, from, line);
 
 	/* Just to sync */
