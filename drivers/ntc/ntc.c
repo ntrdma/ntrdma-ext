@@ -199,7 +199,6 @@ struct ntc_dma_chan *ntc_req_rr(struct ntc_dev *ntc,
 	if (!ntc->dma_chan[i].chan) {
 		i = 0;
 	}
-	ntc_vdbg(ntc, "ntc_req_rr for type %d returns dma_chan #%d", type, i);
 
 	return &ntc->dma_chan[i];
 }
