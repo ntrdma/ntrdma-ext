@@ -76,6 +76,7 @@ static void dump_iw_cm_id_nodes(struct ntrdma_dev *dev)
 	struct sockaddr_in *lsin;
 	struct ntrdma_iw_cm *ntrdma_iwcm = ntrdma_iw_cm_from_ntrdma_dev(dev);
 	char lname[PISPC_NAME_LEN], rname[PISPC_NAME_LEN];
+	int count = 0;
 
 	read_lock(&ntrdma_iwcm->slock);
 	list_for_each_entry(node, &ntrdma_iwcm->ntrdma_iw_cm_list, head) {
@@ -85,10 +86,12 @@ static void dump_iw_cm_id_nodes(struct ntrdma_dev *dev)
 
 		sprintf(lname, "%pISpc", lsin);
 		sprintf(rname, "%pISpc", rsin);
-		pr_info("%s:\t%s\t\t QP %d  node [%p] cm id [%p]\n"
+		TRACE("%s:\t%s\t\t QP %d  node [%p] cm id [%p]\n"
 				, lname, rname, node->qpn, node, cm_id);
+		count++;
 
 	}
+	TRACE("Total of %d nodes\n", count);
 	read_unlock(&ntrdma_iwcm->slock);
 
 }
@@ -116,8 +119,10 @@ find_iw_cm_id_node(struct ntrdma_dev *dev, int src_port, int dst_port)
 	}
 	read_unlock(&ntrdma_iwcm->slock);
 
-	if (unlikely(!is_found))
+	if (unlikely(!is_found)) {
+		dump_iw_cm_id_nodes(dev);
 		return NULL;
+	}
 
 	return node;
 }
@@ -154,6 +159,8 @@ store_iw_cm_id(struct ntrdma_dev *dev,
 		return -ENOMEM;
 	}
 
+	TRACE("Add Listener cm_id with local port %d remote port %d\n",
+			ntohs(local_port), ntohs(remote_port));
 	node->cm_id = cm_id;
 	node->qpn = qpn;
 	INIT_LIST_HEAD(&node->head);
@@ -514,7 +521,7 @@ static int ntrdma_cm_handle_connect_req(struct ntrdma_dev *dev,
 
 	if (!iw_cm_node) {
 		ntrdma_info_ratelimited(dev,
-				"Listener port  %d not found (ratelimted)",
+				"Listener port %d not found (ratelimted)",
 				req_cmd->remote_port);
 		ntrdma_cmd_send_rep(dev,
 				&event.local_addr,
@@ -586,7 +593,6 @@ static int ntrdma_cm_handle_rep(struct ntrdma_dev *dev,
 	if (unlikely(!ntrdma_qp)) {
 		ntrdma_err(dev, "QP %d local port %d from connection reply not found\n",
 				qpn, ntohs(my_cmd->local_port));
-		dump_iw_cm_id_nodes(dev);
 		goto exit;
 	}
 	cm_id = ntrdma_qp->cm_id;
