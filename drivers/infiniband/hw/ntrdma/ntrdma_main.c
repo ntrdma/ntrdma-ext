@@ -48,8 +48,6 @@
 #define DRIVER_RELDATE  "20 October 2015"
 
 #define MAX_LEN 2
-#define IS_UP(buf) (buf[0] == '1')
-#define IS_DOWN(buf) (buf[0] == '0')
 
 MODULE_AUTHOR("Allen Hubbe");
 MODULE_DESCRIPTION("RDMA Driver for PCIe NTB and DMA");
@@ -80,30 +78,31 @@ static ssize_t link_store(struct device *dev,
 	struct ib_device *ibdev = container_of(dev, struct ib_device, dev);
 	struct ntrdma_dev *ntrdma_dev = ntrdma_ib_dev(ibdev);
 	struct ntc_dev *ntc = ntrdma_dev->ntc;
+	int val;
 
 	if (!ntc) {
-		pr_err("sysfs: failed to store sysfs link file, ntc is NULL\n");
+		pr_err("%s: ERROR sysfs: failed to store sysfs link file, ntc is NULL\n", __func__);
 		return -ENODEV;
 	}
 
-	if (strnlen(buf, MAX_LEN+1) != MAX_LEN) {
-		pr_err("sysfs: wrong param %s\n", buf);
+	if (sscanf(buf, "%d", &val) != 1) {
+		pr_err("%s: ERROR sysfs: wrong param %s\n", __func__, buf);
 		return -EINVAL;
 	}
 
-	if (IS_DOWN(buf) && ntc_is_link_up(ntc)) {
-		pr_debug("sysfs: changed link state to %s\n", buf);
+	if ((val == 0) && ntc_is_link_up(ntc)) {
+		pr_debug("%s: sysfs: changed link state to %d\n", __func__, val);
 		rc = ntc_link_disable(ntc);
-	} else if (IS_UP(buf) && !ntc_is_link_up(ntc)) {
-		pr_debug("sysfs: changed link state to %s\n", buf);
+	} else if ((val == 1) && !ntc_is_link_up(ntc)) {
+		pr_debug("%s: sysfs: changed link state to %d\n", __func__, val);
 		rc = ntc_link_enable(ntc);
 	} else {
-		pr_err("sysfs: link already %s\n", buf);
+		pr_err("%s: ERROR sysfs: link already %d\n", __func__, val);
 	}
 
 	if (rc)
-		pr_err("sysfs: could not set link state (%s) by ntc, rc %d\n",
-				buf, rc);
+		pr_err("%s: sysfs: could not set link state (%d) by ntc, rc %d\n",
+				__func__, val, rc);
 
 	return count;
 }
