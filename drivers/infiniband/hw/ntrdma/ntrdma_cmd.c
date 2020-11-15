@@ -1196,7 +1196,7 @@ int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	rsp->hdr.op = NTRDMA_CMD_QP_MODIFY;
 	rsp->qp_key = cmd.src_qp_key;
 
-	ntrdma_vdbg(dev, "enter state %d qp key %d\n",
+	ntrdma_vdbg(dev, "enter state %d QP %d\n",
 			cmd.state, cmd.src_qp_key);
 
 	/* sanity check */

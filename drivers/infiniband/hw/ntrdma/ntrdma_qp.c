@@ -468,7 +468,8 @@ static void ntrdma_qp_modify_cmpl(struct ntrdma_cmd_cb *cb,
 
 	cb->ret = READ_ONCE(rsp->hdr.status);
 	if (unlikely(cb->ret)) {
-		ntrdma_err(dev, "rsp %p status %d", rsp, cb->ret);
+		ntrdma_err(dev, "rsp %p status %d QP %d RQP %d",
+				rsp, cb->ret, qp->res.key, qp->rqp_key);
 		ntrdma_qp_recv_work(qp);
 	}
 
