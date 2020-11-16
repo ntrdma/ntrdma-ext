@@ -698,8 +698,8 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 		ntrdma_rqp_put(rqp);
 	}
 
-	ntrdma_dbg(dev, "qp reset %p (QP %d) rqp %p\n",
-			qp, qp->res.key, rqp);
+	ntrdma_dbg(dev, "qp reset %p (QP %d) rqp %p (RQP %d)\n",
+			qp, qp->res.key, rqp, qp ->rqp_key);
 
 	ntrdma_res_lock(&qp->res);
 
@@ -1137,7 +1137,6 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 
 	/* during abort, short circuit prod and cons: abort to post idx */
 	if (qp->send_abort) {
-		TRACE("QP %d (already in abort)\n", qp->res.key);
 		send_cons = qp->send_post;
 		qp->send_prod = qp->send_post;
 		ntrdma_qp_set_send_cons(qp, send_cons);
@@ -1532,7 +1531,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* sending requires a connected rqp */
 	rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 	if (!rqp) {
-		ntrdma_qp_info_ratelimited(qp, "QP %d: ntrdma_dev_rqp_look failed key %d",
+		ntrdma_qp_info_ratelimited(qp, "QP %d: ntrdma_dev_rqp_look failed RQP %d",
 			qp->res.key, qp->rqp_key);
 		goto err_rqp;
 	}
@@ -2055,7 +2054,7 @@ err_recv:
 err_dma_chan:
 err_qp:
 	spin_unlock_bh(&rqp->send_cons_lock);
-	ntrdma_err(dev, "Failed qp key %d\n",
+	ntrdma_err(dev, "Failed QP %d\n",
 			rqp->qp_key);
 	if (need_qp_put)
 		ntrdma_qp_put(qp);

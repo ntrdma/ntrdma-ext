@@ -754,7 +754,7 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	count = cmd.sg_count;
 
 	ntrdma_vdbg(dev,
-			"called mr len %llx  mr addr %llx mr key %x sg_count %d\n",
+			"called mr len %llx  mr addr %llx MR %d sg_count %d\n",
 			cmd.mr_len, cmd.mr_addr, cmd.mr_key, count);
 
 	rsp->hdr.op = NTRDMA_CMD_MR_CREATE;
@@ -830,7 +830,7 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 
 	rmr = ntrdma_dev_rmr_look(dev, cmd.mr_key);
 	if (!rmr) {
-		ntrdma_err(dev, "rmr lock failed for key %d\n",
+		ntrdma_err(dev, "look failed for RMR %d\n",
 				cmd.mr_key);
 		rc = -EINVAL;
 		goto err_rmr;
@@ -979,7 +979,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
 	ntrdma_vdbg(dev,
-			"called qp_key %d vbell %d\n",
+			"called QP %d vbell %d\n",
 			 cmd.qp_key, cmd.cmpl_vbell_idx);
 
 	TRACE("peer QP %d create received, recv cap: %d send cap %d\n",
@@ -1085,7 +1085,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 
 	rqp = ntrdma_dev_rqp_look_and_get(dev, cmd.qp_key);
 	if (!rqp) {
-		ntrdma_err(dev, "rqp look failed key %d\n", cmd.qp_key);
+		ntrdma_err(dev, "look failed RQP %d\n", cmd.qp_key);
 		rc = -EINVAL;
 		goto err_rqp;
 	}
@@ -1143,8 +1143,8 @@ int _ntrmda_rqp_modify_local(struct ntrdma_dev *dev,
 
 	if (!is_state_error(new_state)) {
 		rqp->qp_key = dest_qp_key;
-		ntrdma_dbg(dev, "RQP %d got QP %d from %s\n",
-				rqp->rres.key, rqp->qp_key, caller);
+		ntrdma_dbg(dev, "rqp %p RQP %d got QP %d from %s\n",
+				rqp, rqp->rres.key, rqp->qp_key, caller);
 	}
 
 	ntrdma_vbell_trigger(&rqp->send_vbell);
