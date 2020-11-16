@@ -806,6 +806,11 @@ static int ntrdma_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_
 		goto err_state;
 	}
 
+	if (!ntc_is_link_up(dev->ntc)) {
+		rc = -EHOSTUNREACH;
+		goto err_state;
+	}
+
 	/*Client waiting for reply*/
 	ntrdma_qp->ntrdma_cm_state = NTRDMA_CM_STATE_CONNECTING;
 
