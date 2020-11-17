@@ -1044,7 +1044,8 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	}
 
 	rsp->hdr.status = 0;
-	ntrdma_dbg(dev, "success %d\n", rc);
+	ntrdma_dbg(dev, "kref object created and added for rres_key=%d, "
+			"success %d\n", rqp->rres.key, rc);
 	return 0;
 
 err_add:
@@ -1089,6 +1090,8 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 		goto err_rqp;
 	}
 	qp = ntrdma_dev_qp_look_and_get(dev, rqp->qp_key);
+
+	ntrdma_dbg(dev, "found rqp=%d and will deleted.\n", cmd.qp_key);
 
 	ntrdma_vdbg(dev, "stall QP %d\n", qp ? qp->res.key : -1);
 

@@ -37,6 +37,8 @@
 #include "ntc.h"
 #include "ntrdma_file.h"
 
+/* #define NTRDMA_QP_DEBUG */
+
 #define NTRDMA_PERF_MEASURE(name) do {					\
 		if (ntrdma_measure_perf) NTC_PERF_MEASURE(name);	\
 	} while (false)

@@ -215,12 +215,30 @@ void ntrdma_qp_deinit(struct ntrdma_qp *qp, struct ntrdma_dev *dev);
 
 int ntrdma_modify_qp_remote(struct ntrdma_qp *qp);
 
-static inline void ntrdma_qp_get(struct ntrdma_qp *qp)
+#ifdef NTRDMA_QP_DEBUG
+#define ntrdma_qp_get(qp) \
+	ntrdma_dbg(dev, "calling ntrdma_qp_get. key=%d - caller: %s , line:%u\n", qp->res.key, __func__, __LINE__); \
+	_ntrdma_qp_get(qp)
+#else
+#define ntrdma_qp_get(qp) \
+	_ntrdma_qp_get(qp)
+
+#endif
+static inline void _ntrdma_qp_get(struct ntrdma_qp *qp)
 {
 	ntrdma_res_get(&qp->res);
 }
 
-void ntrdma_qp_put(struct ntrdma_qp *qp);
+#ifdef NTRDMA_QP_DEBUG
+#define ntrdma_qp_put(qp) \
+		ntrdma_dbg(ntrdma_qp_dev(qp), "calling ntrdma_qp_put. key=%d - caller: %s , line:%u\n", qp->res.key, __func__, __LINE__); \
+		_ntrdma_qp_put(qp)
+#else
+#define ntrdma_qp_put(qp) \
+		_ntrdma_qp_put(qp)
+#endif
+
+void _ntrdma_qp_put(struct ntrdma_qp *qp);
 
 void ntrdma_qp_send_stall(struct ntrdma_qp *qp, struct ntrdma_rqp *rqp, const char *from, int line);
 
@@ -401,8 +419,27 @@ const struct ntrdma_send_wqe *ntrdma_rqp_send_wqe(struct ntrdma_rqp *rqp,
 inline struct ntrdma_cqe *ntrdma_rqp_send_cqe(struct ntrdma_rqp *rqp,
 					u32 pos);
 
-struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key);
-struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key);
+#ifdef NTRDMA_QP_DEBUG
+#define ntrdma_dev_qp_look_and_get(dev, key) \
+	ntrdma_dbg(dev, "calling ntrdma_dev_qp_look_and_get. key=%d - caller: %s , line:%u\n", key, __func__, __LINE__); \
+	_ntrdma_dev_qp_look_and_get(dev, key)
+#else
+#define ntrdma_dev_qp_look_and_get(dev, key) \
+		_ntrdma_dev_qp_look_and_get(dev, key)
+#endif
+
+struct ntrdma_qp *_ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key);
+
+#ifdef NTRDMA_QP_DEBUG
+#define ntrdma_dev_rqp_look_and_get(dev, key) \
+		ntrdma_dbg(dev, "calling ntrdma_dev_qp_look_and_get. key=%d - caller: %s , line:%u\n", key, __func__, __LINE__); \
+		_ntrdma_dev_rqp_look_and_get(dev, key)
+#else
+#define ntrdma_dev_rqp_look_and_get(dev, key) \
+		_ntrdma_dev_rqp_look_and_get(dev, key)
+#endif
+
+struct ntrdma_rqp *_ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key);
 
 static inline bool is_state_valid(int state)
 {

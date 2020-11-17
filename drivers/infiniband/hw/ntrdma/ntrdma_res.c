@@ -270,11 +270,14 @@ void ntrdma_dev_rres_reset(struct ntrdma_dev *dev)
 {
 	struct ntrdma_rres *rres, *rres_next;
 
+	ntrdma_dbg(dev, "going to free all remote resources.\n");
+
 	mutex_lock(&dev->rres.lock);
 	list_for_each_entry_safe_reverse(rres, rres_next,
 			&dev->rres.list,
 			obj.dev_entry) {
 		ntrdma_rres_remove_unsafe(rres);
+		ntrdma_dbg(dev, "calling free function for rres key=%d\n", rres->key);
 		rres->free(rres);
 	}
 	INIT_LIST_HEAD(&dev->rres.list);
@@ -312,6 +315,7 @@ void ntrdma_res_init(struct ntrdma_res *res,
 		int (*disable)(struct ntrdma_res *res,
 				struct ntrdma_cmd_cb *cb))
 {
+	ntrdma_dbg(dev, "res=%p\n", res);
 	ntrdma_obj_init(&res->obj, dev);
 
 	res->enable = enable;
@@ -332,6 +336,8 @@ int ntrdma_res_add(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	ntrdma_res_lock(res);
 
 	ntrdma_kvec_set_key(dev->node, res_vec, res->key, res);
+
+	ntrdma_dbg(dev, "res_key=%d\n", res->key);
 
 	list_add_tail(&res->obj.dev_entry, res_list);
 
@@ -374,6 +380,8 @@ void ntrdma_res_del(struct ntrdma_res *res, struct ntrdma_cmd_cb *cb,
 	struct ntrdma_dev *dev = ntrdma_res_dev(res);
 	int rc = 0;
 
+	ntrdma_dbg(dev, "res_key=%d\n", res->key);
+
 	mutex_lock(&dev->res.lock);
 	ntrdma_res_lock(res);
 	rc = res->disable(res, cb);
@@ -415,6 +423,7 @@ void ntrdma_rres_init(struct ntrdma_rres *rres,
 		void (*free)(struct ntrdma_rres *rres),
 		u32 key)
 {
+	ntrdma_dbg(dev, "key=%d\n", rres->key);
 	ntrdma_obj_init(&rres->obj, dev);
 
 	rres->vec = vec;
@@ -426,6 +435,8 @@ int ntrdma_rres_add(struct ntrdma_rres *rres)
 {
 	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
 	int rc;
+
+	ntrdma_dbg(dev, "rres_key=%d\n", rres->key);
 
 	rc = ntrdma_vec_set(rres->vec, rres->key, rres, dev->node);
 	if (rc < 0) {
@@ -456,6 +467,8 @@ void ntrdma_rres_remove_unsafe(struct ntrdma_rres *rres)
 void ntrdma_rres_remove(struct ntrdma_rres *rres)
 {
 	struct ntrdma_dev *dev = ntrdma_rres_dev(rres);
+
+	ntrdma_dbg(dev, "rres_key=%d\n", rres->key);
 
 	mutex_lock(&dev->rres.lock);
 	ntrdma_rres_remove_unsafe(rres);

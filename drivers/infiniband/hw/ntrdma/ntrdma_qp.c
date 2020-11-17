@@ -179,6 +179,8 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (is_deinit)
 		goto deinit;
 
+	ntrdma_dbg(dev,"init flow. res=%p\n",&qp->res);
+
 	INIT_WORK(&qp->qp_work, qp_release_work);
 	ntrdma_res_init(&qp->res, dev,
 			ntrdma_qp_enable_cb, ntrdma_qp_disable_cb);
@@ -359,6 +361,7 @@ static void qp_release_work(struct work_struct *qp_work)
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_obj *obj = &qp->res.obj;
 
+	ntrdma_dbg(dev, "releasing key=%d\n", qp->res.key);
 	ntrdma_qp_deinit(qp, dev);
 	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
 			"Free list element while in the list, qp %p (QP %d)\n",
@@ -373,10 +376,11 @@ static void ntrdma_qp_release(struct kref *kref)
 	struct ntrdma_res *res = container_of(obj, struct ntrdma_res, obj);
 	struct ntrdma_qp *qp = container_of(res, struct ntrdma_qp, res);
 
+	ntrdma_dbg(dev, "scheduling qp work.");
 	schedule_work(&qp->qp_work);
 }
 
-void ntrdma_qp_put(struct ntrdma_qp *qp)
+void _ntrdma_qp_put(struct ntrdma_qp *qp)
 {
 	ntrdma_res_put(&qp->res, ntrdma_qp_release);
 }
@@ -623,6 +627,9 @@ static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 	struct ntrdma_rqp *rqp = NULL;
 	struct ntrdma_qp_cmd_cb *qpcb;
 
+#ifdef NTRDMA_QP_DEBUG
+	ntrdma_dbg(dev, "res_key=%d\n", res->key);
+#endif
 	if (qp && dev && qp->rqp_key != -1)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 
@@ -718,6 +725,7 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 {
 	struct ntrdma_rqp *rqp = ntrdma_rres_rqp(rres);
 
+	ntrdma_rres_dbg(rres, "rres_key=%d.\n", rres->key);
 	ntrdma_rqp_put(rqp);
 }
 
@@ -890,6 +898,9 @@ static void ntrdma_rqp_release(struct kref *kref)
 
 inline void ntrdma_rqp_put(struct ntrdma_rqp *rqp)
 {
+#ifdef NTRDMA_QP_DEBUG
+	ntrdma_rqp_dbg(rqp, "qp_key=%d rres_key=%d\n", rqp->qp_key, rqp->rres.key);
+#endif
 	ntrdma_rres_put(&rqp->rres, ntrdma_rqp_release);
 }
 
@@ -2059,7 +2070,7 @@ static void ntrdma_rqp_work_cb(unsigned long ptrhld)
 	ntrdma_rqp_send_work(rqp);
 }
 
-struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)
+struct ntrdma_qp *_ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_res *res;
 
@@ -2070,7 +2081,7 @@ struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)
 	return ntrdma_res_qp(res);
 }
 
-struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key)
+struct ntrdma_rqp *_ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_rres *rres;
 
@@ -2135,11 +2146,13 @@ void ntrdma_free_sge_shadow(struct ntrdma_wr_rcv_sge_shadow *shadow)
 
 struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev)
 {
+	ntrdma_dbg(dev, "node=%u\n", dev->node);
 	return kmem_cache_alloc_node(rqp_slab, gfp, dev->node);
 }
 
 void ntrdma_free_rqp(struct ntrdma_rqp *rqp)
 {
+	ntrdma_dbg(ntrdma_rqp_dev(rqp), "rres_key=%d\n", rqp->rres.key);
 	kmem_cache_free(rqp_slab, rqp);
 }
 
