@@ -623,7 +623,7 @@ static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 	struct ntrdma_rqp *rqp = NULL;
 	struct ntrdma_qp_cmd_cb *qpcb;
 
-	if (qp && dev)
+	if (qp && dev && qp->rqp_key != -1)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 
 	ntrdma_dbg(dev, "Stalling qp %p (QP %d) rqp %p (RQP %d)\n",
