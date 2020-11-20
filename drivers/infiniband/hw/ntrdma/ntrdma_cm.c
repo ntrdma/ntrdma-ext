@@ -569,6 +569,8 @@ static int ntrdma_cm_handle_reject(struct ntrdma_dev *dev,
 		cm_id->rem_ref(cm_id);
 	ntrdma_qp->cm_id = NULL;
 	mutex_unlock(&ntrdma_qp->cm_lock);
+
+	ntrdma_qp_put(ntrdma_qp);
 exit:
 	return status;
 }
@@ -604,7 +606,9 @@ static int ntrdma_cm_handle_rep(struct ntrdma_dev *dev,
 				"reply with status %d for QP %d local port %d - rejecting",
 				my_cmd->status, qpn,
 				ntohs(my_cmd->local_port));
-		return ntrdma_cm_handle_reject(dev, my_cmd);
+		rc = ntrdma_cm_handle_reject(dev, my_cmd);
+		ntrdma_qp_put(ntrdma_qp);
+		return rc;
 	}
 
 	mutex_lock(&ntrdma_qp->cm_lock);

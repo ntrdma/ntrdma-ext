@@ -1021,6 +1021,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 
 	attr.peer_cmpl_vbell_idx = cmd.cmpl_vbell_idx;
 
+	/* this command will create kref obejct initialized with 1 reference. */
 	rc = ntrdma_rqp_init(rqp, dev, &attr, cmd.qp_key);
 	if (rc) {
 		ntrdma_err(dev, "RQP %d init failed", cmd.qp_key);
@@ -1090,7 +1091,6 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	qp = ntrdma_dev_qp_look_and_get(dev, rqp->qp_key);
 
 	ntrdma_vdbg(dev, "stall QP %d\n", qp ? qp->res.key : -1);
-
 
 	if (qp) {
 		ntrdma_res_lock(&qp->res);
