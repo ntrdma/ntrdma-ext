@@ -682,9 +682,9 @@ void ntrdma_cm_qp_shutdown(struct ntrdma_qp *qp)
 	if (qp->ntrdma_cm_state != NTRDMA_CM_STATE_CONNECTING)
 		goto exit_unlock;
 
+	ntrdma_cm_fire_abort(qp);
 	qp->cm_id->rem_ref(qp->cm_id);
 	qp->cm_id = NULL;
-	ntrdma_cm_fire_abort(qp);
 	qp->ntrdma_cm_state = NTRDMA_CM_STATE_KILLING;
 
 exit_unlock:
@@ -803,6 +803,11 @@ static int ntrdma_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_
 		ntrdma_err(dev, "connect QP %d while state %d\n",
 				ntrdma_qp->res.key, ntrdma_qp->ntrdma_cm_state);
 		rc = -EINVAL;
+		goto err_state;
+	}
+
+	if (!ntc_is_link_up(dev->ntc)) {
+		rc = -EHOSTUNREACH;
 		goto err_state;
 	}
 

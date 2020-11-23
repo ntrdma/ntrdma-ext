@@ -353,8 +353,8 @@ void ntrdma_debugfs_qp_add(struct ntrdma_qp *qp)
 	qp->debug = debugfs_create_dir(buf, dev->debug);
 	if (!qp->debug) {
 		ntrdma_err(dev,
-				"Failed to create dir for QP %d\n",
-				qp->res.key);
+				"Failed to create dir for qp %p QP %d\n",
+				qp, qp->res.key);
 		return;
 	}
 
@@ -392,8 +392,8 @@ void ntrdma_debugfs_rqp_add(struct ntrdma_rqp *rqp)
 
 	rqp->debug = debugfs_create_dir(buf, dev->debug);
 	if (!rqp->debug) {
-		ntrdma_err(dev, "debugfs_create_dir failed for RQP %d",
-				rqp->rres.key);
+		ntrdma_err(dev, "debugfs_create_dir failed for rqp %p RQP %d",
+				rqp, rqp->rres.key);
 		return;
 	}
 
