@@ -569,6 +569,8 @@ static int ntrdma_cm_handle_reject(struct ntrdma_dev *dev,
 		cm_id->rem_ref(cm_id);
 	ntrdma_qp->cm_id = NULL;
 	mutex_unlock(&ntrdma_qp->cm_lock);
+
+	ntrdma_qp_put(ntrdma_qp);
 exit:
 	return status;
 }
@@ -604,7 +606,9 @@ static int ntrdma_cm_handle_rep(struct ntrdma_dev *dev,
 				"reply with status %d for QP %d local port %d - rejecting",
 				my_cmd->status, qpn,
 				ntohs(my_cmd->local_port));
-		return ntrdma_cm_handle_reject(dev, my_cmd);
+		rc = ntrdma_cm_handle_reject(dev, my_cmd);
+		ntrdma_qp_put(ntrdma_qp);
+		return rc;
 	}
 
 	mutex_lock(&ntrdma_qp->cm_lock);
@@ -742,7 +746,7 @@ static int ntrdma_create_listen(struct iw_cm_id *cm_id, int backlog)
 	char lname[PISPC_NAME_LEN];
 
 	sprintf(lname, "%pISpc", &cm_id->local_addr);
-	ntrdma_dbg(dev, "Waiting for a connections on %s (%d)\n",
+	ntrdma_info(dev, "Waiting for a connections on %s (%d)\n",
 		lname, ntohs(sin->sin_port));
 
 	return store_iw_cm_id(dev, -1, cm_id);
@@ -985,8 +989,8 @@ static int ntrdma_reject(struct iw_cm_id *cm_id, const void *pdata, u8 pdata_len
 	} else {
 		rejmsg.sin_family = AF_INET;
 	}
-WARN_ON(1);
-	ntrdma_dbg(dev, "NTRDMA CM rejecting pdata len %u on local port %d, remote port %d QP %d\n",
+
+	ntrdma_info(dev, "NTRDMA CM rejecting pdata len %u on local port %d, remote port %d QP %d\n",
 			pdata_len, ((uint)ntohl(rejmsg.local_port)) >> 16,
 			((uint)ntohl(rejmsg.remote_port)) >> 16, rejmsg.qpn);
 
@@ -1002,7 +1006,7 @@ static int ntrdma_destroy_listen(struct iw_cm_id *cm_id)
 	char lname[PISPC_NAME_LEN];
 
 	sprintf(lname, "%pISpc", &cm_id->local_addr);
-	ntrdma_dbg(dev, "NTRDMA CM DEBUG destroying: %s (%d)\n",
+	ntrdma_info(dev, "NTRDMA CM DEBUG destroying: %s (%d)\n",
 		lname, ntohs(sin->sin_port));
 
 	listener = cm_id->provider_data;
