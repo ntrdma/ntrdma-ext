@@ -92,7 +92,7 @@ int ntrdma_mr_init(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 
 void ntrdma_mr_deinit(struct ntrdma_mr *mr, struct ntrdma_dev *dev)
 {
-	ntrdma_kvec_dispose_key(dev->node, &dev->res.mr_vec, mr->res.key);
+	ntrdma_kvec_dispose_key(&dev->res.mr_vec, mr->res.key);
 	ntc_mr_buf_clear_sgl(mr->sg_list, mr->sg_count);
 }
 
