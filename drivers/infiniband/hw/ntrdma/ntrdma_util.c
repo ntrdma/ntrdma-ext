@@ -205,7 +205,7 @@ int ntrdma_kvec_new_copy(struct ntrdma_kvec *vec, u32 cap,
 		return -ENOMEM;
 	}
 
-	memcpy(rkvec->keys, vec->rkvec->keys, BITS_TO_LONGS_SIZE(rkvec->cap));
+	memcpy(rkvec->keys, vec->rkvec->keys, BITS_TO_LONGS_SIZE(vec->rkvec->cap));
 	memcpy(rkvec->look, vec->rkvec->look, vec->rkvec->cap * sizeof(*rkvec->look));
 	rkvec->cap = cap;
 	rkvec->next_key = vec->rkvec->next_key;

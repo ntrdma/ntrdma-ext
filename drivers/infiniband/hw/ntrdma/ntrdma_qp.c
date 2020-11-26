@@ -376,7 +376,7 @@ static void ntrdma_qp_release(struct kref *kref)
 	struct ntrdma_res *res = container_of(obj, struct ntrdma_res, obj);
 	struct ntrdma_qp *qp = container_of(res, struct ntrdma_qp, res);
 
-	ntrdma_dbg(dev, "scheduling qp work.");
+	ntrdma_dbg(ntrdma_qp_dev(qp), "scheduling qp work.");
 	schedule_work(&qp->qp_work);
 }
 
