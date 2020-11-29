@@ -524,7 +524,8 @@ static void ntc_ntb_ping_poll_cb(struct timer_list *ntc_ntb_of_timer)
 		ntc_ntb_dev_dbg(dev, "ping miss %d", dev->ping_miss);
 		if (dev->ping_miss == NTC_NTB_PING_MISS_THRESHOLD) {
 			ntc_ntb_dev_err(dev,
-					"peer lost - moving to quiesce state");
+					"ping miss %d - moving to quiesce state", dev->ping_miss);
+			ntb_link_disable(dev->ntb);
 			dev->poll_msg = NTC_NTB_LINK_QUIESCE;
 			schedule_work(&dev->link_work);
 		}

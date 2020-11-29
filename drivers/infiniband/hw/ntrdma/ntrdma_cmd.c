@@ -86,10 +86,13 @@ inline u32 ntrdma_dev_cmd_send_cons(struct ntrdma_dev *dev)
 static inline void ntrdma_dev_clear_cmd_send_cons(struct ntrdma_dev *dev)
 {
 	u32 cmd_send_cons = 0;
+	int rc;
 
-	ntc_export_buf_reinit(&dev->cmd_send.rsp_buf, &cmd_send_cons,
+	rc = ntc_export_buf_reinit(&dev->cmd_send.rsp_buf, &cmd_send_cons,
 			sizeof(union ntrdma_rsp) * dev->cmd_send.cap,
 			sizeof(cmd_send_cons));
+	if (rc < 0)
+		ntrdma_err(dev, "Failed to clear rsp_buf rc = %d\n", rc);
 }
 
 static inline const u32 *ntrdma_dev_cmd_recv_prod_buf(struct ntrdma_dev *dev)
