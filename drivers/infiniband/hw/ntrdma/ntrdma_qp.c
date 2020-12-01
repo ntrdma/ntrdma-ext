@@ -179,6 +179,8 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	if (is_deinit)
 		goto deinit;
 
+	ntrdma_dbg(dev,"init flow. res=%p\n",&qp->res);
+
 	INIT_WORK(&qp->qp_work, qp_release_work);
 	ntrdma_res_init(&qp->res, dev,
 			ntrdma_qp_enable_cb, ntrdma_qp_disable_cb);
@@ -332,7 +334,7 @@ err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
 	ntrdma_cq_put(qp->recv_cq);
 err_res:
-	ntrdma_kvec_dispose_key(dev->node, &dev->res.qp_vec, qp->res.key);
+	ntrdma_kvec_dispose_key(&dev->res.qp_vec, qp->res.key);
 	if (qp->send_page) {
 		put_page(qp->send_page);
 		qp->send_page = NULL;
@@ -359,6 +361,7 @@ static void qp_release_work(struct work_struct *qp_work)
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_obj *obj = &qp->res.obj;
 
+	ntrdma_dbg(dev, "releasing key=%d\n", qp->res.key);
 	ntrdma_qp_deinit(qp, dev);
 	WARN(!ntrdma_list_is_entry_poisoned(&obj->dev_entry),
 			"Free list element while in the list, qp %p (QP %d)\n",
@@ -372,11 +375,13 @@ static void ntrdma_qp_release(struct kref *kref)
 	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
 	struct ntrdma_res *res = container_of(obj, struct ntrdma_res, obj);
 	struct ntrdma_qp *qp = container_of(res, struct ntrdma_qp, res);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
+	ntrdma_dbg(dev, "scheduling qp work.");
 	schedule_work(&qp->qp_work);
 }
 
-void ntrdma_qp_put(struct ntrdma_qp *qp)
+void _ntrdma_qp_put(struct ntrdma_qp *qp)
 {
 	ntrdma_res_put(&qp->res, ntrdma_qp_release);
 }
@@ -623,6 +628,9 @@ static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 	struct ntrdma_rqp *rqp = NULL;
 	struct ntrdma_qp_cmd_cb *qpcb;
 
+#ifdef NTRDMA_QP_DEBUG
+	ntrdma_dbg(dev, "res_key=%d\n", res->key);
+#endif
 	if (qp && dev && qp->rqp_key != -1)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 
@@ -691,8 +699,8 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 		ntrdma_rqp_put(rqp);
 	}
 
-	ntrdma_dbg(dev, "qp reset %p (QP %d) rqp %p\n",
-			qp, qp->res.key, rqp);
+	ntrdma_dbg(dev, "qp reset %p (QP %d) rqp %p (RQP %d)\n",
+			qp, qp->res.key, rqp, qp ->rqp_key);
 
 	ntrdma_res_lock(&qp->res);
 
@@ -718,6 +726,7 @@ static void ntrdma_rqp_free(struct ntrdma_rres *rres)
 {
 	struct ntrdma_rqp *rqp = ntrdma_rres_rqp(rres);
 
+	ntrdma_rres_dbg(rres, "rres_key=%d.\n", rres->key);
 	ntrdma_rqp_put(rqp);
 }
 
@@ -890,6 +899,9 @@ static void ntrdma_rqp_release(struct kref *kref)
 
 inline void ntrdma_rqp_put(struct ntrdma_rqp *rqp)
 {
+#ifdef NTRDMA_QP_DEBUG
+	ntrdma_rqp_dbg(rqp, "qp_key=%d rres_key=%d\n", rqp->qp_key, rqp->rres.key);
+#endif
 	ntrdma_rres_put(&rqp->rres, ntrdma_rqp_release);
 }
 
@@ -1126,7 +1138,6 @@ static void ntrdma_qp_send_cmpl_get(struct ntrdma_qp *qp,
 
 	/* during abort, short circuit prod and cons: abort to post idx */
 	if (qp->send_abort) {
-		TRACE("QP %d (already in abort)\n", qp->res.key);
 		send_cons = qp->send_post;
 		qp->send_prod = qp->send_post;
 		ntrdma_qp_set_send_cons(qp, send_cons);
@@ -1521,7 +1532,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 	/* sending requires a connected rqp */
 	rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
 	if (!rqp) {
-		ntrdma_qp_info_ratelimited(qp, "QP %d: ntrdma_dev_rqp_look failed key %d",
+		ntrdma_qp_info_ratelimited(qp, "QP %d: ntrdma_dev_rqp_look failed RQP %d",
 			qp->res.key, qp->rqp_key);
 		goto err_rqp;
 	}
@@ -2044,7 +2055,7 @@ err_recv:
 err_dma_chan:
 err_qp:
 	spin_unlock_bh(&rqp->send_cons_lock);
-	ntrdma_err(dev, "Failed qp key %d\n",
+	ntrdma_err(dev, "Failed QP %d\n",
 			rqp->qp_key);
 	if (need_qp_put)
 		ntrdma_qp_put(qp);
@@ -2059,7 +2070,7 @@ static void ntrdma_rqp_work_cb(unsigned long ptrhld)
 	ntrdma_rqp_send_work(rqp);
 }
 
-struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)
+struct ntrdma_qp *_ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_res *res;
 
@@ -2070,7 +2081,7 @@ struct ntrdma_qp *ntrdma_dev_qp_look_and_get(struct ntrdma_dev *dev, u32 key)
 	return ntrdma_res_qp(res);
 }
 
-struct ntrdma_rqp *ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key)
+struct ntrdma_rqp *_ntrdma_dev_rqp_look_and_get(struct ntrdma_dev *dev, u32 key)
 {
 	struct ntrdma_rres *rres;
 
@@ -2135,11 +2146,13 @@ void ntrdma_free_sge_shadow(struct ntrdma_wr_rcv_sge_shadow *shadow)
 
 struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev)
 {
+	ntrdma_dbg(dev, "node=%u\n", dev->node);
 	return kmem_cache_alloc_node(rqp_slab, gfp, dev->node);
 }
 
 void ntrdma_free_rqp(struct ntrdma_rqp *rqp)
 {
+	ntrdma_dbg(ntrdma_rqp_dev(rqp), "rres_key=%d\n", rqp->rres.key);
 	kmem_cache_free(rqp_slab, rqp);
 }
 

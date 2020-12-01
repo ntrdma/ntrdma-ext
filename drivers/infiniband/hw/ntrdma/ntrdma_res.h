@@ -131,6 +131,8 @@ struct ntrdma_rres {
 };
 
 #define ntrdma_rres_dev(rres) ntrdma_obj_dev(&(rres)->obj)
+#define ntrdma_rres_dbg(__rres, __args...)			\
+	ntrdma_dbg(ntrdma_rres_dev(__rres), ## __args)
 
 void ntrdma_rres_init(struct ntrdma_rres *rres,
 		     struct ntrdma_dev *dev,

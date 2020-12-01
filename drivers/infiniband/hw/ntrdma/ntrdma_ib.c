@@ -1484,6 +1484,7 @@ int ntrdma_modify_qp(struct ib_qp *ibqp,
 {
 	int rc;
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
+	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
@@ -1492,8 +1493,11 @@ int ntrdma_modify_qp(struct ib_qp *ibqp,
 		ibqp_attr,
 		ibqp_mask);
 
-	if (likely(!rc))
+	if (likely(!rc)) {
+		mutex_lock(&dev->res.lock);
 		rc = ntrdma_modify_qp_remote(qp);
+		mutex_unlock(&dev->res.lock);
+	}
 
 	NTRDMA_IB_PERF_END;
 
