@@ -1534,6 +1534,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	t2 = jiffies;
 	ntc_dma_flush(qp->dma_chan);
 	t3 = jiffies;
+	ntrdma_cm_qp_shutdown(qp);
 	ntrdma_qp_put(qp);
 	t4 = jiffies;
 	NTRDMA_IB_PERF_END;
