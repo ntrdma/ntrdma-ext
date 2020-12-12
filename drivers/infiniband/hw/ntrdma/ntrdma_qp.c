@@ -542,6 +542,8 @@ static int ntrdma_qp_enable_disable_cmpl_common(struct ntrdma_qp *qp,
 	int rc;
 
 	if (is_disable) {
+		/* At this point rqp does not exist anymore */
+		qp->rqp_key = -1;
 		rc = 0;
 		goto disable;
 	}
