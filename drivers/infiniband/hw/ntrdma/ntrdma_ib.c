@@ -1495,7 +1495,9 @@ int ntrdma_modify_qp(struct ib_qp *ibqp,
 
 	if (likely(!rc)) {
 		mutex_lock(&dev->res.lock);
-		rc = ntrdma_modify_qp_remote(qp);
+		/* If  already disconnected from remote, no need to update remote */
+		if (qp->rqp_key != -1)
+			rc = ntrdma_modify_qp_remote(qp);
 		mutex_unlock(&dev->res.lock);
 	}
 

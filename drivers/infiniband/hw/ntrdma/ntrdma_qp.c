@@ -334,7 +334,7 @@ err_send_wqe_buf:
 	ntrdma_cq_put(qp->send_cq);
 	ntrdma_cq_put(qp->recv_cq);
 err_res:
-	ntrdma_kvec_dispose_key(&dev->res.qp_vec, qp->res.key);
+	ntrdma_kvec_dispose_key(dev->node, &dev->res.qp_vec, qp->res.key);
 	if (qp->send_page) {
 		put_page(qp->send_page);
 		qp->send_page = NULL;
@@ -375,9 +375,8 @@ static void ntrdma_qp_release(struct kref *kref)
 	struct ntrdma_obj *obj = container_of(kref, struct ntrdma_obj, kref);
 	struct ntrdma_res *res = container_of(obj, struct ntrdma_res, obj);
 	struct ntrdma_qp *qp = container_of(res, struct ntrdma_qp, res);
-	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
-	ntrdma_dbg(dev, "scheduling qp work.");
+	ntrdma_dbg(ntrdma_qp_dev(qp), "scheduling qp work.");
 	schedule_work(&qp->qp_work);
 }
 
@@ -543,6 +542,8 @@ static int ntrdma_qp_enable_disable_cmpl_common(struct ntrdma_qp *qp,
 	int rc;
 
 	if (is_disable) {
+		/* At this point rqp does not exist anymore */
+		qp->rqp_key = -1;
 		rc = 0;
 		goto disable;
 	}
