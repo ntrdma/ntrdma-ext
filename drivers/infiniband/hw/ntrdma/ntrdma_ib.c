@@ -1484,7 +1484,6 @@ int ntrdma_modify_qp(struct ib_qp *ibqp,
 {
 	int rc;
 	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
-	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
@@ -1494,11 +1493,9 @@ int ntrdma_modify_qp(struct ib_qp *ibqp,
 		ibqp_mask);
 
 	if (likely(!rc)) {
-		mutex_lock(&dev->res.lock);
 		/* If  already disconnected from remote, no need to update remote */
 		if (qp->rqp_key != -1)
 			rc = ntrdma_modify_qp_remote(qp);
-		mutex_unlock(&dev->res.lock);
 	}
 
 	NTRDMA_IB_PERF_END;
@@ -1534,6 +1531,7 @@ static int ntrdma_destroy_qp(struct ib_qp *ibqp)
 	t2 = jiffies;
 	ntc_dma_flush(qp->dma_chan);
 	t3 = jiffies;
+	ntrdma_cm_qp_shutdown(qp);
 	ntrdma_qp_put(qp);
 	t4 = jiffies;
 	NTRDMA_IB_PERF_END;

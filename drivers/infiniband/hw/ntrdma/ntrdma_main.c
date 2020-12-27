@@ -98,6 +98,8 @@ static ssize_t link_store(struct device *dev,
 		rc = ntc_link_enable(ntc);
 	} else {
 		pr_err("%s: ERROR sysfs: link already %d\n", __func__, val);
+		if ((val != 0) && (val != 1))
+			return -EINVAL;
 	}
 
 	if (rc)
