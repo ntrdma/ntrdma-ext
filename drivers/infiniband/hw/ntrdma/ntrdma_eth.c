@@ -106,7 +106,9 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	if (is_deinit)
 		goto deinit;
 
-	net = alloc_etherdev(sizeof(*eth));
+	net = alloc_netdev_mqs(sizeof(*eth), "ntrdma%d", NET_NAME_UNKNOWN,
+			ether_setup, 1, 1);
+
 	if (!net) {
 		ntrdma_err(dev, "alloc etherdec failed");
 		rc = -ENOMEM;
