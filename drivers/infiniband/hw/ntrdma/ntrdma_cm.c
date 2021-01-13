@@ -558,15 +558,22 @@ static int ntrdma_cm_handle_reject(struct ntrdma_dev *dev,
 	ntrdma_dbg(dev, "RDMA_CM: reject cm_id %p QP %d RQP %d\n",
 			cm_id, qpn, ntrdma_qp->rqp_key);
 
+	mutex_lock(&ntrdma_qp->cm_lock);
+	if (ntrdma_qp->ntrdma_cm_state != NTRDMA_CM_STATE_CONNECTING) {
+		ntrdma_info(dev, "Reject while not connecting state %d\n", ntrdma_qp->ntrdma_cm_state);
+		mutex_unlock(&ntrdma_qp->cm_lock);
+		return status;
+	}
 	status = ntrdma_fire_reject(cm_id, 0, rsp_cmd->priv_len);
 
 	if (unlikely(status)) {
 		ntrdma_err(dev, "firing event IW_CM_EVENT_CONNECT_REPLY at reject and returned error %d\n",
 				status);
 	}
-	mutex_lock(&ntrdma_qp->cm_lock);
-	if(cm_id)
+	if(cm_id) {
 		cm_id->rem_ref(cm_id);
+		ntrdma_qp->ntrdma_cm_state = NTRDMA_CM_STATE_IDLE;
+	}
 	ntrdma_qp->cm_id = NULL;
 	mutex_unlock(&ntrdma_qp->cm_lock);
 
