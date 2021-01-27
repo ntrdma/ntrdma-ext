@@ -85,9 +85,21 @@ void ntrdma_qp_module_deinit(void);
 
 int __init ntrdma_ib_module_init(void);
 void ntrdma_ib_module_deinit(void);
-
+#ifdef NTRDMA_FULL_ETH
 int __init ntrdma_eth_module_init(void);
 void ntrdma_eth_module_deinit(void);
+void ntrdma_dev_eth_reset(struct ntrdma_dev *dev);
+#else
+static inline
+int __init ntrdma_eth_module_init(void)
+{
+	return 0;
+}
+static inline
+void ntrdma_eth_module_deinit(void) {}
+static inline
+void ntrdma_dev_eth_reset(struct ntrdma_dev *dev) {}
+#endif
 
 int __init ntrdma_debugfs_init(void);
 void ntrdma_debugfs_deinit(void);
@@ -140,7 +152,6 @@ void ntrdma_dev_res_disable(struct ntrdma_dev *dev);
 
 void ntrdma_dev_quiesce(struct ntrdma_dev *dev);
 void ntrdma_dev_reset(struct ntrdma_dev *dev);
-void ntrdma_dev_eth_reset(struct ntrdma_dev *dev);
 void ntrdma_dev_eth_quiesce(struct ntrdma_dev *dev);
 void ntrdma_dev_cmd_reset(struct ntrdma_dev *dev);
 void ntrdma_dev_cmd_quiesce(struct ntrdma_dev *dev);
