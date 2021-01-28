@@ -475,6 +475,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "eth_ready %d\n", eth->ready);
 	seq_printf(s, "eth_link %d\n", eth->link);
 
+#ifdef NTRDMA_FULL_ETH
 	seq_printf(s, "eth_rx_cap %#x\n", eth->rx_cap);
 	seq_printf(s, "eth_rx_post %#x\n", eth->rx_post);
 	seq_printf(s, "eth_rx_prod %#x\n", eth->rx_prod);
@@ -523,7 +524,7 @@ static int ntrdma_debugfs_dev_info_show(struct seq_file *s, void *v)
 	seq_printf(s, "eth_vbell_idx %u\n", eth->vbell.idx);
 	seq_printf(s, "eth_vbell_seq %u\n", eth->vbell.seq);
 	seq_printf(s, "eth_vbell_arm %d\n", eth->vbell.arm);
-
+#endif
 	return 0;
 }
 

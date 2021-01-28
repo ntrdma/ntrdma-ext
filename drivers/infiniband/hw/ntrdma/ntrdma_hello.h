@@ -77,6 +77,7 @@ struct ntrdma_eth_hello_prep {
 	struct ntc_remote_buf_desc	tx_prod_buf_desc;
 };
 
+#ifdef NTRDMA_FULL_ETH
 int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 			struct ntrdma_eth_hello_info __iomem *info);
 int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
@@ -84,5 +85,26 @@ int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
 			struct ntrdma_eth_hello_prep __iomem *prep);
 int ntrdma_dev_eth_hello_done(struct ntrdma_dev *dev,
 			const struct ntrdma_eth_hello_prep *peer_prep);
+#else
+static inline
+int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
+			struct ntrdma_eth_hello_info __iomem *info)
+{
+	return 0;
+}
+static inline
+int ntrdma_dev_eth_hello_prep(struct ntrdma_dev *dev,
+			const struct ntrdma_eth_hello_info *peer_info,
+			struct ntrdma_eth_hello_prep __iomem *prep)
+{
+	return 0;
+}
 
+static inline
+int ntrdma_dev_eth_hello_done(struct ntrdma_dev *dev,
+			const struct ntrdma_eth_hello_prep *peer_prep)
+{
+	return 0;
+}
+#endif
 #endif

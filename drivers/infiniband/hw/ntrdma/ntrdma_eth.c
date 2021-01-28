@@ -37,14 +37,15 @@
 #define MAX_WQES 4096
 #define SKINFO_SIZE SKB_DATA_ALIGN(sizeof(struct skb_shared_info))
 
+#ifdef NTRDMA_FULL_ETH
 static struct kmem_cache *skb_cb_slab;
+#endif
 
 static const struct net_device_ops ntrdma_eth_net_ops;
 static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget);
+static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
+#ifdef NTRDMA_FULL_ETH
 static void ntrdma_eth_dma_cb(void *ctx, const struct dmaengine_result *result);
-static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
-static void ntrdma_eth_link_event(struct ntrdma_eth *eth);
-
 static inline const u32 *ntrdma_eth_tx_prod_buf(struct ntrdma_eth *eth)
 {
 	return ntc_export_buf_const_deref(&eth->tx_prod_buf, 0, sizeof(u32));
@@ -92,7 +93,7 @@ static inline void ntrdma_dev_eth_rx_drain(struct ntrdma_dev *dev)
 		eth->rx_cmpl = ntrdma_ring_update(end, base, eth->rx_cap);
 	} while (start != end);
 }
-
+#endif
 static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 			u32 vbell_idx,
 			u32 rx_cap,
@@ -101,7 +102,9 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	struct net_device *net;
 	struct ntrdma_eth *eth;
 	int rc;
+#ifdef NTRDMA_FULL_ETH
 	u32 rx_cons = 0;
+#endif
 
 	if (is_deinit)
 		goto deinit;
@@ -117,6 +120,9 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 
 	net->netdev_ops = &ntrdma_eth_net_ops;
 	net->features = NETIF_F_HIGHDMA;
+#ifndef NTRDMA_FULL_ETH
+	net->flags |= IFF_NOARP;
+#endif
 	random_ether_addr(net->perm_addr);
 	memcpy(net->dev_addr, net->perm_addr, net->addr_len);
 
@@ -128,7 +134,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	eth->enable = false;
 	eth->ready = false;
 	eth->link = false;
-
+#ifdef NTRDMA_FULL_ETH
 	eth->rx_cap = rx_cap;
 	eth->rx_post = 0;
 	eth->rx_prod = 0;
@@ -189,7 +195,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 	spin_lock_init(&eth->tx_cons_lock);
 
 	ntrdma_napi_vbell_init(dev, &eth->vbell, vbell_idx, &eth->napi);
-
+#endif
 	netif_napi_add(net, &eth->napi, ntrdma_eth_napi_poll,
 		       NAPI_POLL_WEIGHT);
 
@@ -199,6 +205,8 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 		goto err_register;
 	}
 
+	netif_tx_disable(net);
+
 	return 0;
 deinit:
 	eth = dev->eth;
@@ -207,6 +215,7 @@ deinit:
 	WARN(eth->is_hello_prep, "eth deinit without hello unprep");
 	unregister_netdev(net);
 err_register:
+#ifdef NTRDMA_FULL_ETH
 	ntrdma_napi_vbell_kill(&eth->vbell);
 	ntc_dma_flush(eth->dma_chan);
 	ntc_export_buf_free(&eth->rx_cons_buf);
@@ -218,6 +227,7 @@ err_rx_wqe_buf:
 	ntrdma_dev_eth_rx_drain(dev);
 	kfree(eth->rx_buf);
 err_rx_buf:
+#endif
 	free_netdev(net);
 err_net:
 	return rc;
@@ -241,6 +251,7 @@ void ntrdma_dev_eth_deinit(struct ntrdma_dev *dev)
 	ntrdma_dev_eth_init_deinit(dev, 0, 0, true);
 }
 
+#ifdef NTRDMA_FULL_ETH
 int ntrdma_dev_eth_hello_info(struct ntrdma_dev *dev,
 			struct ntrdma_eth_hello_info __iomem *info)
 {
@@ -447,12 +458,13 @@ err_peer_tx_wqe_buf:
 	return rc;
 }
 
+
 int ntrdma_dev_eth_hello_done(struct ntrdma_dev *dev,
 			const struct ntrdma_eth_hello_prep *peer_prep)
 {
 	return ntrdma_dev_eth_hello_done_undone(dev, peer_prep, false);
 }
-
+#endif
 void ntrdma_dev_eth_enable(struct ntrdma_dev *dev)
 {
 	struct ntrdma_eth *eth = dev->eth;
@@ -469,11 +481,13 @@ void ntrdma_dev_eth_disable(struct ntrdma_dev *dev)
 	ntrdma_eth_link_event(eth);
 }
 
+#ifdef NTRDMA_FULL_ETH
 void ntrdma_dev_eth_reset(struct ntrdma_dev *dev)
 {
 	ntrdma_dev_eth_hello_done_undone(dev, NULL, true);
 	ntrdma_dev_eth_hello_prep_unperp(dev, NULL, NULL, true);
 }
+#endif
 
 void ntrdma_dev_eth_quiesce(struct ntrdma_dev *dev)
 {
@@ -484,6 +498,7 @@ void ntrdma_dev_eth_quiesce(struct ntrdma_dev *dev)
 	ntrdma_dev_eth_disable(dev);
 }
 
+#ifdef NTRDMA_FULL_ETH
 static void ntrdma_eth_rx_fill(struct ntrdma_eth *eth)
 {
 	struct ntrdma_dev *dev = eth->dev;
@@ -920,13 +935,26 @@ static void ntrdma_eth_dma_cb(void *ctx, const struct dmaengine_result *result)
 	netdev_completed_queue(eth->napi.dev, 1, skb_headlen(skb));
 }
 
+#else
+static int ntrdma_eth_napi_poll(struct napi_struct *napi, int budget)
+{
+	BUG();
+	return 0;
+}
+
+static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
+					 struct net_device *net)
+{
+	BUG();
+}
+#endif
 static void ntrdma_eth_link_event(struct ntrdma_eth *eth)
 {
 	bool link = eth->enable && eth->ready;
 
 	if (link == eth->link)
 		return;
-
+#ifdef NTRDMA_FULL_ETH
 	if (link) {
 		netif_stop_queue(eth->napi.dev);
 		ntrdma_eth_rx_fill(eth);
@@ -937,7 +965,15 @@ static void ntrdma_eth_link_event(struct ntrdma_eth *eth)
 		napi_disable(&eth->napi);
 		netif_carrier_off(eth->napi.dev);
 	}
+#else
+	netif_stop_queue(eth->napi.dev);
 
+	if (link) {
+		netif_carrier_on(eth->napi.dev);
+	} else {
+		netif_carrier_off(eth->napi.dev);
+	}
+#endif
 	eth->link = link;
 }
 
@@ -982,6 +1018,7 @@ static const struct net_device_ops ntrdma_eth_net_ops = {
 	.ndo_validate_addr = eth_validate_addr,
 };
 
+#ifdef NTRDMA_FULL_ETH
 int __init ntrdma_eth_module_init(void)
 {
 	if (!(skb_cb_slab = KMEM_CACHE(ntrdma_skb_cb, 0))) {
@@ -997,3 +1034,5 @@ void ntrdma_eth_module_deinit(void)
 {
 	ntrdma_deinit_slab(&skb_cb_slab);
 }
+
+#endif
