@@ -54,6 +54,7 @@ struct ntc_mm {
 	void *brk;
 	struct idr fixed;
 	spinlock_t lock;
+	struct mutex idr_lock;
 };
 
 static inline int _ntc_mm_chunk_size(int size)
@@ -136,6 +137,7 @@ static inline int ntc_mm_init(struct ntc_mm *mm, void *memory, size_t size)
 	mm->brk = memory;
 	mm->end = end;
 
+	mutex_init(&mm->idr_lock);
 	idr_init(&mm->fixed);
 
 	return 0;
@@ -150,6 +152,7 @@ static inline void ntc_mm_deinit(struct ntc_mm *mm)
 		kfree(fixed);
 
 	idr_destroy(&mm->fixed);
+	mutex_destroy(&mm->idr_lock);
 }
 
 static inline void *ntc_mm_sbrk(struct ntc_mm *mm, int inc)
@@ -187,7 +190,11 @@ static inline void *ntc_mm_sbrk(struct ntc_mm *mm, int inc)
 static inline struct ntc_fixed_mm *_ntc_mm_find_fixed(struct ntc_mm *mm,
 						int size)
 {
-	return idr_find(&mm->fixed, size);
+	struct ntc_fixed_mm *rc;
+	rcu_read_lock();
+	rc = idr_find(&mm->fixed, size);
+	rcu_read_unlock();
+	return rc;
 }
 
 static inline struct ntc_fixed_mm *
@@ -208,7 +215,9 @@ _ntc_mm_get_fixed(struct ntc_mm *mm, int size, gfp_t gfp)
 		return ERR_PTR(-ENOMEM);
 	ntc_mm_fixed_init(fixed);
 
+	mutex_lock(&mm->idr_lock);
 	rc = idr_alloc(&mm->fixed, fixed, size, size + 1, gfp);
+	mutex_unlock(&mm->idr_lock);
 	if (rc < 0) {
 		kfree(fixed);
 
