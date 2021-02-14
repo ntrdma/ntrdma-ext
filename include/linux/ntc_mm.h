@@ -39,13 +39,17 @@
 #include <linux/kernel.h>
 #include "ntc_trace.h"
 
+#define FREE_MAGIC (0xdeadc0de)
+#define FIXED_MAGIC (0xbed00bad)
 struct ntc_mm_free_entry {
 	struct ntc_mm_free_entry *next;
+	u32 magic;
 };
 
 struct ntc_fixed_mm {
 	struct ntc_mm_free_entry *free;
 	spinlock_t lock;
+	u32 magic;
 };
 
 struct ntc_mm {
@@ -87,6 +91,7 @@ static inline void *_ntc_mm_round_up_ptr(void *ptr)
 static inline void ntc_mm_fixed_init(struct ntc_fixed_mm *fixed)
 {
 	fixed->free = NULL;
+	fixed->magic = FIXED_MAGIC;
 	spin_lock_init(&fixed->lock);
 }
 
@@ -97,9 +102,10 @@ static inline void *ntc_mm_fixed_alloc(struct ntc_fixed_mm *fixed)
 
 	spin_lock_irqsave(&fixed->lock, irqflags);
 	free = fixed->free;
-	if (free)
+	if (free) {
+		BUG_ON(free->magic != FREE_MAGIC);
 		fixed->free = free->next;
-	else
+	} else
 		free = ERR_PTR(-ENOMEM);
 	spin_unlock_irqrestore(&fixed->lock, irqflags);
 
@@ -113,6 +119,7 @@ static inline void ntc_mm_fixed_free(struct ntc_fixed_mm *fixed, void *ptr)
 
 	spin_lock_irqsave(&fixed->lock, irqflags);
 	free->next = fixed->free;
+	free->magic = FREE_MAGIC;
 	fixed->free = free;
 	spin_unlock_irqrestore(&fixed->lock, irqflags);
 }
@@ -204,8 +211,10 @@ _ntc_mm_get_fixed(struct ntc_mm *mm, int size, gfp_t gfp)
 	int rc;
 
 	fixed = _ntc_mm_find_fixed(mm, size);
-	if (likely(fixed))
+	if (likely(fixed)) {
+		BUG_ON(fixed->magic != FIXED_MAGIC);
 		return fixed;
+	}
 
 	if (size <= 0)
 		return ERR_PTR(-EINVAL);
@@ -223,9 +232,10 @@ _ntc_mm_get_fixed(struct ntc_mm *mm, int size, gfp_t gfp)
 
 		if (rc == -ENOSPC) {
 			fixed = _ntc_mm_find_fixed(mm, size);
-			if (fixed)
+			if (fixed) {
+				BUG_ON(fixed->magic != FIXED_MAGIC);
 				return fixed;
-			else
+			} else
 				return ERR_PTR(-EFAULT);
 		}
 
@@ -317,9 +327,10 @@ static inline void ntc_mm_free(struct ntc_mm *mm, void *ptr, int size)
 	size = _ntc_mm_chunk_size(size);
 
 	fixed = _ntc_mm_find_fixed(mm, size);
-	if (likely(fixed))
+	if (likely(fixed)) {
+		BUG_ON(fixed->magic != FIXED_MAGIC);
 		ntc_mm_fixed_free(fixed, ptr);
-	else
+	} else
 		WARN_ON(!fixed);
 }
 
