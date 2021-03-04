@@ -120,6 +120,8 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 
 	net->netdev_ops = &ntrdma_eth_net_ops;
 	net->features = NETIF_F_HIGHDMA;
+	net->priv_flags |= IFF_LIVE_ADDR_CHANGE;
+	net->type = ARPHRD_PPP;
 #ifndef NTRDMA_FULL_ETH
 	net->flags |= IFF_NOARP;
 #endif
@@ -196,8 +198,7 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 
 	ntrdma_napi_vbell_init(dev, &eth->vbell, vbell_idx, &eth->napi);
 #endif
-	netif_napi_add(net, &eth->napi, ntrdma_eth_napi_poll,
-		       NAPI_POLL_WEIGHT);
+	netif_napi_add(net, &eth->napi, ntrdma_eth_napi_poll, NAPI_POLL_WEIGHT);
 
 	rc = register_netdev(net);
 	if (rc) {
@@ -205,6 +206,8 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 		goto err_register;
 	}
 
+	netif_carrier_off(net);
+	netif_dormant_on(net);
 	netif_tx_disable(net);
 
 	return 0;
@@ -842,7 +845,11 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 	eth->tx_cons = ntrdma_ring_update(pos + 1, base, eth->tx_cap);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+	if (!netdev_xmit_more()) {
+#else
 	if (!skb->xmit_more) {
+#endif
 		while (eth->tx_cmpl != eth->tx_cons) {
 			ntrdma_ring_consume(eth->tx_cons,
 					    eth->tx_cmpl,
@@ -983,10 +990,10 @@ static int ntrdma_eth_open(struct net_device *net)
 
 	eth->enable = true;
 	ntrdma_eth_link_event(eth);
+	netif_dormant_off(net);
 
 	return 0;
 }
-
 
 static int ntrdma_eth_stop(struct net_device *net)
 {
@@ -994,7 +1001,7 @@ static int ntrdma_eth_stop(struct net_device *net)
 
 	eth->enable = false;
 	ntrdma_eth_link_event(eth);
-
+	netif_dormant_on(net);
 	return 0;
 }
 

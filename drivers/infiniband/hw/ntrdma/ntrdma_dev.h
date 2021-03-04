@@ -39,6 +39,7 @@
 #include <linux/workqueue.h>
 #include <linux/types.h>
 #include <linux/ratelimit.h>
+#include <linux/version.h>
 #include <linux/percpu.h>
 #include "ntc.h"
 
@@ -219,6 +220,10 @@ struct ntrdma_dev {
 	atomic_t cq_num;
 	atomic_t mr_num;
 	atomic_t pd_num;
+
+	struct list_head ntrdma_iw_cm_list;
+	struct kmem_cache *cmid_node_slab;
+	rwlock_t iwcm_rwlock;
 
 };
 
