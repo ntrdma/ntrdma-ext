@@ -737,7 +737,6 @@ static const struct file_operations ntrdma_debugfs_dev_vbell_peer_ops = {
 static int ntrdma_debugfs_dev_cm_show(struct seq_file *s, void *v)
 {
 	struct ntrdma_dev *dev = s->private;
-	struct ntrdma_iw_cm *ntrdma_iwcm = ntrdma_iw_cm_from_ntrdma_dev(dev);
 	struct ntrdma_iw_cm_id_node *node = NULL;
 	struct iw_cm_id *cm_id;
 	struct sockaddr_in *rsin;
@@ -747,8 +746,8 @@ static int ntrdma_debugfs_dev_cm_show(struct seq_file *s, void *v)
 	seq_printf(s, "*** cm_id list ***\n");
 	seq_printf(s, "printing:\nlocal ip:local port\tremote ip:remote port\tqpn\n");
 
-	read_lock(&ntrdma_iwcm->slock);
-	list_for_each_entry(node, &ntrdma_iwcm->ntrdma_iw_cm_list, head) {
+	read_lock(&dev->iwcm_rwlock);
+	list_for_each_entry(node, &dev->ntrdma_iw_cm_list, head) {
 		cm_id = node->cm_id;
 		rsin = (struct sockaddr_in *)&cm_id->remote_addr;
 		lsin = (struct sockaddr_in *)&cm_id->local_addr;
@@ -762,7 +761,7 @@ static int ntrdma_debugfs_dev_cm_show(struct seq_file *s, void *v)
 					, node->qpn);
 
 	}
-	read_unlock(&ntrdma_iwcm->slock);
+	read_unlock(&dev->iwcm_rwlock);
 	return 0;
 }
 
