@@ -56,72 +56,12 @@
 #include "ntrdma_eth.h"
 #include "ntrdma-trace.h"
 #include "ntrdma_cm.h"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+#include "ntrdma_ib_5_3.h"
+#else
+#include "ntrdma_ib_4_19.h"
+#endif
 
-#define NTRDMA_PKEY_DEFAULT 0xffff
-#define NTRDMA_GIB_TBL_LEN 1
-#define NTRDMA_PKEY_TBL_LEN 2
-
-#define DELL_VENDOR_ID 0x1028
-#define NOT_SUPPORTED 0
-/* TODO: remove this macro when adding to enum rdma_driver_id
- * in include/uapi/rdma/rdma_user_ioctl_cmds.h
- */
-#define RDMA_DRIVER_NTRDMA 17
-
-#define NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT 400
-#define NTRDMA_IB_PERF_INIT unsigned long ___ts_ = 0; \
-				unsigned long ___tt_ = 0; \
-				unsigned ___perf_ = 0
-#define NTRDMA_IB_PERF_START ___ts_ = jiffies
-#define NTRDMA_IB_PERF_END do {\
-			___tt_ = jiffies - ___ts_; \
-			___perf_ = jiffies_to_msecs(___tt_);\
-			if(time_after(jiffies,___ts_ + NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT)) { \
-					TRACE(\
-					"performance time of method %s: %u miliseconds", \
-					__func__, \
-					___perf_); \
-				} \
-			} while (0)
-
-#define qp_enum_to_string(QP_ENUM) \
-						QP_ENUM == IB_QPS_RESET ? "IB_QPS_RESET" :\
-						QP_ENUM == IB_QPS_INIT ? "IB_QPS_INIT" :\
-						QP_ENUM == IB_QPS_RTR ? "IB_QPS_RTR" :\
-						QP_ENUM == IB_QPS_RTS ? "IB_QPS_RTS" :\
-						QP_ENUM == IB_QPS_SQD ? "IB_QPS_SQD" :\
-						QP_ENUM == IB_QPS_SQE ? "IB_QPS_SQE" :\
-						QP_ENUM == IB_QPS_ERR ? "IB_QPS_ERR" :\
-						"Undefined state number"\
-
-
-static int ntrdma_qp_file_release(struct inode *inode, struct file *filp);
-static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
-				unsigned long arg);
-
-static int ntrdma_cq_file_release(struct inode *inode, struct file *filp);
-static long ntrdma_cq_file_ioctl(struct file *filp, unsigned int cmd,
-				unsigned long arg);
-
-static struct kmem_cache *ah_slab;
-static struct kmem_cache *cq_slab;
-static struct kmem_cache *pd_slab;
-static struct kmem_cache *qp_slab;
-static struct kmem_cache *ibuctx_slab;
-
-static struct file_operations ntrdma_qp_fops = {
-	.owner		= THIS_MODULE,
-	.release	= ntrdma_qp_file_release,
-	.unlocked_ioctl	= ntrdma_qp_file_ioctl,
-	.compat_ioctl	= ntrdma_qp_file_ioctl,
-};
-
-static struct file_operations ntrdma_cq_fops = {
-	.owner		= THIS_MODULE,
-	.release	= ntrdma_cq_file_release,
-	.unlocked_ioctl	= ntrdma_cq_file_ioctl,
-	.compat_ioctl	= ntrdma_cq_file_ioctl,
-};
 
 void ntrdma_free_qp(struct ntrdma_qp *qp)
 {
@@ -143,8 +83,8 @@ struct net_device *ntrdma_get_netdev(struct ib_device *ibdev,
 
 /* not implemented / not required? */
 static int ntrdma_get_port_immutable(struct ib_device *ibdev,
-				     u8 port,
-				     struct ib_port_immutable *imm)
+		u8 port,
+		struct ib_port_immutable *imm)
 {
 	imm->pkey_tbl_len = NTRDMA_PKEY_TBL_LEN;
 	imm->gid_tbl_len = 8;
@@ -188,57 +128,16 @@ static int ntrdma_query_gid(struct ib_device *ibdev,
 	return 0;
 }
 
-struct ntrdma_ah {
-	struct ib_ah ibah;
-	struct rdma_ah_attr attr;
-};
-
 /* not implemented / not required? */
-/* if required, one needs to implement:
- * Perform path query to the Subnet Administrator (SA)
-	Out of band connection to the remote node, for example: using socket
- * Using well-known values, for example: this can be done in a static
-    subnet (which all of the addresses are predefined) or using
-    multicast groups
- */
-static struct ib_ah *ntrdma_create_ah(struct ib_pd *ibpd,
-				      struct rdma_ah_attr *ah_attr,
-				      struct ib_udata *udata)
-{
-	struct ntrdma_ah *ah = kmem_cache_zalloc(ah_slab, GFP_ATOMIC);
-
-	if (!ah) {
-		WARN_ON(1);
-		return ERR_PTR(-ENOMEM);
-	}
-
-	ah->attr = *ah_attr;
-
-	return &ah->ibah;
-
-}
-
-/* not implemented / not required? */
-static int ntrdma_destroy_ah(struct ib_ah *ibah)
-{
-	struct ntrdma_ah *ah = container_of(ibah, struct ntrdma_ah, ibah);
-
-	kmem_cache_free(ah_slab, ah);
-
-	return 0;
-}
-
-/* not implemented / not required? */
-static struct ib_mr *ntrdma_get_dma_mr(struct ib_pd *ibpd,
-				       int mr_access_flags)
+static struct ib_mr *ntrdma_get_dma_mr(struct ib_pd *ibpd, int mr_access_flags)
 {
 	pr_debug("not implemented, returning %d\n", -ENOSYS);
 	return ERR_PTR(-ENOSYS);
 }
 
 static int ntrdma_query_device(struct ib_device *ibdev,
-			       struct ib_device_attr *ibattr,
-			       struct ib_udata *ibudata)
+		struct ib_device_attr *ibattr,
+		struct ib_udata *ibudata)
 {
 	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
 
@@ -312,7 +211,7 @@ static int ntrdma_query_device(struct ib_device *ibdev,
 }
 
 static int ntrdma_query_port(struct ib_device *ibdev,
-			     u8 port, struct ib_port_attr *ibattr)
+		u8 port, struct ib_port_attr *ibattr)
 {
 	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
 
@@ -373,20 +272,18 @@ static int ntrdma_query_port(struct ib_device *ibdev,
 	 * u64 (*link_is_up)(struct ntb_dev *ntb,
 	 *		  enum ntb_speed *speed, enum ntb_width *width);
 	 */
-	ibattr->active_speed = IB_SPEED_DDR; //
+	ibattr->active_speed = IB_SPEED_DDR;
 
 	return 0;
 }
 
-static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
-		const struct ib_cq_init_attr *ibattr,
-		struct ib_ucontext *ibuctx,
-		struct ib_udata *ibudata)
+static int ntrdma_create_cq_common(struct ib_cq *ibcq, struct ib_device *ibdev,
+		const struct ib_cq_init_attr *ibattr, struct ib_ucontext *ibuctx,
+		struct ib_udata *ibudata, struct ntrdma_cq **cq)
 {
-	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
 	struct ntrdma_create_cq_ext inbuf;
 	struct ntrdma_create_cq_resp_ext outbuf;
-	struct ntrdma_cq *cq;
+	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
 	u32 vbell_idx;
 	struct file *file;
 	int flags;
@@ -414,43 +311,42 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 		goto err_cq;
 	}
 
-	cq = kmem_cache_alloc_node(cq_slab, GFP_KERNEL, dev->node);
-	if (!cq) {
+	*cq = ntrdma_alloc_cq(ibcq, dev);
+
+	if (!*cq) {
 		ntrdma_err(dev, "kmem_cache_alloc_node %d failed", dev->node);
 		rc = -ENOMEM;
 		goto err_cq;
 	}
 
-	memset(cq, 0, sizeof(*cq));
-
-	ntrdma_cq_init(cq, dev);
+	ntrdma_cq_init(*cq, dev);
 
 	if (ibudata && ibudata->inlen >= sizeof(inbuf)) {
 		if (copy_from_user(&inbuf, ibudata->inbuf, sizeof(inbuf))) {
-			ntrdma_cq_err(cq, "copy_from_user (%p -> %p) failed ",
+			ntrdma_cq_err(*cq, "copy_from_user (%p -> %p) failed ",
 					ibudata->inbuf, &inbuf);
-			ntrdma_cq_put(cq); /* The initial ref */
+			ntrdma_cq_put(*cq); /* The initial ref */
 			rc = -EFAULT;
 			goto err_cq;
 		}
 
 		if (!ntrdma_ioctl_if_check_desc(&inbuf.desc)) {
-			ntrdma_cq_err(cq, "BAD inbuf.desc:\n%s", inbuf.desc);
+			ntrdma_cq_err(*cq, "BAD inbuf.desc:\n%s", inbuf.desc);
 			goto bad_ntrdma_ioctl_if;
 		}
 
 		if (!inbuf.poll_page_ptr) {
-			ntrdma_cq_err(cq, "inbuf.poll_page_ptr is NULL");
-			ntrdma_cq_put(cq); /* The initial ref */
+			ntrdma_cq_err(*cq, "inbuf.poll_page_ptr is NULL");
+			ntrdma_cq_put(*cq); /* The initial ref */
 			rc = -EINVAL;
 			goto err_cq;
 		}
 
 		rc = get_user_pages_fast(inbuf.poll_page_ptr, 1, 1,
-					&cq->poll_page);
+					&(*cq)->poll_page);
 		if (rc < 0) {
-			ntrdma_cq_err(cq, "get_user_pages_fast failed: %d", rc);
-			ntrdma_cq_put(cq); /* The initial ref */
+			ntrdma_cq_err(*cq, "get_user_pages_fast failed: %d", rc);
+			ntrdma_cq_put(*cq); /* The initial ref */
 			goto err_cq;
 		}
 	}
@@ -460,34 +356,33 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 
 		outbuf.cqfd = get_unused_fd_flags(flags);
 		if (outbuf.cqfd < 0) {
-			ntrdma_cq_err(cq, "get_unused_fd_flags failed: %d",
+			ntrdma_cq_err(*cq, "get_unused_fd_flags failed: %d",
 				outbuf.cqfd);
-			ntrdma_cq_put(cq); /* The initial ref */
+			ntrdma_cq_put(*cq); /* The initial ref */
 			rc = outbuf.cqfd;
 			goto err_cq;
 		}
 
-		file = anon_inode_getfile("ntrdma_cq", &ntrdma_cq_fops, cq,
-					flags);
+		file = anon_inode_getfile("ntrdma_cq", &ntrdma_cq_fops, *cq, flags);
 		if (IS_ERR(file)) {
-			ntrdma_cq_err(cq, "anon_inode_getfile failed: %ld",
+			ntrdma_cq_err(*cq, "anon_inode_getfile failed: %ld",
 				PTR_ERR(file));
-			ntrdma_cq_put(cq); /* The initial ref */
+			ntrdma_cq_put(*cq); /* The initial ref */
 			put_unused_fd(outbuf.cqfd);
 
 			NTRDMA_IB_PERF_END;
-			return (void *)file;
+			return PTR_ERR((void *)file);
 		}
 		/*
 		 * Ref taken below will be released in ntrdma_cq_file_release().
 		 */
-		ntrdma_cq_get(cq);
+		ntrdma_cq_get(*cq);
 
 		if (copy_to_user(ibudata->outbuf, &outbuf, sizeof(outbuf))) {
-			ntrdma_cq_err(cq, "copy_to_user (%p -> %p) failed",
+			ntrdma_cq_err(*cq, "copy_to_user (%p -> %p) failed",
 					&outbuf, ibudata->outbuf);
 			fput(file); /* Close the file. */
-			ntrdma_cq_put(cq); /* The initial ref */
+			ntrdma_cq_put(*cq); /* The initial ref */
 			put_unused_fd(outbuf.cqfd);
 			rc = -EFAULT;
 			goto err_cq;
@@ -503,30 +398,30 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 	 * Init vbell before adding to list,
 	 * so that dirty vbell doesn't go off from ntrdma_cq_arm_resync().
 	 */
-	ntrdma_cq_vbell_init(cq, vbell_idx);
+	ntrdma_cq_vbell_init(*cq, vbell_idx);
 
 	mutex_lock(&dev->res.lock);
-	list_add_tail(&cq->obj.dev_entry, &dev->res.cq_list);
+	list_add_tail(&(*cq)->obj.dev_entry, &dev->res.cq_list);
 	mutex_unlock(&dev->res.lock);
 
-	ntrdma_debugfs_cq_add(cq);
+	ntrdma_debugfs_cq_add(*cq);
 
 	ntrdma_vdbg(dev,
 		"added cq %p (%d/%d) ib cq %p vbell idx %d c\n",
-		cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
-		&cq->ibcq, vbell_idx);
+		*cq, atomic_read(&dev->cq_num), NTRDMA_DEV_MAX_CQ,
+		&(*cq)->ibcq, vbell_idx);
 
-	cq->ibcq_valid = true;
+	(*cq)->ibcq_valid = true;
 
 	NTRDMA_IB_PERF_END;
-	return &cq->ibcq;
+	return 0;
 
 err_cq:
 	atomic_dec(&dev->cq_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
 
 	NTRDMA_IB_PERF_END;
-	return ERR_PTR(rc);
+	return rc;
 }
 
 static void ntrdma_cq_release(struct kref *kref)
@@ -541,42 +436,8 @@ static void ntrdma_cq_release(struct kref *kref)
 	}
 
 	ntrdma_debugfs_cq_del(cq);
-	kmem_cache_free(cq_slab, cq);
+	ntrdma_cq_release_cache_free(cq);
 	atomic_dec(&dev->cq_num);
-}
-
-static int ntrdma_destroy_cq(struct ib_cq *ibcq)
-{
-	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
-	struct ntrdma_dev *dev = ntrdma_cq_dev(cq);
-
-	NTRDMA_IB_PERF_INIT;
-	NTRDMA_IB_PERF_START;
-
-	spin_lock_bh(&cq->arm_lock);
-	cq->ibcq_valid = false;
-	spin_unlock_bh(&cq->arm_lock);
-
-	/*
-	 * Remove from list before killing vbell,
-	 * so that killed vbell does not go off from ntrdma_cq_arm_resync().
-	 */
-	mutex_lock(&dev->res.lock);
-	list_del(&cq->obj.dev_entry);
-	mutex_unlock(&dev->res.lock);
-
-	ntrdma_cq_vbell_kill(cq);
-
-	ntrdma_cq_put(cq);
-
-
-	NTRDMA_IB_PERF_END;
-	return 0;
-}
-
-void ntrdma_cq_put(struct ntrdma_cq *cq)
-{
-	ntrdma_obj_put(&cq->obj, ntrdma_cq_release);
 }
 
 static inline int ntrdma_ib_wc_status_from_cqe(u32 op_status)
@@ -665,8 +526,8 @@ static void ntrdma_ib_wc_from_cqe(struct ib_wc *ibwc,
 }
 #define SHIFT_SAVE_BITS 10
 static int ntrdma_poll_cq(struct ib_cq *ibcq,
-			  int howmany,
-			  struct ib_wc *ibwc)
+		int howmany,
+		struct ib_wc *ibwc)
 {
 	struct ntrdma_cq *cq = ntrdma_ib_cq(ibcq);
 	struct ntrdma_qp *qp;
@@ -908,12 +769,10 @@ static int ntrdma_cq_file_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
-				     struct ib_ucontext *ibuctx,
-				     struct ib_udata *ibudata)
+int ntrdma_alloc_pd_common(struct ib_pd *ibpd, struct ib_device *ibdev,
+		struct ib_ucontext *ibuctx, struct ib_udata *ibudata, struct ntrdma_pd **pd)
 {
 	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
-	struct ntrdma_pd *pd;
 	int rc;
 
 	NTRDMA_IB_PERF_INIT;
@@ -922,35 +781,34 @@ static struct ib_pd *ntrdma_alloc_pd(struct ib_device *ibdev,
 	ntrdma_vdbg(dev, "called\n");
 
 	if (atomic_inc_return(&dev->pd_num) >= NTRDMA_DEV_MAX_PD) {
-		ntrdma_err(dev, "beyond supported number %d\n",
-				NTRDMA_DEV_MAX_PD);
+		ntrdma_err(dev, "beyond supported number %d\n", NTRDMA_DEV_MAX_PD);
 		rc = -ETOOMANYREFS;
 		goto err_pd;
 	}
 
-	pd = kmem_cache_alloc_node(pd_slab, GFP_KERNEL, dev->node);
-	if (!pd) {
+	*pd = ntrdma_new_pd(ibpd, dev);
+	if (!*pd) {
 		rc = -ENOMEM;
 		ntrdma_err(dev, "kmem_cache_alloc_node failed\n");
 		goto err_pd;
 	}
 
 	mutex_lock(&dev->res.lock);
-	ntrdma_pd_init(pd, dev, dev->res.pd_next_key++);
-	list_add_tail(&pd->obj.dev_entry, &dev->res.pd_list);
+	ntrdma_pd_init(*pd, dev, dev->res.pd_next_key++);
+	list_add_tail(&(*pd)->obj.dev_entry, &dev->res.pd_list);
 	mutex_unlock(&dev->res.lock);
 
-	ntrdma_vdbg(dev, "added pd key=%d", pd->key);
+	ntrdma_vdbg(dev, "added pd key=%d", (*pd)->key);
 
 	NTRDMA_IB_PERF_END;
-	return &pd->ibpd;
+	return 0;
 
 err_pd:
 	atomic_dec(&dev->pd_num);
 	ntrdma_err(dev, "failed, returning err %d\n", rc);
 
 	NTRDMA_IB_PERF_END;
-	return ERR_PTR(rc);
+	return rc;
 }
 static void ntrdma_pd_release(struct kref *kref)
 {
@@ -958,37 +816,13 @@ static void ntrdma_pd_release(struct kref *kref)
 	struct ntrdma_pd *pd = container_of(obj, struct ntrdma_pd, obj);
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
 
-	kmem_cache_free(pd_slab, pd);
+	ntrdma_pd_release_cache_free(pd);
 	atomic_dec(&dev->pd_num);
 }
 
-static int ntrdma_dealloc_pd(struct ib_pd *ibpd)
-{
-	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
-	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
-
-	NTRDMA_IB_PERF_INIT;
-	NTRDMA_IB_PERF_START;
-
-	mutex_lock(&dev->res.lock);
-	list_del(&pd->obj.dev_entry);
-	mutex_unlock(&dev->res.lock);
-
-	ntrdma_pd_put(pd);
-
-
-	NTRDMA_IB_PERF_END;
-	return 0;
-}
-
-void ntrdma_pd_put(struct ntrdma_pd *pd)
-{
-	ntrdma_obj_put(&pd->obj, ntrdma_pd_release);
-}
-
 static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
-				      struct ib_qp_init_attr *ibqp_attr,
-				      struct ib_udata *ibudata)
+		struct ib_qp_init_attr *ibqp_attr,
+		struct ib_udata *ibudata)
 {
 	struct ntrdma_pd *pd = ntrdma_ib_pd(ibpd);
 	struct ntrdma_dev *dev = ntrdma_pd_dev(pd);
@@ -996,7 +830,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 	struct ntrdma_cq *send_cq = ntrdma_ib_cq(ibqp_attr->send_cq);
 	struct ntrdma_create_qp_ext inbuf;
 	struct ntrdma_create_qp_resp_ext outbuf;
-	struct ntrdma_qp *qp;
+	struct ntrdma_qp *qp = NULL;
 	struct ntrdma_qp_init_attr qp_attr;
 	struct file *file;
 	struct ntrdma_qp_cmd_cb qpcb;
@@ -1177,7 +1011,10 @@ err_init:
 	kmem_cache_free(qp_slab, qp);
 err_qp:
 	atomic_dec(&dev->qp_num);
-	ntrdma_err(dev, "QP %d, failed, returning err %d\n", qp->res.key, rc);
+	if (qp)
+		ntrdma_err(dev, "QP %d, failed, returning err %d\n", qp->res.key, rc);
+	else
+		ntrdma_err(dev, "QP null, failed, returning err %d\n", rc);
 
 	NTRDMA_IB_PERF_END;
 	return ERR_PTR(rc);
@@ -1503,45 +1340,6 @@ int ntrdma_modify_qp(struct ib_qp *ibqp,
 	return rc;
 }
 
-static int ntrdma_destroy_qp(struct ib_qp *ibqp)
-{
-	struct ntrdma_qp *qp = ntrdma_ib_qp(ibqp);
-	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
-	struct ntrdma_qp_cmd_cb qpcb;
-	unsigned long t0, t1, t2, t3, t4;
-
-	NTRDMA_IB_PERF_INIT;
-	NTRDMA_IB_PERF_START;
-
-	ntrdma_dbg(dev, "QP %p (QP %d)\n", qp, qp ? qp->res.key : -1);
-
-	if (unlikely(qp->send_cmpl != qp->send_post)) {
-		ntrdma_dbg(dev,
-				"Destroy QP %p (%d) while send cmpl %d send post %d send prod %d send cap %d\n",
-				qp, qp->res.key, qp->send_cmpl,
-				qp->send_post, qp->send_prod, qp->send_cap);
-	}
-	t0 = jiffies;
-	ntrdma_debugfs_qp_del(qp);
-	t1 = jiffies;
-	memset(&qpcb, 0, sizeof(qpcb));
-
-	init_completion(&qpcb.cb.cmds_done);
-	ntrdma_res_del(&qp->res, &qpcb.cb, &dev->res.qp_vec);
-	t2 = jiffies;
-	ntc_dma_flush(qp->dma_chan);
-	t3 = jiffies;
-	ntrdma_cm_qp_shutdown(qp);
-	ntrdma_qp_put(qp);
-	t4 = jiffies;
-	NTRDMA_IB_PERF_END;
-	if (t4 - t0 > 100)
-		ntrdma_info(dev,
-				"#NTRDMAPERF -  put %ld, flush %ld, res_del %ld, debugfs %ld\n",
-				t4 - t3, t3 - t2, t2 - t1, t1 - t0);
-	return 0;
-}
-
 #define NUM_SUPPORTED_INLINE_SGE 1
 static inline int ntrdma_ib_send_to_inline_wqe(struct ntrdma_qp *qp,
 					struct ntrdma_send_wqe *wqe,
@@ -1743,13 +1541,6 @@ static inline void ntrdma_qp_additional_work(struct ntrdma_qp *qp,
 	else if (had_immediate_work)
 		ntc_req_submit(qp->dma_chan);
 }
-
-
-static inline struct ntrdma_ah *ntrdma_ah(struct ib_ah *ibah)
-{
-	return container_of(ibah, struct ntrdma_ah, ibah);
-}
-
 
 static inline int ntrdma_post_send_locked(struct ntrdma_qp *qp,
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
@@ -2088,8 +1879,8 @@ static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd,
 		ntrdma_vdbg(dev, "MAPPED ADDR %#llx TO DMA %#lx LEN %#llx",
 			start, dma_addr, length);
 	} else {
-		ib_umem = ib_umem_get(pd->ibpd.uobject->context, start, length,
-				mr_access_flags, false);
+		ib_umem = ntrdma_ib_umem_get(ibudata, pd->ibpd.uobject->context, start,
+				length, mr_access_flags, false);
 
 		if (IS_ERR(ib_umem)) {
 			rc = PTR_ERR(ib_umem);
@@ -2216,73 +2007,6 @@ void ntrdma_mr_put(struct ntrdma_mr *mr)
 	ntrdma_res_put(&mr->res, mr_release);
 }
 
-static int ntrdma_dereg_mr(struct ib_mr *ibmr)
-{
-	struct ntrdma_mr *mr = ntrdma_ib_mr(ibmr);
-	struct ntrdma_dev *dev = ntrdma_mr_dev(mr);
-	struct ntrdma_mr_cmd_cb mrcb;
-	struct completion done;
-	unsigned long t0, t1, t2, t3, t4;
-
-	NTRDMA_IB_PERF_INIT;
-	NTRDMA_IB_PERF_START;
-
-	ntrdma_dbg(dev, "dereg MR %p (key %d)\n", mr, mr->res.key);
-	t0 = jiffies;
-	ntrdma_debugfs_mr_del(mr);
-	t1 = jiffies;
-
-	memset(&mrcb, 0, sizeof(mrcb));
-	init_completion(&mrcb.cb.cmds_done);
-	ntrdma_res_del(&mr->res, &mrcb.cb, &dev->res.mr_vec);
-	t2 = jiffies;
-
-	init_completion(&done);
-	mr->done = &done;
-
-	ntrdma_mr_put(mr);
-
-	wait_for_completion(&done);
-	t3 = jiffies;
-	ntc_flush_dma_channels(dev->ntc);
-	t4 = jiffies;
-
-
-	NTRDMA_IB_PERF_END;
-	if (t4 - t0 > 100)
-		ntrdma_info(dev,
-				"#NTRDMAPERF -  flush %ld, put %ld, res_del %ld, debugfs %ld\n",
-				t4 - t3, t3 - t2, t2 - t1, t1 - t0);
-	return 0;
-}
-
-static struct ib_ucontext *ntrdma_alloc_ucontext(struct ib_device *ibdev,
-						 struct ib_udata *ibudata)
-{
-	struct ntrdma_dev *dev = ntrdma_ib_dev(ibdev);
-	struct ib_ucontext *ibuctx;
-	int rc;
-
-	ibuctx = kmem_cache_alloc_node(ibuctx_slab, GFP_KERNEL, dev->node);
-	if (!ibuctx) {
-		ntrdma_err(dev, "kmem_cache_alloc_node failed");
-		rc = -ENOMEM;
-		goto err_ctx;
-	}
-
-	return ibuctx;
-
-err_ctx:
-	return ERR_PTR(rc);
-}
-
-static int ntrdma_dealloc_ucontext(struct ib_ucontext *ibuctx)
-{
-	kmem_cache_free(ibuctx_slab, ibuctx);
-
-	return 0;
-}
-
 static void ntrdma_set_node_guid(__be64 *guid)
 {
 	prandom_bytes(guid, sizeof(*guid));
@@ -2292,42 +2016,6 @@ enum rdma_link_layer	ntrdma_get_link_layer(struct ib_device *device,
 		u8 port_num)
 {
 	return IB_LINK_LAYER_ETHERNET;
-}
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-int ntrdma_add_gid(struct ib_device *device, u8 port_num,
-		unsigned int index, const union ib_gid *gid,
-		const struct ib_gid_attr *attr, void **context)
-#else
-int ntrdma_add_gid(const struct ib_gid_attr *attr, void **context)
-#endif
-{
-	return 0;
-}
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-int ntrdma_del_gid(struct ib_device *device, u8 port_num,
-		unsigned int index, void **context)
-#else
-int ntrdma_del_gid(const struct ib_gid_attr *attr, void **context)
-#endif
-{
-	return 0;
-}
-
-int ntrdma_process_mad(struct ib_device *device,
-		int process_mad_flags,
-		u8 port_num,
-		const struct ib_wc *in_wc,
-		const struct ib_grh *in_grh,
-		const struct ib_mad_hdr *in_mad,
-		size_t in_mad_size,
-		struct ib_mad_hdr *out_mad,
-		size_t *out_mad_size,
-		u16 *out_mad_pkey_index)
-{
-	TRACE("RDMA CM MAD received: class %d\n", in_mad->mgmt_class);
-	return IB_MAD_RESULT_SUCCESS;
 }
 
 static int ntrdma_qp_file_release(struct inode *inode, struct file *filp)
@@ -2563,8 +2251,6 @@ static long ntrdma_qp_file_ioctl(struct file *filp, unsigned int cmd,
 	}
 }
 
-
-
 int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 {
 	struct ib_device *ibdev = &dev->ibdev;
@@ -2574,15 +2260,13 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 
 	ntrdma_set_node_guid(&ibdev->node_guid);
 
-	ibdev->owner			= THIS_MODULE;
-	ibdev->node_type		= RDMA_NODE_RNIC;
+	ibdev->node_type = RDMA_NODE_RNIC;
 	/* TODO: maybe this should be the number of virtual doorbells */
 	ibdev->num_comp_vectors		= 1;
 
 	ibdev->dev.parent = dev->ntc->ntb_dev;
 
-	ibdev->uverbs_abi_ver		= 1;
-	ibdev->phys_port_cnt		= 1;
+	ibdev->phys_port_cnt = 1;
 	ibdev->local_dma_lkey = NTRDMA_RESERVED_DMA_LEKY;
 
 
@@ -2607,58 +2291,21 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 		(1ull << IB_USER_VERBS_CMD_POST_RECV)			|
 		0ull;
 
-	/* not implemented / not required */
-	ibdev->get_netdev			= ntrdma_get_netdev;
-	ibdev->get_port_immutable	= ntrdma_get_port_immutable;
-	ibdev->query_pkey			= ntrdma_query_pkey;
-	ibdev->query_gid			= ntrdma_query_gid;
-	ibdev->create_ah			= ntrdma_create_ah;
-	ibdev->destroy_ah			= ntrdma_destroy_ah;
-	ibdev->get_dma_mr			= ntrdma_get_dma_mr;
-
-	/* userspace context */
-	ibdev->alloc_ucontext		= ntrdma_alloc_ucontext;
-	ibdev->dealloc_ucontext		= ntrdma_dealloc_ucontext;
-
-	/* device and port queries */
-	ibdev->query_device		= ntrdma_query_device;
-	ibdev->query_port		= ntrdma_query_port;
-
-	/* completion queue */
-	ibdev->create_cq		= ntrdma_create_cq;
-	ibdev->destroy_cq		= ntrdma_destroy_cq;
-	ibdev->poll_cq			= ntrdma_poll_cq;
-	ibdev->req_notify_cq		= ntrdma_req_notify_cq;
-
-	/* protection domain */
-	ibdev->alloc_pd			= ntrdma_alloc_pd;
-	ibdev->dealloc_pd		= ntrdma_dealloc_pd;
-
-	/* memory region */
-	ibdev->reg_user_mr		= ntrdma_reg_user_mr;
-	ibdev->dereg_mr			= ntrdma_dereg_mr;
-
-	/* queue pair */
-	ibdev->create_qp		= ntrdma_create_qp;
-	ibdev->query_qp			= ntrdma_query_qp;
-	ibdev->modify_qp		= ntrdma_modify_qp;
-	ibdev->destroy_qp		= ntrdma_destroy_qp;
-	ibdev->post_send		= ntrdma_post_send;
-	ibdev->post_recv		= ntrdma_post_recv;
-	ibdev->get_link_layer	= ntrdma_get_link_layer;
-	ibdev->add_gid			= ntrdma_add_gid;
-	ibdev->del_gid			= ntrdma_del_gid;
-	ibdev->process_mad		= ntrdma_process_mad;
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
-	ibdev->driver_id		= RDMA_DRIVER_NTRDMA;
-#endif
-	ibdev->iwcm = ntrdma_cm_init(ibdev->name);
-	if (!ibdev->iwcm) {
+	dev->cmid_node_slab = KMEM_CACHE(ntrdma_iw_cm_id_node, 0);
+	if (!dev->cmid_node_slab) {
 		rc = -ENOMEM;
 		goto err_cm;
 	}
-	rc = ib_register_device(ibdev, NULL);
+	INIT_LIST_HEAD(&dev->ntrdma_iw_cm_list);
+	rwlock_init(&dev->iwcm_rwlock);
+
+	rc = ntrdma_set_ib_ops(dev, ibdev);
+	if (rc) {
+		rc = -ENOMEM;
+		goto err_cm;
+	}
+
+	rc = ntrdma_ib_register_device(ibdev);
 	if (rc)
 		goto err_ib;
 
@@ -2666,7 +2313,7 @@ int ntrdma_dev_ib_init(struct ntrdma_dev *dev)
 
 err_ib:
 	ntrdma_err(dev, "got rc = %d on ib_register_device", rc);
-	ntrdma_cm_deinit(ibdev->iwcm);
+	ntrdma_dev_ib_deinit_common(dev);
 err_cm:
 	return rc;
 }
@@ -2675,7 +2322,7 @@ void ntrdma_dev_ib_deinit(struct ntrdma_dev *dev)
 {
 	ntrdma_info(dev, "NTRDMA IB dev deinit");
 	ib_unregister_device(&dev->ibdev);
-	ntrdma_cm_deinit(dev->ibdev.iwcm);
+	ntrdma_dev_ib_deinit_common(dev);
 }
 
 int __init ntrdma_ib_module_init(void)
@@ -2687,11 +2334,7 @@ int __init ntrdma_ib_module_init(void)
 			(IB_WR_RDMA_READ == NTRDMA_WR_RDMA_READ),
 			"IB_WR and NTRDMA_WR enums must match for supported");
 
-	if (!((ah_slab = KMEM_CACHE(ntrdma_ah, 0)) &&
-			(cq_slab = KMEM_CACHE(ntrdma_cq, 0)) &&
-			(pd_slab = KMEM_CACHE(ntrdma_pd, 0)) &&
-			(qp_slab = KMEM_CACHE(ntrdma_qp, 0)) &&
-			(ibuctx_slab = KMEM_CACHE(ib_ucontext, 0)))) {
+	if (!ntrdma_slab_init()) {
 		ntrdma_ib_module_deinit();
 		pr_err("%s - failed to find slab\n", __func__);
 		return -ENOMEM;
@@ -2700,11 +2343,3 @@ int __init ntrdma_ib_module_init(void)
 	return 0;
 }
 
-void ntrdma_ib_module_deinit(void)
-{
-	ntrdma_deinit_slab(&ah_slab);
-	ntrdma_deinit_slab(&cq_slab);
-	ntrdma_deinit_slab(&pd_slab);
-	ntrdma_deinit_slab(&qp_slab);
-	ntrdma_deinit_slab(&ibuctx_slab);
-}

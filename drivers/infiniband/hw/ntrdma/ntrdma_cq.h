@@ -98,11 +98,7 @@ void ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev);
 void ntrdma_cq_vbell_init(struct ntrdma_cq *cq, int vbell_idx);
 void ntrdma_cq_vbell_kill(struct ntrdma_cq *cq);
 
-static inline void ntrdma_cq_get(struct ntrdma_cq *cq)
-{
-	ntrdma_obj_get(&cq->obj);
-}
-
+void ntrdma_cq_get(struct ntrdma_cq *cq);
 void ntrdma_cq_put(struct ntrdma_cq *cq);
 
 void ntrdma_cq_arm_resync(struct ntrdma_dev *dev);

@@ -53,11 +53,7 @@ struct ntrdma_pd {
 
 void ntrdma_pd_init(struct ntrdma_pd *pd, struct ntrdma_dev *dev, u32 key);
 
-static inline void ntrdma_pd_get(struct ntrdma_pd *pd)
-{
-	ntrdma_obj_get(&pd->obj);
-}
-
+void ntrdma_pd_get(struct ntrdma_pd *pd);
 void ntrdma_pd_put(struct ntrdma_pd *pd);
 
 #endif
