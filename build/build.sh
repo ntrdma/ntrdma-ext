@@ -21,8 +21,9 @@ echo "INFO: kernel headers are $KERNEL_HEADERS_PATH version is $KERNEL_VERSION_P
 mkdir -p $TMP_DIR
 
 if [[ $(/bin/diff -qN $TMP_DIR/version.txt $KERNEL_VERSION_PATH) ]]; then
+        echo Extracting kernel headers
         rm -fr $TMP_DIR/*
-        tar -C $TMP_DIR -xvf $KERNEL_HEADERS_PATH
+        tar -I pbzip2 -C $TMP_DIR -xf $KERNEL_HEADERS_PATH
         cp $KERNEL_VERSION_PATH $TMP_DIR
 fi
 
