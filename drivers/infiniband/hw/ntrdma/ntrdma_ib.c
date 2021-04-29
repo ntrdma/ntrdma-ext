@@ -948,7 +948,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			return ERR_PTR(rc);
 		}
 	}
-	ntrdma_vdbg(dev, "added QP %d type %d (%d/%d)\n",
+	ntrdma_dbg(dev, "added QP %d type %d (%d/%d)\n",
 			qp->res.key, ibqp_attr->qp_type,
 			atomic_read(&dev->qp_num), NTRDMA_DEV_MAX_QP);
 
