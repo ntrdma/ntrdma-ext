@@ -41,7 +41,7 @@
 #define TRACE_EN
 #define TRACE_DEBUG_ENABLE
 #define TRACE_DBG_ENABLE
-#define TRACE_VDBG_ENABLE
+/* #define TRACE_VDBG_ENABLE */
 /* #define VERBOSE_DEBUG */
 
 
