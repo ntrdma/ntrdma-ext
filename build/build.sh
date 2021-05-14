@@ -21,12 +21,16 @@ echo "INFO: kernel headers are $KERNEL_HEADERS_PATH version is $KERNEL_VERSION_P
 mkdir -p $TMP_DIR
 
 if [[ $(/bin/diff -qN $TMP_DIR/version.txt $KERNEL_VERSION_PATH) ]]; then
+        echo Extracting kernel headers
         rm -fr $TMP_DIR/*
-        tar -C $TMP_DIR -xvf $KERNEL_HEADERS_PATH
+        tar -I pbzip2 -C $TMP_DIR -xf $KERNEL_HEADERS_PATH
         cp $KERNEL_VERSION_PATH $TMP_DIR
 fi
 
-CMD="make CONFIG_NTC=m CONFIG_NTRDMA=m  DEBUG=1 -C ${TMP_DIR}/lib/modules/*/build M=${TOP} modules"
+# Use devtoolset 7 (Updated toolchain) with gcc 7.3 instead of default 4.8
+CMD="set +o nounset; source /opt/rh/devtoolset-7/enable; set -o nounset;
+     gcc --version;
+     make -j CONFIG_NTC=m CONFIG_NTRDMA=m  DEBUG=1 -C ${TMP_DIR}/lib/modules/*/build M=${TOP} modules"
 
 echo "Kernel header ready firing make from docker..."
 
