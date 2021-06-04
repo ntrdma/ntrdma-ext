@@ -111,11 +111,13 @@ static inline int ntrdma_destroy_qp_common(struct ib_qp *ibqp)
 	struct ntrdma_dev *dev = ntrdma_qp_dev(qp);
 	struct ntrdma_qp_cmd_cb qpcb;
 	unsigned long t0, t1, t2, t3, t4;
+	int key;
 
 	NTRDMA_IB_PERF_INIT;
 	NTRDMA_IB_PERF_START;
 
-	ntrdma_dbg(dev, "QP %p (QP %d)\n", qp, qp ? qp->res.key : -1);
+	key = qp ? qp->res.key : -1;
+	ntrdma_dbg(dev, "QP %p (QP %d)\n", qp, key);
 
 	if (unlikely(qp->send_cmpl != qp->send_post)) {
 		ntrdma_dbg(dev,

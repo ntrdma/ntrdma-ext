@@ -112,11 +112,11 @@ int ntrdma_process_mad(struct ib_device *device,
 	return IB_MAD_RESULT_SUCCESS;
 }
 
-void ntrdma_cq_get(struct ntrdma_cq *cq)
+void ntrdma_cq_get(struct ntrdma_cq *cq, const char *func, u32 line)
 {
 }
 
-void ntrdma_cq_put(struct ntrdma_cq *cq)
+void ntrdma_cq_put(struct ntrdma_cq *cq, const char *func, u32 line)
 {
 }
 

@@ -630,7 +630,7 @@ static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 	struct ntrdma_qp_cmd_cb *qpcb;
 
 #ifdef NTRDMA_QP_DEBUG
-	ntrdma_dbg(dev, "res_key=%d\n", res->key);
+	ntrdma_dbg(dev, "QP %d\n", res->key);
 #endif
 	if (qp && dev && qp->rqp_key != -1)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);

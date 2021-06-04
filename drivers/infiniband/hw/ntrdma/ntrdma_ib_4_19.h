@@ -163,16 +163,6 @@ int ntrdma_process_mad(struct ib_device *device,
 	return IB_MAD_RESULT_SUCCESS;
 }
 
-void ntrdma_cq_get(struct ntrdma_cq *cq)
-{
-	ntrdma_obj_get(&cq->obj);
-}
-
-void ntrdma_cq_put(struct ntrdma_cq *cq)
-{
-	ntrdma_obj_put(&cq->obj, ntrdma_cq_release);
-}
-
 static int ntrdma_destroy_cq(struct ib_cq *ibcq)
 {
 	struct ntrdma_cq *cq;
