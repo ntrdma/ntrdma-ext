@@ -315,7 +315,7 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	return 0;
 
 deinit:
-	ntrdma_dbg(dev, "Deinit of QP %d started\n", qp->res.key);
+	ntrdma_dbg(dev, "Deinit of QP %d %p started send_cq %p recv_cq %p\n", qp->res.key, qp, qp->send_cq, qp->recv_cq);
 
 	ntrdma_cq_del_poll(qp->send_cq, &qp->send_poll);
 	ntrdma_cq_del_poll(qp->recv_cq, &qp->recv_poll);

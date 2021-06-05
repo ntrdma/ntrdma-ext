@@ -33,7 +33,7 @@
 #include "ntrdma_ib.h"
 
 static struct kmem_cache *ah_slab;
-static struct kmem_cache *cq_slab;
+static struct kmem_cache *ibcq_slab;
 static struct kmem_cache *pd_slab;
 static struct kmem_cache *ibuctx_slab;
 
@@ -71,6 +71,7 @@ static int ntrdma_destroy_ah(struct ib_ah *ibah)
 
 static inline void ntrdma_cq_release_cache_free(struct ntrdma_cq *cq)
 {
+	kmem_cache_free(ibcq_slab, cq->ibcq);
 	kmem_cache_free(cq_slab, cq);
 }
 
@@ -236,11 +237,19 @@ static inline void ntrdma_dev_ib_deinit_common(struct ntrdma_dev *dev)
 static inline struct ntrdma_cq *ntrdma_alloc_cq(struct ib_cq *ibcq,
 		struct ntrdma_dev *dev)
 {
+	struct ntrdma_ib_cq *ntrdma_ib_cq =
+			kmem_cache_alloc_node(ibcq_slab, GFP_KERNEL, dev->node);
 	struct ntrdma_cq *cq =
 			kmem_cache_alloc_node(cq_slab, GFP_KERNEL, dev->node);
-
-	if (cq)
+	if (ntrdma_ib_cq) {
+		memset(ntrdma_ib_cq, 0, sizeof(*ntrdma_ib_cq));
+		ntrdma_ib_cq->cq = cq;
+	}
+	if (cq) {
 		memset(cq, 0, sizeof(*cq));
+		cq->ibcq = ntrdma_ib_cq;
+	}
+
 	return cq;
 }
 
@@ -251,11 +260,10 @@ static struct ib_cq *ntrdma_create_cq(struct ib_device *ibdev,
 {
 	struct ntrdma_cq *cq = NULL;
 	int rc;
-
 	rc = ntrdma_create_cq_common(NULL, ibdev, ibattr, ibuctx, ibudata, &cq);
 
 	if (!rc)
-		return &cq->ibcq;
+		return &cq->ibcq->ibcq;
 
 	return ERR_PTR(rc);
 }
@@ -323,6 +331,7 @@ void ntrdma_ib_module_deinit(void)
 {
 	ntrdma_deinit_slab(&qp_slab);
 	ntrdma_deinit_slab(&ah_slab);
+	ntrdma_deinit_slab(&ibcq_slab);
 	ntrdma_deinit_slab(&cq_slab);
 	ntrdma_deinit_slab(&pd_slab);
 	ntrdma_deinit_slab(&ibuctx_slab);
@@ -331,7 +340,8 @@ void ntrdma_ib_module_deinit(void)
 static inline bool ntrdma_slab_init(void)
 {
 	return ((ah_slab = KMEM_CACHE(ntrdma_ah, 0)) &&
-				(cq_slab = KMEM_CACHE(ntrdma_cq, 0)) &&
+			(cq_slab = KMEM_CACHE(ntrdma_cq, 0)) &&
+			(ibcq_slab = KMEM_CACHE(ntrdma_ib_cq, 0)) &&
 				(pd_slab = KMEM_CACHE(ntrdma_pd, 0)) &&
 				(qp_slab = KMEM_CACHE(ntrdma_qp, 0)) &&
 				(ibuctx_slab = KMEM_CACHE(ib_ucontext, 0)));

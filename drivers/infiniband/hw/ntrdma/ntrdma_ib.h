@@ -75,6 +75,7 @@ static long ntrdma_cq_file_ioctl(struct file *filp, unsigned int cmd,
 				unsigned long arg);
 
 static struct kmem_cache *qp_slab;
+static struct kmem_cache *cq_slab;
 
 struct ntrdma_ucontext {
 	struct ib_ucontext ibucontext;
