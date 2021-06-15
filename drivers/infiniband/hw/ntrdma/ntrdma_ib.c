@@ -440,6 +440,16 @@ static void ntrdma_cq_release(struct kref *kref)
 	atomic_dec(&dev->cq_num);
 }
 
+void ntrdma_cq_get(struct ntrdma_cq *cq)
+{
+	ntrdma_obj_get(&cq->obj);
+}
+
+void ntrdma_cq_put(struct ntrdma_cq *cq)
+{
+	ntrdma_obj_put(&cq->obj, ntrdma_cq_release);
+}
+
 static inline int ntrdma_ib_wc_status_from_cqe(u32 op_status)
 {
 	switch (op_status) {
@@ -948,7 +958,7 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 			return ERR_PTR(rc);
 		}
 	}
-	ntrdma_vdbg(dev, "added QP %d type %d (%d/%d)\n",
+	ntrdma_dbg(dev, "added QP %d type %d (%d/%d)\n",
 			qp->res.key, ibqp_attr->qp_type,
 			atomic_read(&dev->qp_num), NTRDMA_DEV_MAX_QP);
 

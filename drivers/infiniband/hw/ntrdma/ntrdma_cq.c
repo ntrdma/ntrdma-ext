@@ -135,7 +135,7 @@ void _ntrdma_cq_cue(struct ntrdma_cq *cq, const char *f)
 
 	for (; arm; --arm) {
 		/*TODO: do we realy need to run this in spinlock???*/
-		cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
+		cq->ibcq->ibcq.comp_handler(&cq->ibcq->ibcq, cq->ibcq->ibcq.cq_context);
 		TRACE("cq %p arm %d %s\n", cq, initial_arm, f);
 	}
 	spin_unlock_bh(&cq->arm_lock);
@@ -206,3 +206,4 @@ static void ntrdma_cq_cue_work(unsigned long ptrhld)
 
 	ntrdma_cq_cue(cq);
 }
+

@@ -55,6 +55,7 @@ static void ntrdma_destroy_ah(struct ib_ah *ibah, u32 flags)
 
 static inline void ntrdma_cq_release_cache_free(struct ntrdma_cq *cq)
 {
+	kmem_cache_free(cq_slab, cq);
 }
 
 static inline void ntrdma_pd_release_cache_free(struct ntrdma_pd *pd)
@@ -112,14 +113,6 @@ int ntrdma_process_mad(struct ib_device *device,
 	return IB_MAD_RESULT_SUCCESS;
 }
 
-void ntrdma_cq_get(struct ntrdma_cq *cq)
-{
-}
-
-void ntrdma_cq_put(struct ntrdma_cq *cq)
-{
-}
-
 static void ntrdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 {
 	struct ntrdma_cq *cq;
@@ -129,7 +122,8 @@ static void ntrdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 
 	cq = ntrdma_destroy_cq_common(ibcq);
 
-	ntrdma_cq_release(&cq->obj.kref);
+	ntrdma_cq_put(cq);
+
 	NTRDMA_IB_PERF_END;
 }
 
@@ -177,7 +171,20 @@ static inline void ntrdma_dev_ib_deinit_common(struct ntrdma_dev *dev)
 static inline struct ntrdma_cq *ntrdma_alloc_cq(struct ib_cq *ibcq,
 		struct ntrdma_dev *dev)
 {
-	return container_of(ibcq, struct ntrdma_cq, ibcq);
+	struct ntrdma_ib_cq *ntrdma_ib_cq =
+			container_of(ibcq, struct ntrdma_ib_cq, ibcq);
+	struct ntrdma_cq *cq =
+			kmem_cache_alloc_node(cq_slab, GFP_KERNEL, dev->node);
+
+	if (ntrdma_ib_cq) {
+		ntrdma_ib_cq->cq = cq;
+	}
+	if (cq) {
+		memset(cq, 0, sizeof(*cq));
+		cq->ibcq = ntrdma_ib_cq;
+	}
+
+	return cq;
 }
 
 static int ntrdma_create_cq(struct ib_cq *ibcq,
@@ -240,7 +247,7 @@ static const struct ib_device_ops ntrdma_dev_ops = {
 
 	INIT_RDMA_OBJ_SIZE(ib_ah, ntrdma_ah, ibah),
 	INIT_RDMA_OBJ_SIZE(ib_pd, ntrdma_pd, ibpd),
-	INIT_RDMA_OBJ_SIZE(ib_cq, ntrdma_cq, ibcq),
+	INIT_RDMA_OBJ_SIZE(ib_cq, ntrdma_ib_cq, ibcq),
 	INIT_RDMA_OBJ_SIZE(ib_ucontext, ntrdma_ucontext, ibucontext),
 };
 
@@ -260,9 +267,11 @@ static inline int ntrdma_set_ib_ops(struct ntrdma_dev *dev,
 void ntrdma_ib_module_deinit(void)
 {
 	ntrdma_deinit_slab(&qp_slab);
+	ntrdma_deinit_slab(&cq_slab);
 }
 
 static inline bool ntrdma_slab_init(void)
 {
-	return (qp_slab = KMEM_CACHE(ntrdma_qp, 0));
+	return ((qp_slab = KMEM_CACHE(ntrdma_qp, 0)) &&
+			(cq_slab = KMEM_CACHE(ntrdma_cq, 0)));
 }

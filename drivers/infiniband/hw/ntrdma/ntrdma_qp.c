@@ -221,7 +221,7 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 
 	qp->send_wqe_sg_cap = attr->send_wqe_sg_cap;
 
-	ntrdma_vdbg(dev, "qp init: inline data cap %u\n",
+	ntrdma_dbg(dev, "qp init: inline data cap %u\n",
 			attr->send_wqe_inline_cap);
 	qp->send_wqe_inline_cap = attr->send_wqe_inline_cap;
 	qp->recv_wqe_sg_cap = attr->recv_wqe_sg_cap;
@@ -315,7 +315,7 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	return 0;
 
 deinit:
-	ntrdma_dbg(dev, "Deinit of QP %d started\n", qp->res.key);
+	ntrdma_dbg(dev, "Deinit of QP %d %p started send_cq %p recv_cq %p\n", qp->res.key, qp, qp->send_cq, qp->recv_cq);
 
 	ntrdma_cq_del_poll(qp->send_cq, &qp->send_poll);
 	ntrdma_cq_del_poll(qp->recv_cq, &qp->recv_poll);
@@ -630,7 +630,7 @@ static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 	struct ntrdma_qp_cmd_cb *qpcb;
 
 #ifdef NTRDMA_QP_DEBUG
-	ntrdma_dbg(dev, "res_key=%d\n", res->key);
+	ntrdma_dbg(dev, "QP %d\n", res->key);
 #endif
 	if (qp && dev && qp->rqp_key != -1)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
@@ -720,6 +720,9 @@ void ntrdma_qp_reset(struct ntrdma_qp *qp)
 
 	ntrdma_res_unlock(&qp->res);
 
+        /* treats connected QP */
+	ntrdma_cm_kill(qp);
+        /* treats connecting or idle QP */
 	ntrdma_cm_qp_shutdown(qp);
 }
 
@@ -1366,7 +1369,7 @@ void ntrdma_qp_recv_work(struct ntrdma_qp *qp)
 	/* verify the qp state and lock for producing recvs */
 	spin_lock_bh(&qp->recv_prod_lock);
 	if (!is_state_recv_ready(atomic_read(&qp->state))) {
-		ntrdma_qp_vdbg(qp, "QP %d state %d will retry", qp->res.key,
+		ntrdma_qp_dbg(qp, "QP %d state %d will retry", qp->res.key,
 			atomic_read(&qp->state));
 
 		qp->recv_aborting = true;
