@@ -113,6 +113,10 @@ int ntrdma_process_mad(struct ib_device *device,
 	return IB_MAD_RESULT_SUCCESS;
 }
 
+void ntrdma_disassociate_ucontext(struct ib_ucontext *ibcontext)
+{
+}
+
 static void ntrdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 {
 	struct ntrdma_cq *cq;
@@ -214,6 +218,7 @@ static const struct ib_device_ops ntrdma_dev_ops = {
 	/* userspace context */
 	.alloc_ucontext	= ntrdma_alloc_ucontext,
 	.dealloc_ucontext	= ntrdma_dealloc_ucontext,
+	.disassociate_ucontext = ntrdma_disassociate_ucontext,
 
 	/* device and port queries */
 	.query_device	= ntrdma_query_device,
