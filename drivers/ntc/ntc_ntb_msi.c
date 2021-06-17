@@ -44,6 +44,7 @@
 #include <linux/timer.h>
 #include <linux/cpumask.h>
 #include <linux/slab.h>
+#include <linux/version.h>
 #ifdef CONFIG_CMADEVS
 #include <linux/cmadevs.h>
 #endif
@@ -61,6 +62,11 @@
 #define DRIVER_DESCRIPTION		"NTC Non Transparent Bridge"
 
 #define DRIVER_VERSION			"0.3"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+#define FALLTHROUGH fallthrough
+#else
+#define FALLTHROUGH
+#endif
 
 static unsigned long mw0_base_addr;
 module_param(mw0_base_addr, ulong, 0444);
@@ -933,8 +939,11 @@ static inline int ntc_ntb_db_config_and_recv_addr(struct ntc_ntb_dev *dev)
 		goto err_ntb_db;
 	}
 
-	rc = ntb_peer_db_addr(dev->ntb,
-			&peer_irq_phys_addr_base, &size);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+	rc = ntb_peer_db_addr(dev->ntb, &peer_irq_phys_addr_base, &size, NULL, 0);
+#else
+	rc = ntb_peer_db_addr(dev->ntb, &peer_irq_phys_addr_base, &size);
+#endif
 	if ((rc < 0) || (size != sizeof(u32)) ||
 		!IS_ALIGNED(peer_irq_phys_addr_base, PCIE_ADDR_ALIGN)) {
 		ntc_ntb_dev_err(dev, "Peer DB addr invalid");
@@ -1043,7 +1052,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 	switch (dev->link_state) {
 	case NTC_NTB_LINK_QUIESCE:
 		ntc_ntb_quiesce(dev);
-		/* no break */
+		FALLTHROUGH;
 	case NTC_NTB_LINK_RESET:
 		ntc_ntb_reset(dev);
 		break;
@@ -1051,7 +1060,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 		ntc_ntb_enabled(dev);
 		if (dev->link_state != NTC_NTB_LINK_START)
 			goto out;
-		/* no break */
+		FALLTHROUGH;
 	case NTC_NTB_LINK_START:
 		switch (link_event) {
 		default:
@@ -1063,6 +1072,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		if (dev->link_state != NTC_NTB_LINK_VER_SENT)
 			goto out;
+		FALLTHROUGH;
 
 	case NTC_NTB_LINK_VER_SENT:
 		switch (link_event) {
@@ -1081,6 +1091,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		if (dev->link_state != NTC_NTB_LINK_VER_CHOSEN)
 			goto out;
+		FALLTHROUGH;
 
 	case NTC_NTB_LINK_VER_CHOSEN:
 		switch (link_event) {
@@ -1102,6 +1113,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		if (dev->link_state != NTC_NTB_LINK_DB_CONFIGURED)
 			goto out;
+		FALLTHROUGH;
 
 	case NTC_NTB_LINK_DB_CONFIGURED:
 		switch (link_event) {
@@ -1120,6 +1132,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 
 		if (dev->link_state != NTC_NTB_LINK_COMMITTED)
 			goto out;
+		FALLTHROUGH;
 
 	case NTC_NTB_LINK_COMMITTED:
 		switch (link_event) {
@@ -1183,6 +1196,7 @@ static void ntc_ntb_link_work(struct ntc_ntb_dev *dev)
 					"peer state is not in sync %d %d. ",
 					link_event, dev->link_state);
 			ntc_ntb_error(dev);
+			FALLTHROUGH;
 		case -1:
 			ntc_ntb_dev_dbg(dev, "peer is not done hello");
 			goto out;

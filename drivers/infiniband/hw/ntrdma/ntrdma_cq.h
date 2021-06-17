@@ -44,10 +44,11 @@
 #include "ntrdma_obj.h"
 #include "ntrdma_vbell.h"
 
+struct ntrdma_ib_cq;
 /* Completion Queue */
 struct ntrdma_cq {
 	/* Ofed cq structure */
-	struct ib_cq			ibcq;
+	struct ntrdma_ib_cq			*ibcq;
 	bool				ibcq_valid; /* Protected by arm_lock. */
 
 	/* debugfs */
@@ -76,8 +77,13 @@ struct ntrdma_cq {
 	struct page			*poll_page;
 };
 
+struct ntrdma_ib_cq {
+	struct ib_cq			ibcq;
+	struct ntrdma_cq		*cq;
+};
+
 #define ntrdma_ib_cq(__ibcq) \
-	container_of(__ibcq, struct ntrdma_cq, ibcq)
+		container_of(__ibcq, struct ntrdma_ib_cq, ibcq)->cq
 
 #define ntrdma_cq_dev(__cq) \
 	ntrdma_obj_dev(&(__cq)->obj)
@@ -98,11 +104,7 @@ void ntrdma_cq_init(struct ntrdma_cq *cq, struct ntrdma_dev *dev);
 void ntrdma_cq_vbell_init(struct ntrdma_cq *cq, int vbell_idx);
 void ntrdma_cq_vbell_kill(struct ntrdma_cq *cq);
 
-static inline void ntrdma_cq_get(struct ntrdma_cq *cq)
-{
-	ntrdma_obj_get(&cq->obj);
-}
-
+void ntrdma_cq_get(struct ntrdma_cq *cq);
 void ntrdma_cq_put(struct ntrdma_cq *cq);
 
 void ntrdma_cq_arm_resync(struct ntrdma_dev *dev);

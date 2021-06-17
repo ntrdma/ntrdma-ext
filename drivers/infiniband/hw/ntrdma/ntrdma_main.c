@@ -130,7 +130,11 @@ static int ntrdma_probe(struct ntc_driver *self,
 #endif
 	ntc_link_disable(ntc);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+	dev = (void *)ib_alloc_device(ntrdma_dev, ibdev);
+#else
 	dev = (void *)ib_alloc_device(sizeof(*dev));
+#endif
 	if (!dev)
 		return -ENOMEM;
 

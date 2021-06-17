@@ -68,18 +68,18 @@ static inline void ntrdma_copy_ip_htonl(unsigned char *dst, u32 *src)
 	*dst++ = htonl(*src++);
 	*dst = htonl(*src);
 }
+
 static void dump_iw_cm_id_nodes(struct ntrdma_dev *dev)
 {
 	struct ntrdma_iw_cm_id_node *node;
 	struct iw_cm_id *cm_id;
 	struct sockaddr_in *rsin;
 	struct sockaddr_in *lsin;
-	struct ntrdma_iw_cm *ntrdma_iwcm = ntrdma_iw_cm_from_ntrdma_dev(dev);
 	char lname[PISPC_NAME_LEN], rname[PISPC_NAME_LEN];
 	int count = 0;
 
-	read_lock(&ntrdma_iwcm->slock);
-	list_for_each_entry(node, &ntrdma_iwcm->ntrdma_iw_cm_list, head) {
+	read_lock(&dev->iwcm_rwlock);
+	list_for_each_entry(node, &dev->ntrdma_iw_cm_list, head) {
 		cm_id = node->cm_id;
 		rsin = (struct sockaddr_in *)&cm_id->remote_addr;
 		lsin = (struct sockaddr_in *)&cm_id->local_addr;
@@ -92,22 +92,21 @@ static void dump_iw_cm_id_nodes(struct ntrdma_dev *dev)
 
 	}
 	TRACE("Total of %d nodes\n", count);
-	read_unlock(&ntrdma_iwcm->slock);
+	read_unlock(&dev->iwcm_rwlock);
 
 }
 
 static struct ntrdma_iw_cm_id_node *
 find_iw_cm_id_node(struct ntrdma_dev *dev, int src_port, int dst_port)
 {
-	struct ntrdma_iw_cm *ntrdma_iwcm = ntrdma_iw_cm_from_ntrdma_dev(dev);
 	struct ntrdma_iw_cm_id_node *node = NULL;
 	struct iw_cm_id *cm_id;
 	struct sockaddr_in *src_sin;
 	struct sockaddr_in *dst_sin;
 	int is_found = 0;
 
-	read_lock(&ntrdma_iwcm->slock);
-	list_for_each_entry(node, &ntrdma_iwcm->ntrdma_iw_cm_list, head) {
+	read_lock(&dev->iwcm_rwlock);
+	list_for_each_entry(node, &dev->ntrdma_iw_cm_list, head) {
 		cm_id = node->cm_id;
 		src_sin = (struct sockaddr_in *)&cm_id->local_addr;
 		dst_sin = (struct sockaddr_in *)&cm_id->remote_addr;
@@ -117,7 +116,7 @@ find_iw_cm_id_node(struct ntrdma_dev *dev, int src_port, int dst_port)
 			break;
 		}
 	}
-	read_unlock(&ntrdma_iwcm->slock);
+	read_unlock(&dev->iwcm_rwlock);
 
 	if (unlikely(!is_found)) {
 		dump_iw_cm_id_nodes(dev);
@@ -138,7 +137,6 @@ store_iw_cm_id(struct ntrdma_dev *dev,
 		int qpn,
 		struct iw_cm_id *cm_id)
 {
-	struct ntrdma_iw_cm *ntrdma_iwcm = ntrdma_iw_cm_from_ntrdma_dev(dev);
 	struct ntrdma_iw_cm_id_node *node;
 	int local_port;
 	int remote_port;
@@ -153,7 +151,7 @@ store_iw_cm_id(struct ntrdma_dev *dev,
 		return -EINVAL;
 	}
 
-	node = kmem_cache_alloc(ntrdma_iwcm->cmid_node_slab, GFP_KERNEL);
+	node = kmem_cache_alloc(dev->cmid_node_slab, GFP_KERNEL);
 	if (!node) {
 		ntrdma_err(dev, "NTRDMA create listen alloc failed \n");
 		return -ENOMEM;
@@ -165,9 +163,9 @@ store_iw_cm_id(struct ntrdma_dev *dev,
 	node->qpn = qpn;
 	INIT_LIST_HEAD(&node->head);
 
-	write_lock(&ntrdma_iwcm->slock);
-	list_add_tail(&node->head, &ntrdma_iwcm->ntrdma_iw_cm_list);
-	write_unlock(&ntrdma_iwcm->slock);
+	write_lock(&dev->iwcm_rwlock);
+	list_add_tail(&node->head, &dev->ntrdma_iw_cm_list);
+	write_unlock(&dev->iwcm_rwlock);
 
 	/* inc cm_id_priv->refcount */
 	cm_id->add_ref(cm_id);
@@ -183,18 +181,16 @@ static void
 discard_iw_cm_id(struct ntrdma_dev *dev,
 		struct ntrdma_iw_cm_id_node *node)
 {
-	struct ntrdma_iw_cm *ntrdma_iwcm = ntrdma_iw_cm_from_ntrdma_dev(dev);
-
 	ntrdma_dbg(dev, "node %p QP %d cm_id %p\n",
 			node, node->qpn, node->cm_id);
 
-	write_lock(&ntrdma_iwcm->slock);
+	write_lock(&dev->iwcm_rwlock);
 	list_del(&node->head);
-	write_unlock(&ntrdma_iwcm->slock);
+	write_unlock(&dev->iwcm_rwlock);
 
 	/*dec cm_id_priv->refcount and free if last*/
 	node->cm_id->rem_ref(node->cm_id);
-	kmem_cache_free(ntrdma_iwcm->cmid_node_slab, node);
+	kmem_cache_free(dev->cmid_node_slab, node);
 }
 
 static struct ib_qp *ntrdma_get_qp(struct ib_device *ibdev, int qpn)
@@ -1029,8 +1025,20 @@ static int ntrdma_destroy_listen(struct iw_cm_id *cm_id)
 	return 0;
 }
 
-struct iw_cm_verbs*
-ntrdma_cm_init(const char *name)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+void ntrdma_cm_init(struct ib_device *ibdev)
+{
+	ibdev->ops.iw_add_ref = ntrdma_cm_add_ref;
+	ibdev->ops.iw_rem_ref = ntrdma_cm_rem_ref;
+	ibdev->ops.iw_get_qp = ntrdma_get_qp;
+	ibdev->ops.iw_connect = ntrdma_connect;
+	ibdev->ops.iw_accept = ntrdma_accept;
+	ibdev->ops.iw_reject = ntrdma_reject;
+	ibdev->ops.iw_create_listen = ntrdma_create_listen;
+	ibdev->ops.iw_destroy_listen = ntrdma_destroy_listen;
+}
+#else
+struct iw_cm_verbs *ntrdma_cm_init(const char *name, struct ntrdma_dev *dev)
 {
 	struct ntrdma_iw_cm *ntrdma_iwcm;
 	struct iw_cm_verbs *iwcm;
@@ -1039,10 +1047,7 @@ ntrdma_cm_init(const char *name)
 	if (!ntrdma_iwcm)
 		return NULL;
 
-	ntrdma_iwcm->cmid_node_slab = KMEM_CACHE(ntrdma_iw_cm_id_node, 0);
-	if (!ntrdma_iwcm->cmid_node_slab)
-		goto err_slab;
-
+	ntrdma_iwcm->dev = dev;
 	iwcm = &ntrdma_iwcm->iwcm;
 	iwcm->add_ref = ntrdma_cm_add_ref;
 	iwcm->rem_ref = ntrdma_cm_rem_ref;
@@ -1052,21 +1057,19 @@ ntrdma_cm_init(const char *name)
 	iwcm->reject = ntrdma_reject;
 	iwcm->create_listen = ntrdma_create_listen;
 	iwcm->destroy_listen = ntrdma_destroy_listen;
-	memcpy(iwcm->ifname, name,
-			sizeof(iwcm->ifname));
-
-	INIT_LIST_HEAD(&ntrdma_iwcm->ntrdma_iw_cm_list);
-	rwlock_init(&ntrdma_iwcm->slock);
+	memcpy(iwcm->ifname, name, sizeof(iwcm->ifname));
 
 	return iwcm;
-err_slab:
-	kfree(ntrdma_iwcm);
-	return NULL;
 }
 
 void ntrdma_cm_deinit(struct iw_cm_verbs *iwcm)
 {
 	struct ntrdma_iw_cm *ntrdma_iwcm = iwcm_2_ntrdma_iwcm(iwcm);
-	kmem_cache_destroy(ntrdma_iwcm->cmid_node_slab);
+	struct ntrdma_dev *dev = ntrdma_iwcm->dev;
+
+	kmem_cache_destroy(dev->cmid_node_slab);
 	kfree(ntrdma_iwcm);
 }
+
+#endif
+
