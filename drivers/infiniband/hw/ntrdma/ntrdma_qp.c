@@ -315,7 +315,7 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 	return 0;
 
 deinit:
-	ntrdma_dbg(dev, "Deinit of QP %d started\n", qp->res.key);
+	ntrdma_dbg(dev, "Deinit of QP %d %p started send_cq %p recv_cq %p\n", qp->res.key, qp, qp->send_cq, qp->recv_cq);
 
 	ntrdma_cq_del_poll(qp->send_cq, &qp->send_poll);
 	ntrdma_cq_del_poll(qp->recv_cq, &qp->recv_poll);
@@ -630,7 +630,7 @@ static int ntrdma_qp_disable_cb(struct ntrdma_res *res,
 	struct ntrdma_qp_cmd_cb *qpcb;
 
 #ifdef NTRDMA_QP_DEBUG
-	ntrdma_dbg(dev, "res_key=%d\n", res->key);
+	ntrdma_dbg(dev, "QP %d\n", res->key);
 #endif
 	if (qp && dev && qp->rqp_key != -1)
 		rqp = ntrdma_dev_rqp_look_and_get(dev, qp->rqp_key);
