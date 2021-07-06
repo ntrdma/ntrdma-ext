@@ -222,6 +222,7 @@ _ntc_mm_get_fixed(struct ntc_mm *mm, int size, gfp_t gfp)
 	fixed = kmalloc(sizeof(*fixed), gfp);
 	if (!fixed)
 		return ERR_PTR(-ENOMEM);
+	gfp &= ~__GFP_ZERO;
 	ntc_mm_fixed_init(fixed);
 
 	mutex_lock(&mm->idr_lock);
