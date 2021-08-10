@@ -11,8 +11,8 @@ OUTPUT_DIR=$(devops.outputDir)
 OUTPUT_FILE=$OUTPUT_DIR/ntrdma_modules/ntrdma_modules.tar.gz
 TMP_DIR=$TOP/output
 
-echo "INFO: builder file is ${build_inputs[centos7-builder]}"
-BUILD_DOCKER=$(<"${build_inputs[centos7-builder]}")
+echo "INFO: builder file is ${build_inputs[sles15sp2-sles_builder]}"
+BUILD_DOCKER=$(<"${build_inputs[sles15sp2-sles_builder]}")
 KERNEL_HEADERS_PATH=${build_inputs[coreos-linux-headers-gcached]}
 KERNEL_VERSION_PATH="${build_inputs[coreos-version-text]:-${build_inputs[coreos-version]}}"
 
