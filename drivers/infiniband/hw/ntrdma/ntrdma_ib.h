@@ -38,8 +38,6 @@
 /* TODO: remove this macro when adding to enum rdma_driver_id
  * in include/uapi/rdma/rdma_user_ioctl_cmds.h
  */
-#define RDMA_DRIVER_NTRDMA 17
-
 #define NTRDMA_IB_PERF_PRINT_ABOVE_MILI_SECS_LATENCY_CONSTANT 400
 #define NTRDMA_IB_PERF_INIT unsigned long ___ts_ = 0; \
 				unsigned long ___tt_ = 0; \
