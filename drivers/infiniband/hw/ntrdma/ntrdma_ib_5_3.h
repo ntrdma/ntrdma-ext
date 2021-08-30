@@ -31,6 +31,11 @@
  */
 #include "ntrdma_ib.h"
 
+/* The RDMA_DRIVER_NTRDMA value depends on the rdma-core library and not on kernel version
+ * Old 2.2 had value of 17, but it conflicts with new values so from version 2.71 it moved
+ * to 19 */
+#define RDMA_DRIVER_NTRDMA 19
+
 /* not implemented / not required? */
 /* if required, one needs to implement:
  * Perform path query to the Subnet Administrator (SA)

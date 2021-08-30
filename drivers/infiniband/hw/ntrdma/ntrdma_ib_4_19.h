@@ -37,6 +37,8 @@ static struct kmem_cache *ibcq_slab;
 static struct kmem_cache *pd_slab;
 static struct kmem_cache *ibuctx_slab;
 
+#define RDMA_DRIVER_NTRDMA 17
+
 /* not implemented / not required? */
 /* if required, one needs to implement:
  * Perform path query to the Subnet Administrator (SA)
