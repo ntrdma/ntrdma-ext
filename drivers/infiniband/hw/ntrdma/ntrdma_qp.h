@@ -163,7 +163,6 @@ struct ntrdma_qp {
 	spinlock_t		recv_prod_lock;
 	spinlock_t		recv_cons_lock;
 	struct mutex	recv_cmpl_lock;
-	bool		dma_chan_init;
 	struct iw_cm_id *cm_id;
 	struct mutex cm_lock;
 	int ntrdma_cm_state;
@@ -304,8 +303,6 @@ struct ntrdma_rqp {
 
 	/* Ntrdma remote resource bookkeeping structure */
 	struct ntrdma_rres		rres;
-
-	struct ntc_dma_chan		*dma_chan;
 
 	/* Protectoin domain key */
 	u32				pd_key;
@@ -486,7 +483,6 @@ static inline void move_to_err_state_d(struct ntrdma_qp *qp, const char *s,
 	TRACE("Move QP %d to err state from %s, line %d\n",
 			qp->res.key, s, line);
 	atomic_set(&qp->state, IB_QPS_ERR);
-	qp->dma_chan_init = false;
 }
 
 struct ntrdma_rqp *ntrdma_alloc_rqp(gfp_t gfp, struct ntrdma_dev *dev);

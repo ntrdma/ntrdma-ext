@@ -556,13 +556,12 @@ more:
 
 		off = start * sizeof(*rx_wqe_buf);
 		len = (pos - start) * sizeof(*rx_wqe_buf);
-		rc = ntc_request_memcpy_fenced(eth->dma_chan,
-					&eth->peer_tx_wqe_buf, off,
+		rc = ntc_memcpy(&eth->peer_tx_wqe_buf, off,
 					&eth->rx_wqe_buf, off,
-					len, NTC_DMA_WAIT);
+					len);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
-				"ntc_request_memcpy failed. rc=%d", rc);
+				"ntc_memcpy failed. rc=%d", rc);
 			goto dma_err;
 		}
 
@@ -573,19 +572,17 @@ more:
 		if (start != end)
 			goto more;
 
-		rc = ntc_request_imm32(eth->dma_chan,
-				&eth->peer_tx_prod_buf, 0,
-				eth->rx_prod, true, NULL, NULL);
+		rc = ntc_imm32(&eth->peer_tx_prod_buf, 0,
+				eth->rx_prod);
 		if (unlikely(rc < 0)) {
-			ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d", rc);
+			ntrdma_err(dev, "ntc_imm32 failed. rc=%d", rc);
 			goto dma_err;
 		}
 
-		rc = ntrdma_dev_vbell_peer(dev, eth->dma_chan,
-					eth->peer_vbell_idx);
+		rc = ntrdma_dev_vbell_peer_direct(dev, eth->peer_vbell_idx);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
-				"ntrdma_dev_vbell_peer failed. rc=%d", rc);
+				"ntrdma_dev_vbell_peer_direct failed. rc=%d", rc);
 			goto dma_err;
 		}
 
@@ -596,7 +593,6 @@ more:
 		}
 
 	 dma_err:
-		ntc_req_submit(eth->dma_chan);
 		if (unlikely(rc < 0))
 			ntrdma_unrecoverable_err(dev);
 	}
@@ -856,13 +852,12 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 
 			off = pos * sizeof(struct ntc_remote_buf_desc);
 			len = (end - pos) * sizeof(struct ntc_remote_buf_desc);
-			rc = ntc_request_memcpy_fenced(eth->dma_chan,
-						&eth->peer_rx_cqe_buf, off,
+			rc = ntc_memcpy(&eth->peer_rx_cqe_buf, off,
 						&eth->tx_cqe_buf, off,
-						len, NTC_DMA_WAIT);
+						len);
 			if (unlikely(rc < 0)) {
 				ntrdma_err(dev,
-					"ntc_request_memcpy failed. rc=%d", rc);
+					"ntc_memcpy failed. rc=%d", rc);
 				goto err_memcpy;
 			}
 
@@ -870,19 +865,17 @@ static netdev_tx_t ntrdma_eth_start_xmit(struct sk_buff *skb,
 							eth->tx_cap);
 		}
 
-		rc = ntc_request_imm32(eth->dma_chan,
-				&eth->peer_rx_cons_buf, 0,
-				eth->tx_cmpl, true, NULL, NULL);
+		rc = ntc_imm32(&eth->peer_rx_cons_buf, 0,
+				eth->tx_cmpl);
 		if (unlikely(rc < 0)) {
-			ntrdma_err(dev, "ntc_request_imm32 failed. rc=%d", rc);
+			ntrdma_err(dev, "ntc_imm32 failed. rc=%d", rc);
 			goto err_memcpy;
 		}
 
-		rc = ntrdma_dev_vbell_peer(dev, eth->dma_chan,
-					eth->peer_vbell_idx);
+		rc = ntrdma_dev_vbell_peer_direct(dev, eth->peer_vbell_idx);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev,
-				"ntrdma_dev_vbell_peer failed. rc=%d", rc);
+				"ntrdma_dev_vbell_peer_direct failed. rc=%d", rc);
 			goto err_memcpy;
 		}
 
