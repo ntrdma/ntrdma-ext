@@ -192,6 +192,7 @@ int ntrdma_qp_init_deinit(struct ntrdma_qp *qp,
 		goto err_res;
 	}
 	qp->res.key = rc;
+	qp->qp_type = attr->qp_type;
 
 	qp->dma_chan = NULL;
 	qp->dma_chan_init = false;
@@ -517,7 +518,7 @@ static int ntrdma_qp_enable_prep(struct ntrdma_cmd_cb *cb,
 	cmd->qp_create.hdr.op = NTRDMA_CMD_QP_CREATE;
 	cmd->qp_create.qp_key = qp->res.key;
 	cmd->qp_create.pd_key = qp->pd_key;
-	cmd->qp_create.qp_type = 0; /* TODO: just RC for now */
+	cmd->qp_create.qp_type = qp->qp_type; /* TODO: just RC for now */
 	cmd->qp_create.recv_wqe_cap = qp->recv_cap;
 	cmd->qp_create.recv_wqe_sg_cap = qp->recv_wqe_sg_cap;
 	cmd->qp_create.recv_ring_idx = qp->recv_cons;

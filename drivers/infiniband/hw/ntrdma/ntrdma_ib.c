@@ -866,7 +866,6 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	memset(qp, 0, sizeof(*qp));
 
-	qp->qp_type = ibqp_attr->qp_type;
 	init_completion(&qp->enable_qpcb.cb.cmds_done);
 
 	qp_attr.pd_key = pd->key;
@@ -1077,7 +1076,7 @@ static int ntrdma_query_qp(struct ib_qp *ibqp,
 	if (!ibqp_mask)
 		return 0;
 
-	if (!(ibqp_mask & (IB_QP_STATE | IB_QP_DEST_QPN))) {
+	if (!(ibqp_mask & (IB_QP_STATE | IB_QP_CAP | IB_QP_DEST_QPN))) {
 		ntrdma_err(dev, "Not supported ibqp mask %d\n", ibqp_mask);
 		return -EINVAL;
 	}
