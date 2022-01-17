@@ -746,7 +746,7 @@ static inline int ntc_imm32(const struct ntc_remote_buf *dst,
 	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, sizeof(u32))))
 		return -EINVAL;
 
-	memcpy_toio(dst->io_addr + dst_offset, &val, sizeof(u32));
+	iowrite32(val, dst->io_addr + dst_offset);
 	return 0;
 }
 
@@ -1708,7 +1708,7 @@ static inline int ntc_mr_buf_map_dma(struct ntc_mr_buf *buf,
 
 	for (i = 0; i < NTC_MAX_NUM_MWS; i++) {
 		own_mw = &ntc->own_mws[i];
-		ntc_dbg(ntc, "i=%d own_mw->size=%llu own_mw->base=%llu\n", i, own_mw->size, own_mw->base);
+		ntc_vdbg(ntc, "i=%d own_mw->size=%llu own_mw->base=%llu\n", i, own_mw->size, own_mw->base);
 		if (ntc_segment_valid(own_mw->size,
 					dma_addr - own_mw->base, size))
 			break;

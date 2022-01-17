@@ -215,7 +215,7 @@ int ntrdma_dev_res_enable(struct ntrdma_dev *dev)
 			ntrdma_cmd_cb_unlink(dev, &mr->enable_mrcb.cb);
 
 		list_for_each_entry(qp, &dev->res.qp_list, res.obj.dev_entry)
-			ntrdma_cmd_cb_unlink(dev, &mr->enable_mrcb.cb);
+			ntrdma_cmd_cb_unlink(dev, &qp->enable_qpcb.cb);
 	}
 
 	return rc;

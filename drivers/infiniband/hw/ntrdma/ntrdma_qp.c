@@ -1737,9 +1737,9 @@ err_rqp:
 	spin_unlock_bh(&qp->send_prod_lock);
 
 	ntrdma_qp_info_ratelimited(qp, "err_rqp QP %d aborting = %d qp %p, cq %p end %d\n",
-		qp->send_aborting, qp->res.key, qp, qp->send_cq, end);
+		qp->res.key, qp->send_aborting, qp, qp->send_cq, end);
 
- out:
+out:
 	NTRDMA_PERF_MEASURE(perf);
 
 	return reschedule;
