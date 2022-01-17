@@ -220,7 +220,6 @@ deinit:
 err_register:
 #ifdef NTRDMA_FULL_ETH
 	ntrdma_napi_vbell_kill(&eth->vbell);
-	ntc_dma_flush(eth->dma_chan);
 	ntc_export_buf_free(&eth->rx_cons_buf);
 err_rx_cons_buf:
 	ntc_export_buf_free(&eth->rx_cqe_buf);

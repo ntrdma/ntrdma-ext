@@ -216,6 +216,7 @@ struct ntc_dma_chan {
 	atomic_t dma_blocked;
 	atomic_t dma_flush;
 	int idx;
+	struct dma_async_tx_descriptor *tx;
 };
 
 /**
@@ -552,35 +553,13 @@ static inline void ntc_dma_chan_tx_status(struct ntc_dma_chan *chan)
  */
 static inline void ntc_req_submit(struct ntc_dma_chan *chan)
 {
-	u32 submit_counter;
+	enum dma_status status;
 
-	dma_async_issue_pending(chan->chan);
-
-	submit_counter = READ_ONCE(chan->submit_counter) + 1;
-
-	if (submit_counter >= 0xff)
-		ntc_dma_chan_tx_status(chan);
-	else
-		WRITE_ONCE(chan->submit_counter, submit_counter);
+	status = dma_wait_for_async_tx(chan->tx);
+	if (status != DMA_COMPLETE)
+		ntc_dbg(chan->ntc, "submit status error %d", status);
 }
 
-static inline void ntc_dma_flush(struct ntc_dma_chan *chan)
-{
-	dma_cookie_t last_cookie;
-
-	if (!chan || !chan->chan)
-		return;
-
-	last_cookie = READ_ONCE(chan->last_cookie);
-	if (dma_submit_error(last_cookie))
-		return;
-
-	ntc_req_submit(chan);
-	dma_sync_wait(chan->chan, last_cookie);
-	ntc_dma_chan_tx_status(chan);
-}
-
-void ntc_flush_dma_channels(struct ntc_dev *ntc);
 void inc_dma_reject_counter(void);
 
 /**
@@ -667,11 +646,6 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 			chan->idx, len, retries,
 			atomic_read(&chan->dma_blocked));
 
-		/* Busy waiting */
-		atomic_inc(&chan->dma_flush);
-		ntc_dma_flush(chan);
-		atomic_dec(&chan->dma_flush);
-
 		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
 					flags);
 		if (tx)
@@ -691,6 +665,7 @@ exit_loop:
 	tx->callback_result = cb;
 	tx->callback = NULL;
 	tx->callback_param = cb_ctx;
+	chan->tx = tx;
 
 #ifdef NTC_DEBUG
 	WARN_ON(tx->callback);

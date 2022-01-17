@@ -2036,8 +2036,6 @@ static int ntrdma_qp_file_release(struct inode *inode, struct file *filp)
 		qp->send_page = NULL;
 	}
 
-	ntc_dma_flush(qp->dma_chan);
-
 	ntrdma_qp_put(qp);
 
 	return 0;

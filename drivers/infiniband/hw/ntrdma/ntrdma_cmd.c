@@ -848,7 +848,6 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 	ntrdma_rmr_put(rmr);
 
 	wait_for_completion(&done);
-	ntc_flush_dma_channels(dev->ntc);
 
 	rsp->hdr.status = 0;
 	return 0;

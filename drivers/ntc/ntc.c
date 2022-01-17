@@ -63,21 +63,6 @@ void inc_dma_reject_counter(void)
 }
 EXPORT_SYMBOL(inc_dma_reject_counter);
 
-void ntc_flush_dma_channels(struct ntc_dev *ntc)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(ntc->dma_chan); i++)
-		if (ntc->dma_chan[i].chan) {
-			ntc_vdbg(ntc, "flushing DMA channel %d", i);
-			ntc_dma_flush(&ntc->dma_chan[i]);
-		} else
-			break;
-
-	ntc_vdbg(ntc, "All DMA channels flushed");
-}
-EXPORT_SYMBOL(ntc_flush_dma_channels);
-
 int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 		struct ntc_mr_buf *sgl, int count, int mr_access_flags)
 {
@@ -189,24 +174,10 @@ struct bus_type *ntc_bus_ptr(void)
 }
 EXPORT_SYMBOL(ntc_bus_ptr);
 
-static
-struct ntc_dma_chan *ntc_req_rr(struct ntc_dev *ntc,
-				enum ntc_dma_chan_type type)
-{
-	int i;
-
-	i = smp_processor_id() % get_num_dma_chan();
-	if (!ntc->dma_chan[i].chan) {
-		i = 0;
-	}
-
-	return &ntc->dma_chan[i];
-}
-
 void ntc_init_dma_chan(struct ntc_dma_chan **dma_chan,
 		struct ntc_dev *ntc, enum ntc_dma_chan_type type)
 {
-	*dma_chan = ntc_req_rr(ntc, type);
+	*dma_chan = &ntc->dma_chan[type];
 }
 EXPORT_SYMBOL(ntc_init_dma_chan);
 

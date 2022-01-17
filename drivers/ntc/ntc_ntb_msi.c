@@ -1776,12 +1776,6 @@ static void ntc_ntb_dev_deinit(struct ntc_ntb_dev *dev)
 	ntc_ntb_deinit_own(dev, NTC_DRAM_MW_IDX);
 }
 
-static bool ntc_ntb_filter_bus(struct dma_chan *chan,
-			       void *filter_param)
-{
-	return true;
-}
-
 void ntc_init_dma(struct ntc_dev *ntc)
 {
 	int j;
@@ -1795,7 +1789,6 @@ void ntc_init_dma(struct ntc_dev *ntc)
 
 static bool ntc_request_dma(struct ntc_dev *ntc)
 {
-	struct dma_chan *dma;
 	dma_cap_mask_t mask;
 	int i, j;
 
@@ -1806,9 +1799,7 @@ static bool ntc_request_dma(struct ntc_dev *ntc)
 	dma_cap_set(DMA_MEMCPY, mask);
 
 	for (i = 0, j = 0; i < num_dma_chan; i++) {
-		dma = dma_request_channel(mask, ntc_ntb_filter_bus, NULL);
-		ntc->dma_chan[j].chan = dma;
-		if (dma)
+		if (!!(ntc->dma_chan[j].chan = dma_request_chan_by_mask(&mask)))
 			j++;
 	}
 

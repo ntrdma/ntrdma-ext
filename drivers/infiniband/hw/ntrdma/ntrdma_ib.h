@@ -132,7 +132,6 @@ static inline int ntrdma_destroy_qp_common(struct ib_qp *ibqp)
 	init_completion(&qpcb.cb.cmds_done);
 	ntrdma_res_del(&qp->res, &qpcb.cb, &dev->res.qp_vec);
 	t2 = jiffies;
-	ntc_dma_flush(qp->dma_chan);
 	t3 = jiffies;
 	ntrdma_cm_qp_shutdown(qp);
 	ntrdma_qp_put(qp);
@@ -173,7 +172,6 @@ static inline int ntrdma_dereg_mr_common(struct ib_mr *ibmr)
 
 	wait_for_completion(&done);
 	t3 = jiffies;
-	ntc_flush_dma_channels(dev->ntc);
 	t4 = jiffies;
 
 

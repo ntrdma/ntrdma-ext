@@ -849,8 +849,6 @@ static inline int ntrdma_rqp_init_deinit(struct ntrdma_rqp *rqp,
 	return 0;
 deinit:
 	dma_chan = READ_ONCE(rqp->dma_chan);
-	if (dma_chan)
-		ntc_dma_flush(dma_chan);
 	ntrdma_tasklet_vbell_kill(&rqp->send_vbell);
 err_vbell_idx:
 	ntc_export_buf_free(&rqp->recv_wqe_buf);
@@ -877,13 +875,9 @@ void ntrdma_rqp_deinit(struct ntrdma_rqp *rqp)
 
 void ntrdma_rqp_del(struct ntrdma_rqp *rqp)
 {
-	struct ntc_dma_chan *dma_chan = READ_ONCE(rqp->dma_chan);
-
 	rqp->state = IB_QPS_RESET;
 
 	ntrdma_tasklet_vbell_kill(&rqp->send_vbell);
-	if (dma_chan)
-		ntc_dma_flush(dma_chan);
 
 	ntrdma_debugfs_rqp_del(rqp);
 }
