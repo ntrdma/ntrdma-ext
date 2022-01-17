@@ -1981,6 +1981,10 @@ static int ntc_ntb_probe(struct ntb_client *self,
 	get_device(&ntb->dev);
 	dev->ntb = ntb;
 
+	rc = pci_set_dma_mask(ntb->pdev, DMA_BIT_MASK(64));
+	if (rc)
+		goto err_init;
+
 	rc = ntc_ntb_dev_init(dev);
 	if (rc)
 		goto err_init;
