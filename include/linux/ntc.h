@@ -245,6 +245,7 @@ struct ntc_dev {
 	struct ntc_peer_mw		peer_mws[NTC_MAX_NUM_MWS];
 
 	int				peer_irq_num;
+	u64				doorbell_mask;
 
 	/* negotiated protocol version for ntc */
 	int				version;
@@ -994,35 +995,6 @@ int ntc_mr_request_memcpy_unfenced_imm(struct ntc_dma_chan *chan,
 }
 
 /**
- * ntc_req_signal() - append an operation to signal the peer
- * @ntc:	Device context.
- * @chan:	Channel request context.
- * @cb:		Callback after this operation.
- * @cb_ctx:	Callback context.
- *
- * Append an operation to signal the peer.  The peer driver will be receive
- * ntc_signal_event() after processing this operation.
- *
- * The channel implementation may coalesce interrupts to the peer driver,
- * therefore the upper layer must not rely on a one-to-one correspondence of
- * signals requested, and signal events received.  The only guarantee is that
- * at least one signal event will be received after the last signal requested.
- *
- * The upper layer should attempt to minimize the frequency of signal requests.
- * Signal requests may be implemented as small operations processed as dma
- * requests, and many small dma requests may impact the throughput performance
- * of the channel.  Furthermore, the channel may not coalesce interrupts, and a
- * high frequency of interrupts may impact the scheduling performance of the
- * peer.
- *
- * Please see ntc_req_memcpy() for a complete description of other parameters.
- *
- * Return: Zero on success, othewise an error number.
- */
-int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
-		void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
-
-/**
  * ntc_signal() - append an operation to signal the peer
  * @ntc:	Device context.
  *
@@ -1043,7 +1015,7 @@ int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_signal(struct ntc_dev *ntc, int vec);
+int ntc_signal(struct ntc_dev *ntc);
 
 static inline int ntc_phys_local_buf_map(struct ntc_local_buf *buf,
 					struct ntc_dev *ntc)
@@ -1944,7 +1916,7 @@ static inline int ntc_umem_count(struct ntc_dev *ntc, struct ib_umem *ib_umem)
  *
  * Return: 1 for events waiting or 0 for no events.
  */
-int ntc_clear_signal(struct ntc_dev *ntc, int vec);
+int ntc_clear_signal(struct ntc_dev *ntc);
 unsigned get_num_dma_chan(void);
 
 #endif

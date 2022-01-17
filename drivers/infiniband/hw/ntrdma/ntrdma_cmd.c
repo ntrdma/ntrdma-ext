@@ -627,7 +627,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			goto dma_err;
 		}
 
-		rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
+		rc = ntc_signal(dev->ntc);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev, "ntc_signal failed. rc=%d",
 					rc);
@@ -1366,7 +1366,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			goto dma_err;
 		}
 
-		rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
+		rc = ntc_signal(dev->ntc);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev, "ntc_signal failed. rc=%d",
 					rc);

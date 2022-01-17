@@ -214,11 +214,6 @@ struct ntc_ntb_dev {
 	/* channel supporting hardware devices */
 	struct ntb_dev			*ntb;
 
-	/* direct interrupt message */
-	struct ntc_remote_buf		peer_irq_base;
-	u64				peer_irq_shift[NTB_MAX_IRQS];
-	u32				peer_irq_data[NTB_MAX_IRQS];
-
 	/* link state heartbeat */
 	bool				ping_run;
 	int				ping_miss;
@@ -665,11 +660,6 @@ static inline void ntc_ntb_quiesce(struct ntc_ntb_dev *dev)
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_RESET);
 }
 
-static inline void reset_peer_irq(struct ntc_ntb_dev *dev)
-{
-	ntc_remote_buf_unmap(&dev->peer_irq_base, &dev->ntc);
-}
-
 static inline int set_memory_windows_on_device(struct ntc_ntb_dev *dev, int mw_idx)
 {
 	int rc;
@@ -770,7 +760,6 @@ static inline void ntc_ntb_reset(struct ntc_ntb_dev *dev)
 
 	ntc_ctx_reset(&dev->ntc);
 
-	reset_peer_irq(dev);
 	dev->reset_cnt++;
 	wake_up(&dev->reset_done);
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_ENABLED);
@@ -913,14 +902,7 @@ static bool ntc_request_dma(struct ntc_dev *ntc);
 
 static inline int ntc_ntb_db_config_and_recv_addr(struct ntc_ntb_dev *dev)
 {
-	int rc;
-	int i;
-	resource_size_t size;
 	struct ntc_dev *ntc = &dev->ntc;
-	phys_addr_t peer_irq_phys_addr_base;
-	u64 peer_db_mask;
-	int max_irqs;
-	u64 db_bits;
 
 	if (!ntc_request_dma(ntc)) {
 		ntc_ntb_dev_err(dev, "no dma");
@@ -929,63 +911,20 @@ static inline int ntc_ntb_db_config_and_recv_addr(struct ntc_ntb_dev *dev)
 
 	ntc_ntb_recv_addr(dev);
 
-	ntc->peer_irq_num = 0;
+	ntc->peer_irq_num = ilog2(ntb_db_valid_mask(dev->ntb) + 1);
 
-	max_irqs = ntb_db_vector_count(dev->ntb);
+	ntc->doorbell_mask = ntb_db_valid_mask(dev->ntb);
 
-	if (max_irqs <= 0 || max_irqs> NTB_MAX_IRQS) {
-		ntc_ntb_dev_err(dev, "max_irqs %d - not supported", max_irqs);
-		rc = -EINVAL;
-		goto err_ntb_db;
-	}
+	ntc_ntb_dev_dbg(dev, "Peer DB addr: count %d mask %#llx",
+			ntc->peer_irq_num, ntc->doorbell_mask);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
-	rc = ntb_peer_db_addr(dev->ntb, &peer_irq_phys_addr_base, &size, NULL, 0);
-#else
-	rc = ntb_peer_db_addr(dev->ntb, &peer_irq_phys_addr_base, &size);
-#endif
-	if ((rc < 0) || (size != sizeof(u32)) ||
-		!IS_ALIGNED(peer_irq_phys_addr_base, PCIE_ADDR_ALIGN)) {
-		ntc_ntb_dev_err(dev, "Peer DB addr invalid");
-		goto err_ntb_db;
-	}
-
-	rc = ntc_remote_buf_map_phys(&dev->peer_irq_base,
-				ntc,
-				peer_irq_phys_addr_base,
-				max_irqs * INTEL_DOORBELL_REG_SIZE);
-	if (unlikely(rc < 0))
-		goto err_res_map;
-
-	db_bits = ntb_db_valid_mask(dev->ntb);
-	for (i = 0; i < max_irqs && db_bits; i++) {
-		/*FIXME This is not generic implementation,
-		 * Sky-lake implementation, see intel_ntb3_peer_db_set() */
-		int bit = __ffs(db_bits);
-
-		dev->peer_irq_shift[i] = INTEL_DOORBELL_REG_OFFSET(bit);
-		db_bits &= db_bits - 1;
-		ntc->peer_irq_num++;
-		dev->peer_irq_data[i] = 1;
-	}
-
-	peer_db_mask = ntb_db_valid_mask(dev->ntb);
-
-	ntc_ntb_dev_dbg(dev, "Peer DB addr: %#llx count %d mask %#llx",
-			peer_irq_phys_addr_base,
-			ntc->peer_irq_num, peer_db_mask);
-
-	ntb_db_clear(dev->ntb, peer_db_mask);
-	ntb_db_clear_mask(dev->ntb, peer_db_mask);
+	ntb_db_clear(dev->ntb, ntc->doorbell_mask);
+	ntb_db_clear_mask(dev->ntb, ntc->doorbell_mask);
 
 	ntc_ntb_dev_info(dev, "link signaling method configured");
 	ntc_ntb_link_set_state(dev, NTC_NTB_LINK_DB_CONFIGURED);
-	return 0;
 
-err_res_map:
-	ntc->peer_irq_num = 0;
-err_ntb_db:
-	return rc;
+	return 0;
 }
 
 static inline void ntc_ntb_link_commit(struct ntc_ntb_dev *dev)
@@ -1379,58 +1318,31 @@ err_imm:
 }
 EXPORT_SYMBOL(ntc_req_imm);
 
-int ntc_signal(struct ntc_dev *ntc, int vec)
+int ntc_signal(struct ntc_dev *ntc)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
-	u64 db_bits = 1;
+	u64 db_bits;
 
-	ntc_ntb_dev_vdbg(dev, "send signal to peer");
+	if (!ntc->doorbell_mask)
+		ntc->doorbell_mask = ntb_db_valid_mask(dev->ntb);
 
-	if (WARN_ON(ntc->peer_irq_num <= vec))
-		return -EFAULT;
+	db_bits = BIT_ULL(__ffs(ntc->doorbell_mask));
 
-	return ntb_peer_db_set(dev->ntb, db_bits << vec);
+	ntc_ntb_dev_vdbg(dev, "send signal to peer db %llx mask %llx", db_bits, ntc->doorbell_mask);
+	ntc->doorbell_mask &= ~db_bits;
+
+	return ntb_peer_db_set(dev->ntb, db_bits);
 }
 EXPORT_SYMBOL(ntc_signal);
 
-int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
-		void (*cb)(void *cb_ctx), void *cb_ctx, int vec)
+int ntc_clear_signal(struct ntc_dev *ntc)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
+	u64 db_bit = ntb_db_read(dev->ntb);
 
-	ntc_ntb_dev_vdbg(dev, "request signal to peer");
+	ntb_db_clear(dev->ntb, db_bit);
 
-	if (WARN_ON(vec > ARRAY_SIZE(dev->peer_irq_shift)))
-		return -EFAULT;
-
-	if (WARN_ON(ntc->peer_irq_num < vec))
-		return -EFAULT;
-
-	return ntc_request_imm32(chan, &dev->peer_irq_base,
-				dev->peer_irq_shift[vec],
-				dev->peer_irq_data[vec],
-				false, cb, cb_ctx);
-}
-EXPORT_SYMBOL(ntc_req_signal);
-
-int ntc_clear_signal(struct ntc_dev *ntc, int vec)
-{
-	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
-	int db_bit;
-
-	if (unlikely(vec >= BITS_PER_LONG_LONG))
-		dev_WARN(&ntc->dev, "Invalid vec %d \n", vec);
-	/* ntc->peer_irq_num could be null if it is not set yet */
-
-	db_bit = BIT_ULL(vec % (ntc->peer_irq_num?:1));
-
-	if (ntb_db_read(dev->ntb) & db_bit) {
-		ntb_db_clear(dev->ntb, db_bit);
-		ntb_db_read(dev->ntb);
-		return 1;
-	}
-
-	return 0;
+	return db_bit;
 }
 EXPORT_SYMBOL(ntc_clear_signal);
 
@@ -1790,8 +1702,6 @@ static int ntc_ntb_dev_init(struct ntc_ntb_dev *dev)
 
 	/* haven't negotiated peer_irq_data */
 	ntc->peer_irq_num = 0;
-	ntc_remote_buf_clear(&dev->peer_irq_base);
-	memset(dev->peer_irq_data, 0, sizeof(dev->peer_irq_data));
 
 	/* init the link state heartbeat */
 	dev->ping_run = false;
@@ -1953,15 +1863,6 @@ static int ntc_debugfs_read(struct seq_file *s, void *v)
 	seq_puts(s, "  ctx level negotiation:\n");
 	seq_printf(s, "    done %#x\n", peer_info->done);
 	seq_printf(s, "version %d\n", ntc->version);
-	seq_printf(s, "peer_irq_num %d\n", ntc->peer_irq_num);
-	seq_printf(s, "peer_irq_base.dma_addr %#llx\n",
-		dev->peer_irq_base.dma_addr);
-	for (i = 0; i < ntc->peer_irq_num; i++) {
-		seq_printf(s, "peer_irq_shift %#llx\n",
-			dev->peer_irq_shift[i]);
-		seq_printf(s, "peer_irq_data %#x\n",
-				dev->peer_irq_data[i]);
-	}
 	seq_printf(s, "ping_run %d\n",
 		   dev->ping_run);
 	seq_printf(s, "ping_miss %d\n",
@@ -2024,7 +1925,7 @@ static int set_affinity(struct ntb_dev *ntb)
 	struct pci_dev *pdev = ntb->pdev;
 	unsigned int online_cpus = 0;
 
-	max_irqs = ntb_db_vector_count(ntb);
+	max_irqs = ilog2(ntb_db_valid_mask(ntb) + 1);
 	if (max_irqs <= 0 || max_irqs > NTB_MAX_IRQS) {
 		pr_err("max_irqs %d is not supported\n", max_irqs);
 		return -EFAULT;

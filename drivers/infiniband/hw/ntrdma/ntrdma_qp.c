@@ -1714,10 +1714,9 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 		goto err_memcpy;
 	}
 
-	rc = ntc_req_signal(dev->ntc, qp->dma_chan, NULL, NULL,
-			NTB_DEFAULT_VEC(dev->ntc));
+	rc = ntc_signal(dev->ntc);
 	if (unlikely(rc < 0)) {
-		ntrdma_err(dev, "QP %d ntc_req_signal failed. rc=%d",
+		ntrdma_err(dev, "QP %d ntc_signal failed. rc=%d",
 				qp->res.key, rc);
 		goto err_memcpy;
 	}
@@ -2028,10 +2027,9 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 			goto err_memcpy;
 		}
 
-		rc = ntc_req_signal(dev->ntc, dma_chan, NULL, NULL,
-				NTB_DEFAULT_VEC(dev->ntc));
+		rc = ntc_signal(dev->ntc);
 		if (unlikely(rc < 0)) {
-			ntrdma_err(dev, "QP %d ntc_req_signal failed. rc=%d",
+			ntrdma_err(dev, "QP %d ntc_signal failed. rc=%d",
 					qp->res.key, rc);
 			goto err_memcpy;
 		}

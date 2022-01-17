@@ -57,6 +57,7 @@ int ntrdma_dev_vbell_init(struct ntrdma_dev *dev,
 
 	dev->vbell.count = vbell_count;
 	dev->vbell.start = vbell_start;
+	dev->vbell.work_counter = 0;
 	atomic_set(&dev->vbell.next, 0);
 
 	dev->vbell.vec = kmalloc_node(vbell_count * sizeof(*dev->vbell.vec),
@@ -199,7 +200,7 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 	const u32 *vbell_buf;
 	u32 vbell_val;
 	int i;
-
+	u8 *counter = &dev->vbell.work_counter;
 
 	vbell_buf = ntc_export_buf_const_deref(&dev->vbell.buf,
 			0, dev->vbell.count * sizeof(u32));
@@ -211,8 +212,11 @@ static void ntrdma_dev_vbell_work(struct ntrdma_dev *dev, int vec)
 		ntrdma_vbell_head_fire(head, vbell_val);
 	}
 
-	if (ntc_clear_signal(dev->ntc, vec))
-		tasklet_schedule(&dev->vbell.work[vec]);
+	if (ntc_clear_signal(dev->ntc)) {
+		if (*counter == dev->ntc->peer_irq_num)
+			*counter = 0;
+		tasklet_schedule(&dev->vbell.work[*counter++]);
+	}
 }
 
 static void ntrdma_dev_vbell_work_cb(unsigned long ptrhld)
