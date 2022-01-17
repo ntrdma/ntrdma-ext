@@ -768,7 +768,7 @@ int _ntc_request_memcpy(struct ntc_dma_chan *chan,
 static inline
 void ntc_prepare_to_copy(struct ntc_dma_chan *chan, dma_addr_t dma_addr, u64 len)
 {
-	dma_sync_single_for_device(ntc_dma_chan_dev(chan), dma_addr, len,
+	dma_sync_single_for_device(chan->ntc->ntb_dev, dma_addr, len,
 				DMA_TO_DEVICE);
 }
 

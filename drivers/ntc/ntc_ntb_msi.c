@@ -1265,11 +1265,12 @@ int ntc_req_imm(struct ntc_dma_chan *chan,
 	struct ntc_ntb_imm *imm;
 	int rc;
 
+
 	if (unlikely(!len || len > sizeof(imm->data_buf)))
 		return -EINVAL;
 
 	imm = kmem_cache_alloc_node(imm_slab, GFP_ATOMIC,
-				dev_to_node(ntc_dma_chan_dev(chan)));
+				dev_to_node(chan->ntc->ntb_dev));
 	if (unlikely(!imm)) {
 		rc = -ENOMEM;
 		goto err_imm;
@@ -1278,7 +1279,7 @@ int ntc_req_imm(struct ntc_dma_chan *chan,
 	memcpy(imm->data_buf, ptr, len);
 	imm->data_len = len;
 
-	imm->dma_dev = ntc_dma_chan_dev(chan);
+	imm->dma_dev = chan->ntc->ntb_dev;
 	imm->dma_addr = dma_map_single(imm->dma_dev,
 				       imm->data_buf,
 				       imm->data_len,
