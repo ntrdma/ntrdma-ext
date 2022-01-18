@@ -216,6 +216,7 @@ struct ntc_dma_chan {
 	atomic_t dma_blocked;
 	atomic_t dma_flush;
 	int idx;
+	struct dma_async_tx_descriptor *tx;
 };
 
 /**
@@ -245,6 +246,7 @@ struct ntc_dev {
 	struct ntc_peer_mw		peer_mws[NTC_MAX_NUM_MWS];
 
 	int				peer_irq_num;
+	u64				doorbell_mask;
 
 	/* negotiated protocol version for ntc */
 	int				version;
@@ -551,35 +553,13 @@ static inline void ntc_dma_chan_tx_status(struct ntc_dma_chan *chan)
  */
 static inline void ntc_req_submit(struct ntc_dma_chan *chan)
 {
-	u32 submit_counter;
+	enum dma_status status;
 
-	dma_async_issue_pending(chan->chan);
-
-	submit_counter = READ_ONCE(chan->submit_counter) + 1;
-
-	if (submit_counter >= 0xff)
-		ntc_dma_chan_tx_status(chan);
-	else
-		WRITE_ONCE(chan->submit_counter, submit_counter);
+	status = dma_wait_for_async_tx(chan->tx);
+	if (status != DMA_COMPLETE)
+		ntc_dbg(chan->ntc, "submit status error %d", status);
 }
 
-static inline void ntc_dma_flush(struct ntc_dma_chan *chan)
-{
-	dma_cookie_t last_cookie;
-
-	if (!chan || !chan->chan)
-		return;
-
-	last_cookie = READ_ONCE(chan->last_cookie);
-	if (dma_submit_error(last_cookie))
-		return;
-
-	ntc_req_submit(chan);
-	dma_sync_wait(chan->chan, last_cookie);
-	ntc_dma_chan_tx_status(chan);
-}
-
-void ntc_flush_dma_channels(struct ntc_dev *ntc);
 void inc_dma_reject_counter(void);
 
 /**
@@ -666,11 +646,6 @@ static inline int ntc_req_memcpy(struct ntc_dma_chan *chan,
 			chan->idx, len, retries,
 			atomic_read(&chan->dma_blocked));
 
-		/* Busy waiting */
-		atomic_inc(&chan->dma_flush);
-		ntc_dma_flush(chan);
-		atomic_dec(&chan->dma_flush);
-
 		tx = dmaengine_prep_dma_memcpy(chan->chan, dst, src, len,
 					flags);
 		if (tx)
@@ -690,6 +665,7 @@ exit_loop:
 	tx->callback_result = cb;
 	tx->callback = NULL;
 	tx->callback_param = cb_ctx;
+	chan->tx = tx;
 
 #ifdef NTC_DEBUG
 	WARN_ON(tx->callback);
@@ -746,7 +722,7 @@ static inline int ntc_imm32(const struct ntc_remote_buf *dst,
 	if (unlikely(!ntc_segment_valid(dst->size, dst_offset, sizeof(u32))))
 		return -EINVAL;
 
-	memcpy_toio(dst->io_addr + dst_offset, &val, sizeof(u32));
+	iowrite32(val, dst->io_addr + dst_offset);
 	return 0;
 }
 
@@ -767,7 +743,7 @@ int _ntc_request_memcpy(struct ntc_dma_chan *chan,
 static inline
 void ntc_prepare_to_copy(struct ntc_dma_chan *chan, dma_addr_t dma_addr, u64 len)
 {
-	dma_sync_single_for_device(ntc_dma_chan_dev(chan), dma_addr, len,
+	dma_sync_single_for_device(chan->ntc->ntb_dev, dma_addr, len,
 				DMA_TO_DEVICE);
 }
 
@@ -994,35 +970,6 @@ int ntc_mr_request_memcpy_unfenced_imm(struct ntc_dma_chan *chan,
 }
 
 /**
- * ntc_req_signal() - append an operation to signal the peer
- * @ntc:	Device context.
- * @chan:	Channel request context.
- * @cb:		Callback after this operation.
- * @cb_ctx:	Callback context.
- *
- * Append an operation to signal the peer.  The peer driver will be receive
- * ntc_signal_event() after processing this operation.
- *
- * The channel implementation may coalesce interrupts to the peer driver,
- * therefore the upper layer must not rely on a one-to-one correspondence of
- * signals requested, and signal events received.  The only guarantee is that
- * at least one signal event will be received after the last signal requested.
- *
- * The upper layer should attempt to minimize the frequency of signal requests.
- * Signal requests may be implemented as small operations processed as dma
- * requests, and many small dma requests may impact the throughput performance
- * of the channel.  Furthermore, the channel may not coalesce interrupts, and a
- * high frequency of interrupts may impact the scheduling performance of the
- * peer.
- *
- * Please see ntc_req_memcpy() for a complete description of other parameters.
- *
- * Return: Zero on success, othewise an error number.
- */
-int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
-		void (*cb)(void *cb_ctx), void *cb_ctx, int vec);
-
-/**
  * ntc_signal() - append an operation to signal the peer
  * @ntc:	Device context.
  *
@@ -1043,7 +990,7 @@ int ntc_req_signal(struct ntc_dev *ntc, struct ntc_dma_chan *chan,
  *
  * Return: Zero on success, othewise an error number.
  */
-int ntc_signal(struct ntc_dev *ntc, int vec);
+int ntc_signal(struct ntc_dev *ntc);
 
 static inline int ntc_phys_local_buf_map(struct ntc_local_buf *buf,
 					struct ntc_dev *ntc)
@@ -1708,7 +1655,7 @@ static inline int ntc_mr_buf_map_dma(struct ntc_mr_buf *buf,
 
 	for (i = 0; i < NTC_MAX_NUM_MWS; i++) {
 		own_mw = &ntc->own_mws[i];
-		ntc_dbg(ntc, "i=%d own_mw->size=%llu own_mw->base=%llu\n", i, own_mw->size, own_mw->base);
+		ntc_vdbg(ntc, "i=%d own_mw->size=%llu own_mw->base=%llu\n", i, own_mw->size, own_mw->base);
 		if (ntc_segment_valid(own_mw->size,
 					dma_addr - own_mw->base, size))
 			break;
@@ -1944,7 +1891,7 @@ static inline int ntc_umem_count(struct ntc_dev *ntc, struct ib_umem *ib_umem)
  *
  * Return: 1 for events waiting or 0 for no events.
  */
-int ntc_clear_signal(struct ntc_dev *ntc, int vec);
+int ntc_clear_signal(struct ntc_dev *ntc);
 unsigned get_num_dma_chan(void);
 
 #endif

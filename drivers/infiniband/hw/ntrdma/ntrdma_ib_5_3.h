@@ -76,7 +76,11 @@ struct ib_umem *ntrdma_ib_umem_get(struct ib_udata *ibudata,
 		struct ib_ucontext *context, unsigned long addr, size_t size,
 		int access, int dmasync)
 {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
+	return ib_umem_get(ibudata, addr, size, access);
+#else
 	return ib_umem_get(ibudata, addr, size, access, dmasync);
+#endif
 }
 
 static int ntrdma_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)

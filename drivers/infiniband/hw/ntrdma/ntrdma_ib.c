@@ -866,7 +866,6 @@ static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 
 	memset(qp, 0, sizeof(*qp));
 
-	qp->qp_type = ibqp_attr->qp_type;
 	init_completion(&qp->enable_qpcb.cb.cmds_done);
 
 	qp_attr.pd_key = pd->key;
@@ -1077,7 +1076,7 @@ static int ntrdma_query_qp(struct ib_qp *ibqp,
 	if (!ibqp_mask)
 		return 0;
 
-	if (!(ibqp_mask & (IB_QP_STATE | IB_QP_DEST_QPN))) {
+	if (!(ibqp_mask & (IB_QP_STATE | IB_QP_CAP | IB_QP_DEST_QPN))) {
 		ntrdma_err(dev, "Not supported ibqp mask %d\n", ibqp_mask);
 		return -EINVAL;
 	}
@@ -1536,13 +1535,6 @@ static inline void ntrdma_qp_additional_work(struct ntrdma_qp *qp,
 					bool had_immediate_work) {
 	bool reschedule;
 
-
-	if (unlikely(!qp->dma_chan_init)) {
-		int core = smp_processor_id();
-		ntrdma_qp_vdbg(qp, "QP %d Core %d\n", qp->res.key, core);
-		ntc_init_dma_chan(&qp->dma_chan, ntrdma_qp_dev(qp)->ntc, NTC_QP_DMA_CHAN);
-		qp->dma_chan_init = true;
-	}
 	if (has_deferred_work)
 		do {
 			reschedule = ntrdma_qp_send_work(qp);
@@ -2036,8 +2028,6 @@ static int ntrdma_qp_file_release(struct inode *inode, struct file *filp)
 		put_page(qp->send_page);
 		qp->send_page = NULL;
 	}
-
-	ntc_dma_flush(qp->dma_chan);
 
 	ntrdma_qp_put(qp);
 

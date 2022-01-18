@@ -627,7 +627,7 @@ static void ntrdma_cmd_send_work(struct ntrdma_dev *dev)
 			goto dma_err;
 		}
 
-		rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
+		rc = ntc_signal(dev->ntc);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev, "ntc_signal failed. rc=%d",
 					rc);
@@ -848,7 +848,6 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 	ntrdma_rmr_put(rmr);
 
 	wait_for_completion(&done);
-	ntc_flush_dma_channels(dev->ntc);
 
 	rsp->hdr.status = 0;
 	return 0;
@@ -1366,7 +1365,7 @@ static void ntrdma_cmd_recv_work(struct ntrdma_dev *dev)
 			goto dma_err;
 		}
 
-		rc = ntc_signal(dev->ntc, NTB_DEFAULT_VEC(dev->ntc));
+		rc = ntc_signal(dev->ntc);
 		if (unlikely(rc < 0)) {
 			ntrdma_err(dev, "ntc_signal failed. rc=%d",
 					rc);

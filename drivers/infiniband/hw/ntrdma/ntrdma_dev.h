@@ -153,6 +153,7 @@ struct ntrdma_dev_vbell {
 	int			enable; /* Protected by vbell_self_lock */
 	struct tasklet_struct		work[NTB_MAX_IRQS];
 	struct vbell_work_data_s	work_data[NTB_MAX_IRQS];
+	u8				work_counter;
 
 	u32				count;
 	u32				start;
