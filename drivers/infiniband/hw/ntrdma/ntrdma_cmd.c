@@ -672,7 +672,7 @@ static int ntrdma_cmd_recv_none(struct ntrdma_dev *dev,
 {
 	struct ntrdma_cmd_hdr cmd;
 
-	cmd = READ_ONCE(*_cmd);
+	cmd = *_cmd;
 	rsp->cmd_id = cmd.cmd_id;
 
 	ntrdma_vdbg(dev, "called\n");
@@ -751,7 +751,7 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 	u32 count;
 	int rc;
 
-	cmd = READ_ONCE(*_cmd);
+	cmd = *_cmd;
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
 	count = cmd.sg_count;
@@ -783,7 +783,7 @@ static int ntrdma_cmd_recv_mr_create(struct ntrdma_dev *dev,
 			cmd.mr_key);
 
 	for (i = 0; i < count; ++i) {
-		sg_desc_list = READ_ONCE(_cmd->sg_desc_list[i]);
+		sg_desc_list = _cmd->sg_desc_list[i];
 
 		rc = ntc_remote_buf_map(&rmr->sg_list[i], dev->ntc,
 					&sg_desc_list);
@@ -823,7 +823,7 @@ static int ntrdma_cmd_recv_mr_delete(struct ntrdma_dev *dev,
 	struct completion done;
 	int rc;
 
-	cmd = READ_ONCE(*_cmd);
+	cmd = *_cmd;
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
 	ntrdma_vdbg(dev, "called\n");
@@ -869,7 +869,7 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 	u32 pos, count;
 	int rc;
 
-	cmd = READ_ONCE(*_cmd);
+	cmd = *_cmd;
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
 	pos = cmd.sg_pos;
@@ -902,7 +902,7 @@ static int ntrdma_cmd_recv_mr_append(struct ntrdma_dev *dev,
 			goto err_map;
 		}
 
-		sg_desc_list = READ_ONCE(_cmd->sg_desc_list[i]);
+		sg_desc_list = _cmd->sg_desc_list[i];
 
 		rc = ntc_remote_buf_map(&rmr->sg_list[pos + i], dev->ntc,
 					&sg_desc_list);
@@ -978,7 +978,7 @@ static int ntrdma_cmd_recv_qp_create(struct ntrdma_dev *dev,
 	struct ntrdma_rqp_init_attr attr;
 	int rc;
 
-	cmd = READ_ONCE(*_cmd);
+	cmd = *_cmd;
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
 	ntrdma_vdbg(dev,
@@ -1078,7 +1078,7 @@ static int ntrdma_cmd_recv_qp_delete(struct ntrdma_dev *dev,
 	struct ntrdma_qp *qp;
 	int rc;
 
-	cmd = READ_ONCE(*_cmd);
+	cmd = *_cmd;
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
 	ntrdma_dbg(dev, "deleting  RQP %d\n", cmd.qp_key);
@@ -1196,7 +1196,7 @@ int ntrdma_cmd_recv_qp_modify(struct ntrdma_dev *dev,
 	struct ntrdma_cmd_qp_modify cmd;
 	int rc;
 
-	cmd = READ_ONCE(*_cmd);
+	cmd = *_cmd;
 	rsp->hdr.cmd_id = cmd.hdr.cmd_id;
 
 	rsp->hdr.op = NTRDMA_CMD_QP_MODIFY;

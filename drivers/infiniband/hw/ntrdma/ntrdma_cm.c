@@ -623,7 +623,7 @@ static int ntrdma_cm_handle_rep(struct ntrdma_dev *dev,
 		goto cleanup;
 	}
 
-	ibqp = ntrdma_get_qp(&dev->ibdev, qpn);
+	ibqp = &ntrdma_qp->ibqp;
 
 	rc = ntrmda_rqp_modify_local(dev,
 			my_cmd->qp_num, 0,
@@ -663,8 +663,8 @@ static int ntrdma_cm_handle_rep(struct ntrdma_dev *dev,
 
 
 cleanup:
-	ntrdma_qp_put(ntrdma_qp);
 	mutex_unlock(&ntrdma_qp->cm_lock);
+	ntrdma_qp_put(ntrdma_qp);
 exit:
 	return rc;
 }

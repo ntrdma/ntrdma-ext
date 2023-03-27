@@ -36,6 +36,16 @@
  * to 19 */
 #define RDMA_DRIVER_NTRDMA 19
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+#define FUNC_CREATE_AH_PARAMS struct ib_ah *ibah, struct rdma_ah_init_attr *ah_attr, struct ib_udata *udata
+typedef struct rdma_ah_init_attr ntrdma_ah_attr_t;
+#define NTRDMA_GET_AH_ATTR(attr) (attr->ah_attr)
+#else
+#define FUNC_CREATE_AH_PARAMS struct ib_ah *ibah, struct rdma_ah_attr *ah_attr, u32 flags, struct ib_udata *udata
+typedef struct rdma_ah_attr ntrdma_ah_attr_t;
+#define NTRDMA_GET_AH_ATTR(attr) (attr)
+#endif
+
 /* not implemented / not required? */
 /* if required, one needs to implement:
  * Perform path query to the Subnet Administrator (SA)
@@ -44,18 +54,26 @@
     subnet (which all of the addresses are predefined) or using
     multicast groups
  */
-static int ntrdma_create_ah(struct ib_ah *ibah, struct rdma_ah_attr *ah_attr,
-		u32 flags, struct ib_udata *udata)
+static int ntrdma_create_ah(FUNC_CREATE_AH_PARAMS)
 {
 	struct ntrdma_ah *ah = container_of(ibah, struct ntrdma_ah, ibah);
 
-	ntrdma_create_ah_common(ah, ah_attr);
+	ntrdma_create_ah_common(ah, NTRDMA_GET_AH_ATTR(ah_attr));
 	return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+#define FUNC_DESTROY_AH_RETURN_TYPE int
+#define FUNC_DESTROY_AH_RETURN_VALUE(x) x
+#else
+#define FUNC_DESTROY_AH_RETURN_TYPE void
+#define FUNC_DESTROY_AH_RETURN_VALUE(x)
+#endif
+
 /* not implemented / not required? */
-static void ntrdma_destroy_ah(struct ib_ah *ibah, u32 flags)
+static FUNC_DESTROY_AH_RETURN_TYPE ntrdma_destroy_ah(struct ib_ah *ibah, u32 flags)
 {
+	return FUNC_DESTROY_AH_RETURN_VALUE(0);
 }
 
 static inline void ntrdma_cq_release_cache_free(struct ntrdma_cq *cq)
@@ -69,14 +87,30 @@ static inline void ntrdma_pd_release_cache_free(struct ntrdma_pd *pd)
 
 static int ntrdma_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata)
 {
-	return ntrdma_destroy_qp_common(ibqp);
+	int rc = ntrdma_destroy_qp_common(ibqp);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	wait_for_completion(&ntrdma_ib_qp(ibqp)->free_qp);
+#endif
+	return rc;
 }
 
 struct ib_umem *ntrdma_ib_umem_get(struct ib_udata *ibudata,
 		struct ib_ucontext *context, unsigned long addr, size_t size,
 		int access, int dmasync)
 {
-	return ib_umem_get(ibudata, addr, size, access, dmasync);
+	return ib_umem_get(
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0)
+		ibudata
+#else
+		context->device
+#endif
+		, addr
+		, size
+		, access
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0)
+		, dmasync
+#endif
+		);
 }
 
 static int ntrdma_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
@@ -104,17 +138,35 @@ int ntrdma_del_gid(const struct ib_gid_attr *attr, void **context)
 	return 0;
 }
 
-int ntrdma_process_mad(struct ib_device *device,
-		int process_mad_flags,
-		u8 port_num,
-		const struct ib_wc *in_wc,
-		const struct ib_grh *in_grh,
-		const struct ib_mad *in_mad,
-		struct ib_mad *out_mad,
-		size_t *out_mad_size,
-		u16 *out_mad_pkey_index)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0)
+#define FUNC_PROCESS_MAD_PARAMS struct ib_device *device, \
+		int process_mad_flags,                            \
+		ntrdma_port_t port_num,                           \
+		const struct ib_wc *in_wc,                        \
+		const struct ib_grh *in_grh,                      \
+		const struct ib_mad *in_mad,                      \
+		struct ib_mad *out_mad,                           \
+		size_t *out_mad_size,                             \
+		u16 *out_mad_pkey_index
+
+#define MAD_HDR(mad) (&(mad)->mad_hdr)
+#else
+#define FUNC_PROCESS_MAD_PARAMS struct ib_device *device, \
+		int process_mad_flags,                            \
+		ntrdma_port_t port_num,                           \
+		const struct ib_wc *in_wc,                        \
+		const struct ib_grh *in_grh,                      \
+		const struct ib_mad_hdr *in_mad,                  \
+		size_t in_mad_size,                               \
+		struct ib_mad_hdr *out_mad,                       \
+		size_t *out_mad_size,                             \
+		u16 *out_mad_pkey_index
+#define MAD_HDR(mad) (mad)
+#endif
+
+int ntrdma_process_mad(FUNC_PROCESS_MAD_PARAMS)
 {
-	TRACE("RDMA CM MAD received: class %d\n", in_mad->mad_hdr.mgmt_class);
+	TRACE("RDMA CM MAD received: class %d\n", MAD_HDR(in_mad)->mgmt_class);
 	return IB_MAD_RESULT_SUCCESS;
 }
 
@@ -122,7 +174,15 @@ void ntrdma_disassociate_ucontext(struct ib_ucontext *ibcontext)
 {
 }
 
-static void ntrdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+#define FUNC_DESTROY_CQ_RETURN_TYPE int
+#define FUNC_DESTROY_CQ_RETURN_VALUE(x) x
+#else
+#define FUNC_DESTROY_CQ_RETURN_TYPE void
+#define FUNC_DESTROY_CQ_RETURN_VALUE(x)
+#endif
+
+static FUNC_DESTROY_CQ_RETURN_TYPE ntrdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 {
 	struct ntrdma_cq *cq;
 
@@ -134,6 +194,7 @@ static void ntrdma_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 	ntrdma_cq_put(cq);
 
 	NTRDMA_IB_PERF_END;
+	return FUNC_DESTROY_CQ_RETURN_VALUE(0);
 }
 
 void ntrdma_pd_get(struct ntrdma_pd *pd)
@@ -144,7 +205,15 @@ void ntrdma_pd_put(struct ntrdma_pd *pd)
 {
 }
 
-static void ntrdma_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+#define FUNC_DESTROY_PD_RETURN_TYPE int
+#define FUNC_DESTROY_PD_RETURN_VALUE(x) x
+#else
+#define FUNC_DESTROY_PD_RETURN_TYPE void
+#define FUNC_DESTROY_PD_RETURN_VALUE(x)
+#endif
+
+static FUNC_DESTROY_PD_RETURN_TYPE ntrdma_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 {
 	struct ntrdma_pd *pd;
 
@@ -155,6 +224,7 @@ static void ntrdma_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 	ntrdma_pd_release(&pd->obj.kref);
 
 	NTRDMA_IB_PERF_END;
+	return FUNC_DESTROY_PD_RETURN_VALUE(0);
 }
 
 static inline struct ntrdma_pd *ntrdma_new_pd(struct ib_pd *ibpd,
@@ -259,11 +329,19 @@ static const struct ib_device_ops ntrdma_dev_ops = {
 	INIT_RDMA_OBJ_SIZE(ib_pd, ntrdma_pd, ibpd),
 	INIT_RDMA_OBJ_SIZE(ib_cq, ntrdma_ib_cq, ibcq),
 	INIT_RDMA_OBJ_SIZE(ib_ucontext, ntrdma_ucontext, ibucontext),
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	INIT_RDMA_OBJ_SIZE(ib_qp, ntrdma_qp, ibqp),
+#endif
 };
 
 static inline int ntrdma_ib_register_device(struct ib_device *ibdev)
 {
-	return ib_register_device(ibdev, "ntrdma_%d");
+	return ib_register_device(ibdev
+	                          ,"ntrdma_%d"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+                              , ntrdma_ib_dev(ibdev)->ntc->ntb_dev
+#endif
+                              );
 }
 
 static inline int ntrdma_set_ib_ops(struct ntrdma_dev *dev,
@@ -276,12 +354,17 @@ static inline int ntrdma_set_ib_ops(struct ntrdma_dev *dev,
 
 void ntrdma_ib_module_deinit(void)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
 	ntrdma_deinit_slab(&qp_slab);
+#endif
 	ntrdma_deinit_slab(&cq_slab);
 }
 
 static inline bool ntrdma_slab_init(void)
 {
-	return ((qp_slab = KMEM_CACHE(ntrdma_qp, 0)) &&
-			(cq_slab = KMEM_CACHE(ntrdma_cq, 0)));
+	return ((cq_slab = KMEM_CACHE(ntrdma_cq, 0))
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+	        && (qp_slab = KMEM_CACHE(ntrdma_qp, 0))
+#endif
+			);
 }

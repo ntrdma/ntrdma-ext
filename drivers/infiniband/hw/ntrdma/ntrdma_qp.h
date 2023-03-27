@@ -168,6 +168,9 @@ struct ntrdma_qp {
 	struct mutex cm_lock;
 	int ntrdma_cm_state;
 	struct work_struct qp_work;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	struct completion free_qp;
+#endif
 };
 
 inline u32 ntrdma_qp_send_cons(struct ntrdma_qp *qp);

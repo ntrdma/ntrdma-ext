@@ -153,7 +153,7 @@ int ntrdma_del_gid(const struct ib_gid_attr *attr, void **context)
 
 int ntrdma_process_mad(struct ib_device *device,
 		int process_mad_flags,
-		u8 port_num,
+		ntrdma_port_t port_num,
 		const struct ib_wc *in_wc,
 		const struct ib_grh *in_grh,
 		const struct ib_mad_hdr *in_mad,
