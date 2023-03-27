@@ -14,6 +14,12 @@
 #include <linux/hugetlb_inline.h>
 #include <linux/spinlock.h>
 #include <linux/sched.h>
+#include <linux/version.h>
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
+#define mmap_read_lock(mm) down_read(&((mm)->mmap_sem))
+#define mmap_read_unlock(mm) up_read(&((mm)->mmap_sem))
+#endif
 
 /*
  * Return the PFN for the specified address in the vma. This only
@@ -136,12 +142,12 @@ static inline int ntc_get_io_pfn_segment(struct mm_struct *mm,
 {
 	int rc;
 
-	down_read(&mm->mmap_sem);
+	mmap_read_lock(mm);
 
 	rc = ntc_get_io_pfn_segment_locked(mm, addr, len, write,
 					pfn_out, len_out);
 
-	up_read(&mm->mmap_sem);
+	mmap_read_unlock(mm);
 
 	return rc;
 }

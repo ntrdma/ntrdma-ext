@@ -590,7 +590,7 @@ static void ntrdma_qp_enable_cmpl(struct ntrdma_cmd_cb *cb,
 
 	TRACE("qp_enable cmpl: %d\n", qp->res.key);
 
-	rsp = READ_ONCE(*_rsp);
+	rsp = *_rsp;
 	cb->ret = rsp.hdr.status;
 
 	if (unlikely(cb->ret)) {
@@ -1269,7 +1269,7 @@ static void ntrdma_qp_poll_recv_cqe(struct ntrdma_poll *poll,
 			wqe->ulp_handle, wqe->op_status);
 		return;
 	}
-	*outcqe = READ_ONCE(*cqe);
+	*outcqe = *cqe;
 	if (outcqe->op_status) {
 		qp->recv_aborting = true;
 		TRACE("QP %d wrid 0x%llx cqe status %d\n", qp->res.key,
@@ -1350,7 +1350,7 @@ static void ntrdma_qp_poll_send_cqe(struct ntrdma_poll *poll,
 		return;
 	}
 
-	*outcqe = READ_ONCE(*cqe);
+	*outcqe = *cqe;
 	if (outcqe->op_status) {
 		qp->send_aborting = true;
 		TRACE("QP %d, wrid 0x%llx cqe->op_status %d, move to abort\n",
@@ -1587,7 +1587,7 @@ bool ntrdma_qp_send_work(struct ntrdma_qp *qp)
 			}
 
 			_recv_wqe = ntrdma_rqp_recv_wqe(rqp, recv_pos++);
-			recv_wqe = READ_ONCE(*_recv_wqe);
+			recv_wqe = *_recv_wqe;
 
 			if (recv_wqe.op_status) {
 				if (!wqe->op_status) {
@@ -1835,7 +1835,7 @@ static void ntrdma_rqp_send_work(struct ntrdma_rqp *rqp)
 	for (pos = start;;) {
 		cqe = ntrdma_rqp_send_cqe(rqp, pos);
 		_wqe = ntrdma_rqp_send_wqe(rqp, pos++);
-		wqe = READ_ONCE(*_wqe);
+		wqe = *_wqe;
 
 		if (wqe.flags & IB_SEND_SIGNALED)
 			do_signal = true;

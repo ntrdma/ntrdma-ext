@@ -130,7 +130,7 @@ ntrdma_rcv_cursor_init(struct ntrdma_rcv_cursor *c, struct ntrdma_dev *dev,
 	c->rcv_sge = rcv_sg_list;
 	c->rcv_sg_end = rcv_sg_list + rcv_sg_count;
 	if (rcv_sg_count)
-		c->rcv_sge_copy = READ_ONCE(*c->rcv_sge);
+		c->rcv_sge_copy = *c->rcv_sge;
 	c->rcv_rem = 0;
 	c->rmr = NULL;
 	c->rmr_key = NTRDMA_RESERVED_DMA_LEKY;
@@ -248,7 +248,7 @@ ntrdma_rcv_cursor_update(struct ntrdma_rcv_cursor *c, int *rc)
 		c->offset -= len;
 		c->rcv_sge++;
 		if (c->rcv_sge != c->rcv_sg_end)
-			c->rcv_sge_copy = READ_ONCE(*c->rcv_sge);
+			c->rcv_sge_copy = *c->rcv_sge;
 	}
 
 	if (c->rcv_sge == c->rcv_sg_end) {
@@ -381,7 +381,7 @@ ntrdma_rcv_cursor_forward(struct ntrdma_rcv_cursor *c, u64 len, int *rc)
 	else {
 		c->rcv_sge++;
 		if (c->rcv_sge != c->rcv_sg_end)
-			c->rcv_sge_copy = READ_ONCE(*c->rcv_sge);
+			c->rcv_sge_copy = *c->rcv_sge;
 	}
 
 	return ntrdma_rcv_cursor_update(c, rc);

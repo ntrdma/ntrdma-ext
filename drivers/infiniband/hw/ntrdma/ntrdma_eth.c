@@ -94,6 +94,17 @@ static inline void ntrdma_dev_eth_rx_drain(struct ntrdma_dev *dev)
 	} while (start != end);
 }
 #endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+static inline void dev_addr_mod(struct net_device *dev,
+         unsigned int offset,
+	     const u8 *addr,
+		 size_t len)
+{
+	memcpy(&dev->dev_addr[offset], addr, len);
+}
+#endif
+
 static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 			u32 vbell_idx,
 			u32 rx_cap,
@@ -125,8 +136,9 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 #ifndef NTRDMA_FULL_ETH
 	net->flags |= IFF_NOARP;
 #endif
-	random_ether_addr(net->perm_addr);
-	memcpy(net->dev_addr, net->perm_addr, net->addr_len);
+
+	eth_random_addr(net->perm_addr);
+	dev_addr_mod(net, 0, net->perm_addr, net->addr_len);
 
 	eth = ntrdma_net_eth(net);
 	dev->eth = eth;
@@ -198,7 +210,13 @@ static inline int ntrdma_dev_eth_init_deinit(struct ntrdma_dev *dev,
 
 	ntrdma_napi_vbell_init(dev, &eth->vbell, vbell_idx, &eth->napi);
 #endif
-	netif_napi_add(net, &eth->napi, ntrdma_eth_napi_poll, NAPI_POLL_WEIGHT);
+	netif_napi_add(net
+	              ,&eth->napi
+				  ,ntrdma_eth_napi_poll
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+                  ,NAPI_POLL_WEIGHT
+#endif
+				   );
 
 	rc = register_netdev(net);
 	if (rc) {

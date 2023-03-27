@@ -849,7 +849,7 @@ static inline void ntc_ntb_recv_addr(struct ntc_ntb_dev *dev)
 	peer_info = ntc_ntb_peer_info(dev);
 	for (i = 0; i < NTC_MAX_NUM_MWS; i++) {
 		peer_mw = &ntc->peer_mws[i];
-		mw_info = READ_ONCE(peer_info->mw_info[i]);
+		mw_info = peer_info->mw_info[i];
 		peer_mw->dead_zone_size = mw_info.dead_zone_size;
 		peer_mw->trans_len = mw_info.trans_len;
 		info("mw %d - dead_zone_size=%llu, trans_len=%llu", i, peer_mw->dead_zone_size,
@@ -2049,8 +2049,10 @@ static int set_affinity(struct ntb_dev *ntb)
 			msi_irqs_base + i, i % online_cpus,
 			*(unsigned long *)cpumask_bits(&cpu_mask));
 		rc = irq_set_affinity_hint(msi_irqs_base + i, &cpu_mask);
-		if (rc < 0)
+		if (rc < 0) {
+			pr_err("SET AFFINITY failed, err: %i", rc);
 			return rc;
+		}
 	}
 	return 0;
 }

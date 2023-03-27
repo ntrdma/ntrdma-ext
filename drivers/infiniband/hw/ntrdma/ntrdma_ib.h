@@ -72,7 +72,9 @@ static int ntrdma_cq_file_release(struct inode *inode, struct file *filp);
 static long ntrdma_cq_file_ioctl(struct file *filp, unsigned int cmd,
 				unsigned long arg);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
 static struct kmem_cache *qp_slab;
+#endif
 static struct kmem_cache *cq_slab;
 
 struct ntrdma_ucontext {
@@ -185,19 +187,27 @@ static inline int ntrdma_dereg_mr_common(struct ib_mr *ibmr)
 	return 0;
 }
 
-struct net_device *ntrdma_get_netdev(struct ib_device *ibdev, u8 port_num);
-static int ntrdma_get_port_immutable(struct ib_device *ibdev, u8 port,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0)
+typedef u32 ntrdma_port_t;
+#else
+typedef u8 ntrdma_port_t;
+#endif
+
+struct net_device *ntrdma_get_netdev(struct ib_device *ibdev, ntrdma_port_t port_num);
+static int ntrdma_get_port_immutable(struct ib_device *ibdev, ntrdma_port_t port,
 		struct ib_port_immutable *imm);
-static int ntrdma_query_pkey(struct ib_device *ibdev, u8 port_num, u16 index,
+static int ntrdma_query_pkey(struct ib_device *ibdev, ntrdma_port_t port_num, u16 index,
 		u16 *pkey);
-static int ntrdma_query_gid(struct ib_device *ibdev, u8 port_num, int index,
+static int ntrdma_query_gid(struct ib_device *ibdev, ntrdma_port_t port_num, int index,
 		union ib_gid *ibgid);
 static struct ib_mr *ntrdma_get_dma_mr(struct ib_pd *ibpd,
 		int mr_access_flags);
 static int ntrdma_query_device(struct ib_device *ibdev,
 		struct ib_device_attr *ibattr, struct ib_udata *ibudata);
-static int ntrdma_query_port(struct ib_device *ibdev, u8 port,
+static int ntrdma_query_port(struct ib_device *ibdev, ntrdma_port_t port,
 		struct ib_port_attr *ibattr);
+enum rdma_link_layer ntrdma_get_link_layer(struct ib_device *device,
+		ntrdma_port_t port_num);
 
 static void ntrdma_cq_release(struct kref *kref);
 static void ntrdma_pd_release(struct kref *kref);
@@ -226,8 +236,13 @@ static inline struct ntrdma_cq *ntrdma_destroy_cq_common(struct ib_cq *ibcq)
 static int ntrdma_poll_cq(struct ib_cq *ibcq, int howmany, struct ib_wc *ibwc);
 static int ntrdma_req_notify_cq(struct ib_cq *ibcq,
 		enum ib_cq_notify_flags flags);
-static struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+struct ib_qp *ntrdma_create_qp(struct ib_pd *ibpd,
 		struct ib_qp_init_attr *ibqp_attr, struct ib_udata *ibudata);
+#else
+int ntrdma_create_qp(struct ib_qp *ibqp,
+		struct ib_qp_init_attr *ibqp_attr, struct ib_udata *ibudata);
+#endif
 static int ntrdma_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *ibqp_attr,
 		int ibqp_mask, struct ib_qp_init_attr *ibqp_init_attr);
 int ntrdma_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *ibqp_attr,
@@ -251,8 +266,6 @@ static int ntrdma_post_recv(struct ib_qp *ibqp,
 static struct ib_mr *ntrdma_reg_user_mr(struct ib_pd *ibpd, u64 start,
 		u64 length, u64 virt_addr, int mr_access_flags,
 		struct ib_udata *ibudata);
-enum rdma_link_layer ntrdma_get_link_layer(struct ib_device *device,
-		u8 port_num);
 
 static inline struct ntrdma_pd *ntrdma_dealloc_pd_common(struct ib_pd *ibpd)
 {

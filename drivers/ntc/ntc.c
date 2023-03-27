@@ -78,6 +78,14 @@ void ntc_flush_dma_channels(struct ntc_dev *ntc)
 }
 EXPORT_SYMBOL(ntc_flush_dma_channels);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+#define IB_UMEM_SG_NENTS(ib_umem) (ib_umem)->sg_head.nents
+#define IB_UMEM_FOR_EACH_SG(ib_umem, sg, i) for_each_sg((ib_umem)->sg_head.sgl, (sg), IB_UMEM_SG_NENTS(ib_umem), (i))
+#else
+#define IB_UMEM_SG_NENTS(ib_umem) (ib_umem)->sgt_append.total_nents
+#define IB_UMEM_FOR_EACH_SG(ib_umem, sg, i) for_each_sgtable_sg(&(ib_umem)->sgt_append.sgt, (sg), (i))
+#endif
+
 int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 		struct ntc_mr_buf *sgl, int count, int mr_access_flags)
 {
@@ -89,7 +97,7 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 	offset = ib_umem_offset(ib_umem);
 	total_len = 0;
 	n = 0;
-	for_each_sg(ib_umem->sg_head.sgl, sg, ib_umem->sg_head.nents, i) {
+	IB_UMEM_FOR_EACH_SG(ib_umem, sg, i) {
 		/* dma_addr is start DMA addr of the contiguous range */
 		dma_addr = sg_dma_address(sg);
 		/* dma_len accumulates the length of the contiguous range */
@@ -98,7 +106,7 @@ int ntc_umem_sgl(struct ntc_dev *ntc, struct ib_umem *ib_umem,
 		TRACE("ntc_umem_sgl: dma_addr %#llx access %d",
 			dma_addr, mr_access_flags);
 
-		for (; i + 1 < ib_umem->sg_head.nents; ++i) {
+		for (; i + 1 < IB_UMEM_SG_NENTS(ib_umem); ++i) {
 			next = sg_next(sg);
 			if (!next)
 				break;
@@ -160,7 +168,15 @@ static int ntc_probe(struct device *dev)
 	return rc;
 }
 
-static int ntc_remove(struct device *dev)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+#define NTC_REMOVE_RETURN_TYPE int
+#define NTC_REMOVE_RETURN_VALUE(x) (x)
+#else
+#define NTC_REMOVE_RETURN_TYPE void
+#define NTC_REMOVE_RETURN_VALUE(x)
+#endif
+
+static NTC_REMOVE_RETURN_TYPE ntc_remove(struct device *dev)
 {
 	struct ntc_dev *ntc = ntc_of_dev(dev);
 	struct ntc_driver *driver;
@@ -174,7 +190,7 @@ static int ntc_remove(struct device *dev)
 		put_device(dev);
 	}
 
-	return 0;
+	return NTC_REMOVE_RETURN_VALUE(0);
 }
 
 static struct bus_type ntc_bus = {
