@@ -1,8 +1,7 @@
 NTC DRIVER FOR NTB
-M:	Leonid Ravich <Leonid.Ravich@dell.com>
 M:	Eyal BenNer <Eyal.BenNer@dell.com>
-M:	Alexander Barabash <Alexander.Barabash@dell.com>
-M:	Yuval Berger <Yuval.Berger@dell.com>
+M:  Frank Sparrow <Frank.Sparrow@dell.com>
+M:  Mikhail Simonov <Mikhail.Simonov@dell.com>
 S:	Maintained
 F:	include/linux/ntc.h
 F:	include/linux/ntc_mm.h
