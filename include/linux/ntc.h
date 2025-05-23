@@ -64,19 +64,6 @@ struct ntc_dev;
 struct ib_ucontext;
 struct ib_umem;
 
-#ifndef iowrite64
-#ifdef writeq
-#define iowrite64 writeq
-#else
-#define iowrite64 __lame_iowrite64
-static inline void __lame_iowrite64(u64 val, void __iomem *ptr)
-{
-	iowrite32(val, ptr);
-	iowrite32(val >> 32, ptr + sizeof(u32));
-}
-#endif
-#endif
-
 #define MAX_DMA_PREP_RETRIES 100000
 
 enum ntc_dma_chan_type {

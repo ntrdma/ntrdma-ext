@@ -1416,20 +1416,51 @@ EXPORT_SYMBOL(ntc_req_signal);
 int ntc_clear_signal(struct ntc_dev *ntc, int vec)
 {
 	struct ntc_ntb_dev *dev = ntc_ntb_down_cast(ntc);
-	int db_bit;
+	u64 db_bit_to_check;
+	u64 valid_mask;
 
-	if (unlikely(vec >= BITS_PER_LONG_LONG))
-		dev_WARN(&ntc->dev, "Invalid vec %d \n", vec);
-	/* ntc->peer_irq_num could be null if it is not set yet */
+	/* 1. Validate vec to be non-negative and less than BITS_PER_LONG_LONG. */
+	if (vec < 0 || vec >= BITS_PER_LONG_LONG) {
+		dev_WARN(&ntc->dev, "Invalid vec %d: out of range [0, %d)\n",
+			 vec, BITS_PER_LONG_LONG);
+		return -EINVAL;
+	}
 
-	db_bit = BIT_ULL(vec % (ntc->peer_irq_num?:1));
+	/* 2. If ntc->peer_irq_num is 0, issue a dev_warn and return -EINVAL. */
+	if (ntc->peer_irq_num == 0) {
+		dev_WARN(&ntc->dev, "Doorbells not configured (peer_irq_num is 0)\n");
+		return -EINVAL;
+	}
 
-	if (ntb_db_read(dev->ntb) & db_bit) {
-		ntb_db_clear(dev->ntb, db_bit);
-		ntb_db_read(dev->ntb);
+	/* 3. Validate vec to be less than ntc->peer_irq_num. */
+	if (vec >= ntc->peer_irq_num) {
+		dev_WARN(&ntc->dev, "Invalid vec %d: exceeds configured peer_irq_num %d\n",
+			 vec, ntc->peer_irq_num);
+		return -EINVAL;
+	}
+
+	/* 4. Construct the doorbell bit. */
+	db_bit_to_check = BIT_ULL(vec);
+
+	/* 5. Validate db_bit_to_check against the hardware's valid doorbell mask. */
+	valid_mask = ntb_db_valid_mask(dev->ntb);
+	if (!(valid_mask & db_bit_to_check)) {
+		dev_WARN(&ntc->dev, "vec %d (mask %#llx) is not a valid hardware doorbell (valid_mask %#llx)\n",
+			 vec, db_bit_to_check, valid_mask);
+		return -EINVAL;
+	}
+
+	/* 6. If the doorbell bit is set, clear it, read back, and return 1. */
+	if (ntb_db_read(dev->ntb) & db_bit_to_check) {
+		ntb_db_clear(dev->ntb, db_bit_to_check);
+		/* Ensure completion by reading a doorbell register.
+		 * Reading the whole mask should be safe.
+		 */
+		(void)ntb_db_read(dev->ntb);
 		return 1;
 	}
 
+	/* 7. Otherwise, return 0. */
 	return 0;
 }
 EXPORT_SYMBOL(ntc_clear_signal);

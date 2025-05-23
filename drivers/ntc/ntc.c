@@ -193,14 +193,31 @@ static
 struct ntc_dma_chan *ntc_req_rr(struct ntc_dev *ntc,
 				enum ntc_dma_chan_type type)
 {
-	int i;
+	unsigned int num_chans = get_num_dma_chan();
+	unsigned int initial_idx;
+	unsigned int k;
 
-	i = smp_processor_id() % get_num_dma_chan();
-	if (!ntc->dma_chan[i].chan) {
-		i = 0;
+	if (num_chans == 0) {
+		ntc_err(ntc, "No DMA channels configured (get_num_dma_chan() returned 0).\n");
+		return &ntc->dma_chan[0]; /* Should not happen with proper setup */
 	}
 
-	return &ntc->dma_chan[i];
+	initial_idx = smp_processor_id() % num_chans;
+
+	if (initial_idx < NTC_MAX_DMA_CHANS && ntc->dma_chan[initial_idx].chan) {
+		return &ntc->dma_chan[initial_idx];
+	}
+
+	/* Fallback: iterate to find any available channel */
+	for (k = 0; k < num_chans; ++k) {
+		if (k < NTC_MAX_DMA_CHANS && ntc->dma_chan[k].chan) {
+			return &ntc->dma_chan[k];
+		}
+	}
+
+	/* If loop completes, no channel was found */
+	ntc_err(ntc, "Critical: No usable DMA channels found after checking all %u configured channels.\n", num_chans);
+	return &ntc->dma_chan[0]; /* Preserve old behavior, likely problematic */
 }
 
 void ntc_init_dma_chan(struct ntc_dma_chan **dma_chan,
